@@ -35,6 +35,8 @@ Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 > * **NEVER** share raw log files, crash reports (`.txt`), or memory dumps (`.dmp`) publicly.
 > * **ONLY** share logs or crash dumps with a trusted person for debugging purposes.
 > * **ALWAYS CHANGE YOUR SERVER RCON PASSWORD FIRST** before sharing any log or crash dump file with anyone for support!
+> * **Credentials Stored in Plaintext:**
+>    * `appdata/profiles.json` (RCON server passwords) and `appdata/settings.json` (MaxMind license keys) are saved as plain JSON files with no OS-level protection for now. Anyone with local file access to your computer or USB drive can read them directly.
 ## Key Features
 
 - **Dual Protocol Support:** You can smoothly switch between the built in RCON provided natively by ARMA Reforger and the standard BattlEye RCON.
