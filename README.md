@@ -23,11 +23,18 @@ Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 
 👉 Download the ARMA Reforger RCON Tool v0.6.2-alpha (.zip) from https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.6.2-alpha
 
-### 🚀 Quick Start (100% Portable / Zero-Install)
+### 🚀 Quick Start
 
 1. Obtain the `.zip` file from the **[v0.6.2-alpha Release Page](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.6.2-alpha)**.
 2. Copy the files anywhere on your PC (for example, to the Desktop, a USB drive, or the server tools folder).
 3. Double-click **`ReforgerRcon.exe`** to start. You do not need to install anything or have administrator rights.
+
+> [!CAUTION]
+> ### ⚠️ SECURITY WARNING
+> **Log files (`appdata/logs/`) and crash reports/dumps (`appdata/crash_reports/`) contain runtime diagnostic traces and IP addresses.**  
+> * **NEVER** share raw log files, crash reports (`.txt`), or memory dumps (`.dmp`) publicly.
+> * **ONLY** share logs or crash dumps with a trusted person for debugging purposes.
+> * **ALWAYS CHANGE YOUR SERVER RCON PASSWORD FIRST** before sharing any log or crash dump file with anyone for support!
 ## Key Features
 
 - **Dual Protocol Support:** You can smoothly switch between the built in RCON provided natively by ARMA Reforger and the standard BattlEye RCON.
