@@ -1,0 +1,165 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:converters="using:ReforgerRcon.Converters"
+             x:Class="ReforgerRcon.Views.Dialogs.BanDialog"
+             x:DataType="vm:BanDialogViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="Button.PresetBtn.Selected">
+      <Setter Property="Background" Value="{DynamicResource LuminaPrimaryBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LuminaPrimaryBrush}" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+
+    <Style Selector="Button.PresetBtn.Permanent.Selected">
+      <Setter Property="Background" Value="{DynamicResource LuminaDangerBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LuminaDangerBrush}" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+  </UserControl.Styles>
+
+  <lumina:LuminaCard Padding="24" Width="560" Classes="Elevated">
+    <StackPanel Spacing="16">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Spacing="2">
+          <TextBlock Text="Ban Player(s)" Classes="SectionTitle" FontSize="20" />
+          <TextBlock Text="{Binding TargetNames, StringFormat='Target: {0}'}" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+        </StackPanel>
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" />
+      </Grid>
+
+      <StackPanel Spacing="6">
+        <TextBlock Text="Duration Preset" Classes="Label" />
+        <WrapPanel>
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='1 Hour'}"
+                  Content="1 Hour" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="1 Hour" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='6 Hours'}"
+                  Content="6 Hours" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="6 Hours" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='1 Day'}"
+                  Content="1 Day" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="1 Day" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='3 Days'}"
+                  Content="3 Days" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="3 Days" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='1 Week'}"
+                  Content="1 Week" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="1 Week" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='1 Month'}"
+                  Content="1 Month" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="1 Month" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Outline PresetBtn" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Custom Duration'}"
+                  Content="Custom Duration" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="Custom Duration" 
+                  Margin="0,0,6,6"/>
+
+          <Button Classes="Small Danger Outline PresetBtn Permanent" 
+                  Classes.Selected="{Binding SelectedPreset, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Permanent'}"
+                  Content="Permanent" 
+                  Command="{Binding SetPresetCommand}" 
+                  CommandParameter="Permanent" 
+                  Margin="0,0,6,6"/>
+        </WrapPanel>
+      </StackPanel>
+
+      <StackPanel Spacing="6" IsVisible="{Binding IsCustomSelected}">
+        <TextBlock Text="Custom Duration Breakdown" Classes="Caption" />
+        <Grid ColumnDefinitions="*,*,*,*,*,*,*" ColumnSpacing="6">
+          <StackPanel Grid.Column="0" Spacing="4">
+            <TextBlock Text="Years" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomYears}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="1" Spacing="4">
+            <TextBlock Text="Months" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomMonths}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="2" Spacing="4">
+            <TextBlock Text="Weeks" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomWeeks}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="3" Spacing="4">
+            <TextBlock Text="Days" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomDays}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="4" Spacing="4">
+            <TextBlock Text="Hours" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomHours}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="5" Spacing="4">
+            <TextBlock Text="Minutes" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomMinutes}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+
+          <StackPanel Grid.Column="6" Spacing="4">
+            <TextBlock Text="Seconds" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
+            <TextBox Text="{Binding CustomSeconds}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+          </StackPanel>
+        </Grid>
+      </StackPanel>
+
+      <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" Padding="12" CornerRadius="6">
+        <StackPanel Spacing="4">
+          <TextBlock Text="{Binding TotalCalculatedTimeText}" FontWeight="Bold" FontSize="12" />
+          <TextBlock Text="{Binding ExpiryDateText}" Classes="Caption" />
+        </StackPanel>
+      </Border>
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Reason for Ban" Classes="Label" />
+        <TextBox Text="{Binding Reason}" PlaceholderText="Enter reason..." />
+      </StackPanel>
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Command Preview" Classes="Caption" />
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+          <TextBox Text="{Binding CommandPreview}" IsReadOnly="True" FontFamily="Consolas" FontSize="11" />
+          <Button Grid.Column="1" Classes="Ghost Icon" Command="{Binding CopyCommandPreviewCommand}" ToolTip.Tip="Copy Command">
+            <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+          </Button>
+        </Grid>
+      </StackPanel>
+
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
+        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
+        <Button Grid.Column="2" Classes="Danger" Content="Confirm and Ban" Command="{Binding ConfirmBanCommand}" />
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>

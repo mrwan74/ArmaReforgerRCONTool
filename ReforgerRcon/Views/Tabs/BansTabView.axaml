@@ -1,0 +1,160 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:models="using:ReforgerRcon.Models"
+             x:Class="ReforgerRcon.Views.Tabs.BansTabView"
+             x:DataType="vm:BansViewModel"
+             x:Name="RootBansTab">
+
+  <UserControl.Styles>
+    <Style Selector="DataGridColumnHeader">
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style Selector="DataGridCell">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="DataGridCell:current">
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="DataGridCell:focus">
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <!-- Top Action Toolbar -->
+    <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" Padding="16,8" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Classes="Outline Small" Command="{Binding RefreshBansCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="Refresh" Width="14" Height="14" />
+              <TextBlock Text="Refresh" />
+            </StackPanel>
+          </Button>
+
+          <!-- BattlEye Protocol Specific Buttons -->
+          <Button Classes="Outline Small" Content="loadBans" Command="{Binding LoadBansCommand}" IsVisible="{Binding IsBattlEyeProtocol}" />
+          <Button Classes="Outline Small" Content="writeBans" Command="{Binding WriteBansCommand}" IsVisible="{Binding IsBattlEyeProtocol}" />
+        </StackPanel>
+
+        <!-- Right Side: Multi-Select Toggle -->
+        <ToggleButton Grid.Column="2" Classes="Outline Small" IsChecked="{Binding IsMultiSelectMode}" Content="Multi-Select" />
+      </Grid>
+    </Border>
+
+    <!-- Bans Table -->
+    <DataGrid x:Name="BansGrid"
+              Grid.Row="1"
+              ItemsSource="{Binding Bans}"
+              SelectedItem="{Binding SelectedBan}"
+              AutoGenerateColumns="False"
+              IsReadOnly="True"
+              GridLinesVisibility="Horizontal"
+              CanUserResizeColumns="True"
+              CanUserReorderColumns="True"
+              CanUserSortColumns="True"
+              SelectionMode="Single"
+              Margin="0"
+              x:CompileBindings="False">
+      
+      <DataGrid.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="Remove Ban" Command="{Binding RemoveBanCommand}" CommandParameter="{Binding SelectedBan}" />
+          <Separator />
+          <MenuItem Header="Copy Ban Info" Command="{Binding CopyBanInfoCommand}" CommandParameter="{Binding SelectedBan}" />
+        </ContextMenu>
+      </DataGrid.ContextMenu>
+
+      <DataGrid.Columns>
+        <!-- Selection CheckBox Column with Select-All Header -->
+        <DataGridTemplateColumn Tag="ColSelect" 
+                                Width="50" 
+                                MinWidth="50" 
+                                MaxWidth="50" 
+                                CanUserResize="False" 
+                                CanUserSort="False" 
+                                CanUserReorder="False"
+                                IsVisible="False">
+          <DataGridTemplateColumn.HeaderTemplate>
+            <DataTemplate>
+              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                <CheckBox IsChecked="{Binding $parent[UserControl].DataContext.IsAllSelected, Mode=TwoWay}"
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center"
+                          Margin="0" Padding="0" MinWidth="0" MinHeight="0"
+                          ToolTip.Tip="Select / Deselect All" />
+              </Border>
+            </DataTemplate>
+          </DataGridTemplateColumn.HeaderTemplate>
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:BanModel">
+              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center" 
+                          Margin="0" 
+                          Padding="0" 
+                          MinWidth="0" 
+                          MinHeight="0" />
+              </Border>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Reforger: Banned Name -->
+        <DataGridTemplateColumn Tag="ColReforgerBannedName" Header="Banned Name" Width="260" MinWidth="140">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:BanModel">
+              <TextBlock Text="{Binding BannedName}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Reforger: Identity ID -->
+        <DataGridTextColumn Tag="ColReforgerIdentity" Header="Identity ID" Binding="{Binding IdentityId}" Width="*" MinWidth="220" />
+
+        <!-- BattlEye: [#] -->
+        <DataGridTextColumn Tag="ColBeBanNo" Header="[#]" Binding="{Binding BanNumber}" Width="70" MinWidth="50" />
+
+        <!-- BattlEye: GUID / IP Address -->
+        <DataGridTextColumn Tag="ColBeIdentity" Header="GUID / IP Address" Binding="{Binding IdentityId}" Width="320" MinWidth="180" />
+
+        <!-- BattlEye: Minutes Left -->
+        <DataGridTextColumn Tag="ColBeMinutes" Header="Minutes Left" Binding="{Binding MinutesLeftText}" Width="150" MinWidth="110" />
+
+        <!-- BattlEye: Reason -->
+        <DataGridTextColumn Tag="ColBeReason" Header="Reason" Binding="{Binding Reason}" Width="*" MinWidth="160" />
+
+        <!-- Shared: Actions -->
+        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="140" MinWidth="130">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:BanModel">
+              <Button Classes="Small Danger Outline" Content="Remove Ban" 
+                      Command="{Binding $parent[UserControl].DataContext.RemoveBanCommand}"
+                      CommandParameter="{Binding}" 
+                      Margin="0,0,8,0"
+                      HorizontalAlignment="Right" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <!-- Bottom Multi-Select Actions Bar -->
+    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,8" 
+            BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"
+            IsVisible="{Binding IsMultiSelectMode}">
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+        <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+        <Button Classes="Danger Small" Content="Remove Selected Bans" Command="{Binding RemoveSelectedBansCommand}" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

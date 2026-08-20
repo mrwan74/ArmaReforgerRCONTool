@@ -1,0 +1,20 @@
+<!-- FILE: ReforgerRcon\Views\Dialogs\ConfirmDialog.axaml -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.ConfirmDialog"
+             x:DataType="vm:ConfirmDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="420" Classes="Elevated">
+    <StackPanel Spacing="16">
+      <TextBlock Text="{Binding Title}" Classes="SectionTitle" FontSize="20" />
+      <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
+        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
+        <Button Grid.Column="2" Classes="Danger" Content="{Binding ConfirmButtonText}" Command="{Binding ConfirmCommand}" />
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>

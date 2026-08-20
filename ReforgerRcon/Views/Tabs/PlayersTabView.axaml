@@ -1,0 +1,247 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:models="using:ReforgerRcon.Models"
+             x:Class="ReforgerRcon.Views.Tabs.PlayersTabView"
+             x:DataType="vm:PlayersViewModel"
+             x:Name="RootPlayersTab">
+
+  <UserControl.Styles>
+    <Style Selector="DataGridColumnHeader">
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style Selector="DataGridCell">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="DataGridCell:current">
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="DataGridCell:focus">
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+
+    <!-- Context Menu attached ONLY to valid DataGridRow items -->
+    <Style Selector="DataGridRow">
+      <Setter Property="ContextMenu">
+        <ContextMenu>
+          <MenuItem Header="Player Details" Command="{Binding $parent[UserControl].DataContext.OpenPlayerDetailsCommand}" CommandParameter="{Binding}" />
+          <Separator />
+          <MenuItem Header="Kick Player" Command="{Binding $parent[UserControl].DataContext.OpenKickDialogCommand}" CommandParameter="{Binding}" />
+          <MenuItem Header="Ban Player..." Command="{Binding $parent[UserControl].DataContext.OpenBanDialogCommand}" CommandParameter="{Binding}" />
+          <MenuItem Header="Quick Permanent Ban" Command="{Binding $parent[UserControl].DataContext.QuickPermanentBanCommand}" CommandParameter="{Binding}" />
+          <Separator />
+          <MenuItem Header="Set Comment..." Command="{Binding $parent[UserControl].DataContext.OpenSetCommentCommand}" CommandParameter="{Binding}" />
+          <MenuItem Header="Toggle Watchlist" Command="{Binding $parent[UserControl].DataContext.ToggleWatchlistCommand}" CommandParameter="{Binding}" />
+          <Separator />
+          <MenuItem Header="Copy All Info" Command="{Binding $parent[UserControl].DataContext.CopyPlayerInfoCommand}" CommandParameter="{Binding}" />
+        </ContextMenu>
+      </Setter>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <!-- Top Action Toolbar -->
+    <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" Padding="16,8" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Classes="Outline Small" Command="{Binding RefreshPlayersCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="Refresh" Width="14" Height="14" />
+              <TextBlock Text="Refresh" />
+            </StackPanel>
+          </Button>
+
+          <!-- Reforger Protocol Actions -->
+          <Button Classes="Outline Small" Content="Restart" Command="{Binding ConfirmRestartCommand}" IsVisible="{Binding IsReforgerProtocol}" />
+          <Button Classes="Danger Outline Small" Content="Shutdown" Command="{Binding ConfirmShutdownCommand}" IsVisible="{Binding IsReforgerProtocol}" />
+
+          <Button Classes="Primary Small" Content="Global Message" Command="{Binding OpenGlobalMessageCommand}" IsVisible="False" />
+          <Button Classes="Outline Small" Content="Announcement" Command="{Binding OpenAnnouncementCommand}" IsVisible="False" />
+          <Button Classes="Ghost Small" Content="WCS Menu" IsVisible="False" />
+          <Button Classes="Ghost Small" Content="GM Tools" IsVisible="False" />
+        </StackPanel>
+
+        <!-- Right Side: Multi-Select Toggle -->
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          <ToggleButton Classes="Outline Small" IsChecked="{Binding IsMultiSelectMode}" Content="Multi-Select" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Main Desktop Player Table (DataGrid) -->
+    <DataGrid x:Name="PlayersGrid"
+              Grid.Row="1"
+              ItemsSource="{Binding Players}"
+              SelectedItem="{Binding SelectedPlayer}"
+              AutoGenerateColumns="False"
+              IsReadOnly="True"
+              GridLinesVisibility="Horizontal"
+              CanUserResizeColumns="True"
+              CanUserReorderColumns="True"
+              CanUserSortColumns="True"
+              SelectionMode="Single"
+              DoubleTapped="OnGridDoubleTapped"
+              Margin="0"
+              x:CompileBindings="False">
+
+      <DataGrid.Columns>
+        <!-- Selection CheckBox Column with Named Header -->
+        <DataGridTemplateColumn Tag="ColSelect" 
+                                Width="50" 
+                                MinWidth="50" 
+                                MaxWidth="50" 
+                                CanUserResize="False" 
+                                CanUserSort="False" 
+                                CanUserReorder="False"
+                                IsVisible="False">
+          <DataGridTemplateColumn.Header>
+            <Border x:Name="SelectAllHeaderBorder"
+                    HorizontalAlignment="Stretch" 
+                    VerticalAlignment="Stretch" 
+                    Background="Transparent"
+                    Cursor="Hand"
+                    ToolTip.Tip="Select all players">
+              <CheckBox x:Name="SelectAllCheckBox"
+                        HorizontalAlignment="Center" 
+                        VerticalAlignment="Center"
+                        Margin="0" Padding="0" 
+                        MinWidth="0" MinHeight="0"
+                        ToolTip.Tip="Select all players" />
+            </Border>
+          </DataGridTemplateColumn.Header>
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center"
+                          Margin="0" Padding="0" 
+                          MinWidth="0" MinHeight="0" />
+              </Border>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Status Column -->
+        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="95" MinWidth="75">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <icons:MaterialIcon Kind="Eye" Width="14" Height="14" Foreground="{DynamicResource LuminaWarningBrush}" IsVisible="{Binding IsWatchlisted}" ToolTip.Tip="Watchlisted Player" />
+                <icons:MaterialIcon Kind="AlertCircleOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaDangerBrush}" IsVisible="{Binding HasAliases}" ToolTip.Tip="Known Aliases / Name Changed" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Reforger: Player# -->
+        <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="110" MinWidth="95" />
+
+        <!-- Reforger: Player Name (With Ellipsis & Tooltip) -->
+        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="220" MinWidth="130">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <TextBlock Text="{Binding Name}" 
+                         FontWeight="SemiBold" 
+                         VerticalAlignment="Center" 
+                         Margin="8,0"
+                         TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding Name}" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Reforger: Player UID -->
+        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="260" MinWidth="150" />
+
+        <!-- BattlEye: [#] -->
+        <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" />
+
+        <!-- BattlEye: Country Flag -->
+        <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <lumina:LuminaImage Source="{Binding Country.FlagUrl}" Width="32" Height="22" Stretch="Uniform" ToolTip.Tip="{Binding Country.Name}" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- BattlEye: Name (With Ellipsis & Tooltip) -->
+        <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <TextBlock Text="{Binding Name}" 
+                         FontWeight="SemiBold" 
+                         VerticalAlignment="Center" 
+                         Margin="8,0"
+                         TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding Name}" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- BattlEye: BattlEye GUID -->
+        <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding Guid}" Width="343" MinWidth="150" />
+
+        <!-- BattlEye: IP:Port -->
+        <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" />
+
+        <!-- BattlEye: Ping -->
+        <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <TextBlock Text="{Binding Ping, StringFormat='{}{0} ms'}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Shared: Comment -->
+        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="323" MinWidth="120" />
+
+        <!-- Shared: Actions -->
+        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:PlayerModel">
+              <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,0,8,0">
+                <Button Classes="Small Outline" Content="Details"
+                        Command="{Binding $parent[UserControl].DataContext.OpenPlayerDetailsCommand}"
+                        CommandParameter="{Binding}" />
+                <Button Classes="Small Danger Outline" Content="Kick"
+                        Command="{Binding $parent[UserControl].DataContext.OpenKickDialogCommand}"
+                        CommandParameter="{Binding}" />
+                <Button Classes="Small Danger" Content="Ban"
+                        Command="{Binding $parent[UserControl].DataContext.OpenBanDialogCommand}"
+                        CommandParameter="{Binding}" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <!-- Bottom Multi-Select Sliding Toolbar -->
+    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,12" 
+            BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"
+            IsVisible="{Binding IsMultiSelectMode}">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <TextBlock Text="{Binding SelectedCount, StringFormat='Selected: {0} player(s)'}" FontWeight="Bold" VerticalAlignment="Center" />
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
+          <Button Classes="Danger Small" Content="Kick Selected" Command="{Binding KickSelectedCommand}" />
+          <Button Classes="Danger Outline Small" Content="Ban Selected" Command="{Binding BanSelectedCommand}" />
+          <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+          <Button Classes="Ghost Small" Content="Done" Command="{Binding ToggleMultiSelectCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

@@ -1,0 +1,212 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:converters="using:ReforgerRcon.Converters"
+             x:Class="ReforgerRcon.Views.Dialogs.ErrorDetailsDialog"
+             x:DataType="vm:ErrorDetailsDialogViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="Button.DiagTabBtn.Selected">
+      <Setter Property="Background" Value="{DynamicResource LuminaPrimaryBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LuminaPrimaryBrush}" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+  </UserControl.Styles>
+
+  <lumina:LuminaCard Padding="24" Width="760" MaxHeight="820" Classes="Elevated">
+    <StackPanel Spacing="14">
+      <!-- Header with Crash ID & Source -->
+      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="#20EF4444" CornerRadius="8" Padding="7" VerticalAlignment="Center">
+            <icons:MaterialIcon Kind="AlertOctagram" Foreground="{DynamicResource LuminaDangerBrush}" Width="22" Height="22" />
+          </Border>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="System Fault &amp; Memory Dump Captured" Classes="SectionTitle" FontSize="17" FontWeight="SemiBold" />
+              <Border Background="{DynamicResource LuminaDangerBgBrush}" Padding="6,2" CornerRadius="4">
+                <TextBlock Text="{Binding Report.ErrorId, StringFormat='ID: #{0}'}" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource LuminaDangerBrush}" />
+              </Border>
+            </StackPanel>
+            <TextBlock Text="{Binding Report.Source, StringFormat='Captured by: {0}'}" FontSize="12" Foreground="{DynamicResource LuminaTextTertiaryBrush}" />
+          </StackPanel>
+        </StackPanel>
+
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" VerticalAlignment="Center" />
+      </Grid>
+
+      <!-- Exception Message Banner -->
+      <Border Background="#1CEF4444" 
+              BorderBrush="#40EF4444" 
+              BorderThickness="1" 
+              CornerRadius="8" 
+              Padding="14">
+        <StackPanel Spacing="6">
+          <TextBlock Text="{Binding Report.ExceptionType}" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource LuminaDangerBrush}" />
+          <TextBlock Text="{Binding Report.Message}" FontSize="13" TextWrapping="Wrap" LineHeight="18" Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
+        </StackPanel>
+      </Border>
+
+      <!-- Real System Telemetry Badges Strip -->
+      <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
+        <Border Grid.Column="0" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="8,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="RAM WORKING SET" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaTextTertiaryBrush}" />
+            <TextBlock Text="{Binding Report.RamWorkingSetMb, StringFormat='{}{0:F1} MB'}" FontWeight="Bold" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="1" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="8,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="PROCESS UPTIME" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaTextTertiaryBrush}" />
+            <TextBlock Text="{Binding Report.FormattedUptime}" FontWeight="Bold" FontSize="12" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="2" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="8,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="DUMP FILE SIZE" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaTextTertiaryBrush}" />
+            <TextBlock Text="{Binding Report.FormattedDumpSize}" FontWeight="Bold" FontSize="12" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="3" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="8,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="MANAGED THREAD" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaTextTertiaryBrush}" />
+            <TextBlock Text="{Binding Report.ThreadId, StringFormat='{}Thread #{0}'}" FontWeight="Bold" FontSize="12" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Memory Dump (.dmp) File Information Row -->
+      <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,8" IsVisible="{Binding Report.HasMemoryDump}">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" VerticalAlignment="Center">
+          <icons:MaterialIcon Kind="Memory" Width="16" Height="16" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+            <TextBlock Text="{Binding DumpFileName, StringFormat='Memory Dump: {0}'}" 
+                       FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource LuminaTextPrimaryBrush}" 
+                       VerticalAlignment="Center" 
+                       TextTrimming="CharacterEllipsis" />
+            <TextBlock Text="{Binding Report.FormattedDumpSize, StringFormat='({0})'}"
+                       FontSize="11"
+                       Foreground="{DynamicResource LuminaTextTertiaryBrush}"
+                       VerticalAlignment="Center" />
+          </StackPanel>
+          <Button Grid.Column="2" 
+                  Classes="Small Ghost" 
+                  Command="{Binding CopyDumpPathCommand}" 
+                  ToolTip.Tip="Copy memory dump path to clipboard">
+            <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+          </Button>
+          <Button Grid.Column="3" 
+                  Classes="Small Outline" 
+                  Command="{Binding OpenLogFolderCommand}" 
+                  CommandParameter="{Binding Report.DumpFilePath}"
+                  ToolTip.Tip="Select memory dump file in File Explorer">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="FolderOpenOutline" Width="14" Height="14" />
+              <TextBlock Text="Show Dump" />
+            </StackPanel>
+          </Button>
+        </Grid>
+      </Border>
+
+      <!-- Diagnostic Data Selector Tabs -->
+      <StackPanel Spacing="6">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Button Classes="Small Outline DiagTabBtn" 
+                  Classes.Selected="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='StackTrace'}"
+                  Content="Stack Trace" 
+                  Command="{Binding SetTabCommand}" 
+                  CommandParameter="StackTrace" />
+
+          <Button Classes="Small Outline DiagTabBtn" 
+                  Classes.Selected="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Breadcrumbs'}"
+                  Content="Action Breadcrumbs" 
+                  Command="{Binding SetTabCommand}" 
+                  CommandParameter="Breadcrumbs" />
+
+          <Button Classes="Small Outline DiagTabBtn" 
+                  Classes.Selected="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='SystemInfo'}"
+                  Content="System Environment" 
+                  Command="{Binding SetTabCommand}" 
+                  CommandParameter="SystemInfo" />
+
+          <Button Classes="Small Outline DiagTabBtn" 
+                  Classes.Selected="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='FullReport'}"
+                  Content="Full Diagnostic Log" 
+                  Command="{Binding SetTabCommand}" 
+                  CommandParameter="FullReport" />
+        </StackPanel>
+
+        <!-- Dynamic Content Viewer Box -->
+        <Border Background="{DynamicResource LuminaNavigationPaneBrush}"
+                BorderBrush="{DynamicResource LuminaBorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="10">
+          <ScrollViewer MaxHeight="220" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <Grid>
+              <!-- 1. Stack Trace View -->
+              <SelectableTextBlock Text="{Binding Report.StackTrace}" 
+                                   FontFamily="Consolas, Cascadia Code, monospace" 
+                                   FontSize="11" 
+                                   Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
+                                   TextWrapping="NoWrap"
+                                   IsVisible="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='StackTrace'}" />
+
+              <!-- 2. Breadcrumbs View -->
+              <SelectableTextBlock Text="{Binding FormattedBreadcrumbs}" 
+                                   FontFamily="Consolas, Cascadia Code, monospace" 
+                                   FontSize="11" 
+                                   Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
+                                   TextWrapping="NoWrap"
+                                   IsVisible="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Breadcrumbs'}" />
+
+              <!-- 3. System Environment View -->
+              <SelectableTextBlock Text="{Binding FormattedSystemInfo}" 
+                                   FontFamily="Consolas, Cascadia Code, monospace" 
+                                   FontSize="11" 
+                                   Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
+                                   TextWrapping="NoWrap"
+                                   IsVisible="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='SystemInfo'}" />
+
+              <!-- 4. Full Report Text View -->
+              <SelectableTextBlock Text="{Binding Report.FullReportText}" 
+                                   FontFamily="Consolas, Cascadia Code, monospace" 
+                                   FontSize="11" 
+                                   Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
+                                   TextWrapping="NoWrap"
+                                   IsVisible="{Binding SelectedTab, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='FullReport'}" />
+            </Grid>
+          </ScrollViewer>
+        </Border>
+      </StackPanel>
+
+      <!-- Action Buttons -->
+      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,4,0,0">
+        <Button Grid.Column="0" 
+                Classes="Small Danger Outline" 
+                Content="Restart Application" 
+                Command="{Binding RestartAppCommand}" 
+                ToolTip.Tip="Relaunch the application cleanly" />
+
+        <Button Grid.Column="2" 
+                Classes="Ghost" 
+                Content="Dismiss" 
+                Command="{Binding CloseCommand}" />
+
+        <Button Grid.Column="3" 
+                Classes="Primary" 
+                Command="{Binding CopyDetailsCommand}" 
+                ToolTip.Tip="Copy diagnostic report to clipboard">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            <TextBlock Text="Copy Diagnostic Report" />
+          </StackPanel>
+        </Button>
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>

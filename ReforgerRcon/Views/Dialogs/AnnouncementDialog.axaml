@@ -1,0 +1,29 @@
+<!-- FILE: ReforgerRcon\Views\Dialogs\AnnouncementDialog.axaml -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.AnnouncementDialog"
+             x:DataType="vm:AnnouncementDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="460" Classes="Elevated">
+    <StackPanel Spacing="16">
+      <TextBlock Text="Server Announcement" Classes="SectionTitle" FontSize="20" />
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Title / Header" Classes="Label" />
+        <TextBox Text="{Binding Title}" />
+      </StackPanel>
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Announcement Text" Classes="Label" />
+        <TextBox Text="{Binding Message}" PlaceholderText="Enter important broadcast text..." AcceptsReturn="True" MinHeight="90" />
+      </StackPanel>
+
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
+        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
+        <Button Grid.Column="2" Classes="Primary" Content="Broadcast Announcement" Command="{Binding SendCommand}" />
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>

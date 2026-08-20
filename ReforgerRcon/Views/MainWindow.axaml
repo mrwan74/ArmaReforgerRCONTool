@@ -1,0 +1,98 @@
+<lumina:LuminaWindow xmlns="https://github.com/avaloniaui"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+                     xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+                     xmlns:vm="using:ReforgerRcon.ViewModels"
+                     xmlns:views="using:ReforgerRcon.Views"
+                     xmlns:dialogs="using:ReforgerRcon.Views.Dialogs"
+                     xmlns:services="using:ReforgerRcon.Services"
+                     xmlns:models="using:ReforgerRcon.Models"
+                     x:Class="ReforgerRcon.Views.MainWindow"
+                     x:DataType="vm:MainViewModel"
+                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.6.2"
+                     Width="1696" Height="937"
+                     MinWidth="960" MinHeight="640"
+                     WindowStartupLocation="CenterScreen"
+                     WindowChromeMode="Extended"
+                     UseWindowGlass="True">
+
+  <lumina:LuminaWindow.TitleBarLeftContent>
+    <!-- Blue box icon removed; updated name -->
+    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.6.2" 
+               FontSize="11" 
+               FontWeight="Bold" 
+               Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
+               VerticalAlignment="Center" 
+               Margin="4,0,0,0" />
+  </lumina:LuminaWindow.TitleBarLeftContent>
+
+  <lumina:LuminaWindow.TitleBarRightContent>
+    <Button Theme="{StaticResource LuminaTitleBarButton}"
+            Command="{Binding ToggleThemeCommand}"
+            ToolTip.Tip="Toggle Dark / Light Theme"
+            Width="40" Height="40">
+      <icons:MaterialIcon Kind="ThemeLightDark" Width="16" Height="16" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+    </Button>
+  </lumina:LuminaWindow.TitleBarRightContent>
+
+  <Grid>
+    <!-- Dynamic View Hosting (Login / Dashboard) -->
+    <TransitioningContentControl Content="{Binding CurrentView}">
+      <TransitioningContentControl.DataTemplates>
+        <DataTemplate DataType="vm:LoginViewModel">
+          <views:LoginView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:DashboardViewModel">
+          <views:DashboardView />
+        </DataTemplate>
+      </TransitioningContentControl.DataTemplates>
+    </TransitioningContentControl>
+
+    <!-- Global Toast Notifications Layer -->
+    <ItemsControl ItemsSource="{Binding Source={x:Static services:ToastNotificationService.Instance}, Path=ActiveToasts}"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Bottom"
+                  Margin="24"
+                  ZIndex="9990">
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="models:ToastNotificationModel">
+          <lumina:LuminaCard Margin="0,4" Padding="12,8" Classes="Elevated" MinWidth="320" MaxWidth="460">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+              <StackPanel Spacing="2">
+                <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
+                <TextBlock Text="{Binding Message}" FontSize="12" Foreground="{DynamicResource LuminaTextSecondaryBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding CommandExecuted}" 
+                           IsVisible="{Binding HasCommand}"
+                           FontSize="10" FontFamily="Consolas" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              </StackPanel>
+              
+              <Button Grid.Column="1" Classes="Small Primary" Content="Undo" 
+                          IsVisible="{Binding HasUndo}"
+                          Command="{Binding UndoCommand}" Margin="8,0,4,0"/>
+
+              <Button Grid.Column="2" Classes="Small Ghost Icon" Content="✕"
+                          Command="{Binding DismissCommand}" Margin="2,0,0,0" ToolTip.Tip="Dismiss" />
+            </Grid>
+          </lumina:LuminaCard>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <!-- Global Modal Error / Crash Dialog Overlay -->
+    <Border Background="#A0000000" 
+            IsVisible="{Binding IsErrorDialogVisible}" 
+            ZIndex="99999"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch">
+      <ContentControl Content="{Binding CurrentErrorViewModel}" 
+                      HorizontalAlignment="Center" 
+                      VerticalAlignment="Center">
+        <ContentControl.DataTemplates>
+          <DataTemplate DataType="{x:Type vm:ErrorDetailsDialogViewModel}">
+            <dialogs:ErrorDetailsDialog />
+          </DataTemplate>
+        </ContentControl.DataTemplates>
+      </ContentControl>
+    </Border>
+  </Grid>
+</lumina:LuminaWindow>

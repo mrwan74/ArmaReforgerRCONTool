@@ -1,0 +1,80 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.DatabasePlayerDetailDialog"
+             x:DataType="vm:DatabasePlayerDetailViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="490" MaxHeight="640" Classes="Elevated">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="16">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Spacing="2">
+            <TextBlock Text="Database Player Entry" Classes="SectionTitle" FontSize="20" />
+            <TextBlock Text="{Binding Player.Name}" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+          </StackPanel>
+          <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" />
+        </Grid>
+
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Name:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Name}">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="UID:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Uid}" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Uid}">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="GUID:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Guid}" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Guid}">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Last Endpoint:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.LastIp}" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.LastIp}">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Last Location:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Location}" VerticalAlignment="Center" />
+          </Grid>
+
+          <!-- Comment with Edit Button -->
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Comment:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Comment}" VerticalAlignment="Center" TextWrapping="Wrap" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+              <Button Classes="Ghost Icon" Command="{Binding EditCommentCommand}" ToolTip.Tip="Edit Comment">
+                <icons:MaterialIcon Kind="PencilOutline" Width="14" Height="14" />
+              </Button>
+              <Button Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Comment}">
+                <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+              </Button>
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,8,0,0">
+          <Button Grid.Column="0" Classes="Danger Outline" Content="Offline Ban Target" Command="{Binding OfflineBanCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
+          <Button Grid.Column="1" Classes="Outline" Content="Close" Command="{Binding CloseCommand}" />
+        </Grid>
+      </StackPanel>
+    </ScrollViewer>
+  </lumina:LuminaCard>
+</UserControl>

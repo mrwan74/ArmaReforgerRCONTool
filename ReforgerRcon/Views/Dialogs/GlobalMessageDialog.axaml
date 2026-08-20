@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.GlobalMessageDialog"
+             x:DataType="vm:GlobalMessageDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="440" Classes="Elevated">
+    <StackPanel Spacing="16">
+      <TextBlock Text="Send Global Broadcast" Classes="SectionTitle" FontSize="20" />
+      <TextBox Text="{Binding Message}" PlaceholderText="Enter server-wide announcement message..." AcceptsReturn="True" MinHeight="96" />
+
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
+        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
+        <Button Grid.Column="2" Classes="Primary" Content="Broadcast" Command="{Binding SendCommand}" />
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>

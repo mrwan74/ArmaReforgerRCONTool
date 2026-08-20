@@ -1,0 +1,26 @@
+<lumina:LuminaWindow xmlns="https://github.com/avaloniaui"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+                     xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+                     xmlns:vm="using:ReforgerRcon.ViewModels"
+                     xmlns:tabs="using:ReforgerRcon.Views.Tabs"
+                     x:Class="ReforgerRcon.Views.ConsoleWindow"
+                     x:DataType="vm:ConsoleViewModel"
+                     Title="ARMA Reforger - RCON Console (DETACHED)"
+                     Width="920" Height="580"
+                     MinWidth="600" MinHeight="360"
+                     WindowStartupLocation="CenterOwner"
+                     WindowChromeMode="Extended"
+                     UseWindowGlass="True">
+
+  <lumina:LuminaWindow.TitleBarLeftContent>
+    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+      <icons:MaterialIcon Kind="Console" Width="16" Height="16" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+      <TextBlock Text="RCON CONSOLE (DETACHED)" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+    </StackPanel>
+  </lumina:LuminaWindow.TitleBarLeftContent>
+
+  <Grid Margin="12,4,12,12">
+    <tabs:ConsoleTabView DataContext="{Binding}" />
+  </Grid>
+</lumina:LuminaWindow>

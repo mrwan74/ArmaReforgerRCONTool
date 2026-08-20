@@ -1,0 +1,130 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Tabs.SettingsTabView"
+             x:DataType="vm:SettingsViewModel">
+
+  <ScrollViewer Margin="24">
+    <StackPanel Spacing="20" MaxWidth="720" HorizontalAlignment="Left">
+      <TextBlock Text="Application Settings" Classes="Display" FontSize="24" />
+
+      <!-- MaxMind GeoIP2 Configuration Card -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="Earth" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="MaxMind GeoLite2 Geolocation" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+
+            <Button Grid.Column="1" Classes="Primary Small" 
+                    Content="Update Databases" 
+                    Command="{Binding UpdateGeoIpDatabasesCommand}"
+                    lumina:LuminaButton.IsLoading="{Binding IsGeoIpUpdating}"
+                    ToolTip.Tip="Download latest binary MMDB updates from MaxMind (Requires Account ID &amp; License Key)" />
+          </Grid>
+
+          <TextBlock Text="The app uses offline pre-bundled GeoLite2 binary databases out of the box. MaxMind credentials are only required if you wish to download newer weekly updates." Classes="Caption" />
+
+          <!-- Optional Account ID and License Key Form -->
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Grid.Column="0" Spacing="4">
+              <TextBlock Text="MaxMind Account ID (Optional for updates)" Classes="Label" />
+              <TextBox Text="{Binding Settings.MaxMindAccountId}" PlaceholderText="Enter Account ID (e.g. 123456)" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="4">
+              <TextBlock Text="MaxMind License Key (Optional for updates)" Classes="Label" />
+              <TextBox Text="{Binding Settings.MaxMindLicenseKey}" 
+                       PasswordChar="{Binding LicenseKeyMaskChar}"
+                       PlaceholderText="Enter License Key...">
+                <TextBox.InnerRightContent>
+                  <Button Classes="Ghost Icon" 
+                          Command="{Binding ToggleLicenseKeyRevealCommand}" 
+                          Margin="0,0,4,0" 
+                          Width="28" Height="28"
+                          ToolTip.Tip="Show / Hide Key">
+                    <icons:MaterialIcon Kind="{Binding LicenseKeyIconKind}" Width="14" Height="14" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                  </Button>
+                </TextBox.InnerRightContent>
+              </TextBox>
+            </StackPanel>
+          </Grid>
+
+          <!-- Database Status Details Box -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,8">
+            <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="170,*" RowSpacing="6">
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="City Database (.mmdb):" Classes="Caption" FontWeight="SemiBold" />
+              <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding GeoIpCityStatusText}" />
+
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="Country Database (.mmdb):" Classes="Caption" FontWeight="SemiBold" />
+              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding GeoIpCountryStatusText}" />
+
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="Database Version / Date:" Classes="Caption" FontWeight="SemiBold" />
+              <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding GeoIpLastUpdatedText}" />
+            </Grid>
+          </Border>
+        </StackPanel>
+      </lumina:LuminaCard>
+
+      <!-- Notification Channels -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="12">
+          <TextBlock Text="Notification Channels" Classes="SectionTitle" FontSize="16" />
+          
+          <!-- Audio Alerts: Greyed out & Disabled -->
+          <ToggleSwitch Content="Audio Alerts" 
+                        IsChecked="{Binding Settings.AudioAlerts}" 
+                        IsEnabled="False" />
+
+          <!-- Toast Notifications: Active -->
+          <ToggleSwitch Content="Toast Notifications (Action commands and undo)" 
+                        IsChecked="{Binding Settings.ToastNotifications}" />
+
+          <!-- Push Notifications: Greyed out & Disabled -->
+          <ToggleSwitch Content="Push Notifications" 
+                        IsChecked="{Binding Settings.PushNotifications}" 
+                        IsEnabled="False" />
+        </StackPanel>
+      </lumina:LuminaCard>
+
+      <!-- Alert Triggers: All Greyed out & Disabled -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="10">
+          <TextBlock Text="Alert Events" Classes="SectionTitle" FontSize="16" />
+          
+          <CheckBox Content="Player Joins" 
+                    IsChecked="{Binding Settings.AlertOnJoin}" 
+                    IsEnabled="False" />
+
+          <CheckBox Content="Player Leaves" 
+                    IsChecked="{Binding Settings.AlertOnLeave}" 
+                    IsEnabled="False" />
+
+          <CheckBox Content="Watchlisted Player Joins" 
+                    IsChecked="{Binding Settings.AlertOnWatchlistJoin}" 
+                    IsEnabled="False" />
+
+          <CheckBox Content="Watchlisted Player Leaves" 
+                    IsChecked="{Binding Settings.AlertOnWatchlistLeave}" 
+                    IsEnabled="False" />
+        </StackPanel>
+      </lumina:LuminaCard>
+
+      <!-- General Settings -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="14">
+          <TextBlock Text="General and Background Execution" Classes="SectionTitle" FontSize="16" />
+          <Grid ColumnDefinitions="*,120">
+            <TextBlock Text="Auto-refresh Interval (Seconds)" VerticalAlignment="Center" />
+            <NumericUpDown Grid.Column="1" Minimum="1" Maximum="60" Value="{Binding Settings.RefreshIntervalSeconds}" />
+          </Grid>
+          <ToggleSwitch Content="Keep App Running in Background while connected" IsChecked="{Binding Settings.RunInBackground}" />
+          <Button Classes="Danger Outline" Content="Clear Historical Database" Command="{Binding ClearDatabaseCommand}" HorizontalAlignment="Left" />
+        </StackPanel>
+      </lumina:LuminaCard>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

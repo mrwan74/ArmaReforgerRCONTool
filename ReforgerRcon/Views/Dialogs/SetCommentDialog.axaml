@@ -1,0 +1,25 @@
+<!-- FILE: ReforgerRcon\Views\Dialogs\SetCommentDialog.axaml -->
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.SetCommentDialog"
+             x:DataType="vm:SetCommentDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="440" Classes="Elevated">
+    <StackPanel Spacing="16">
+      <TextBlock Text="Edit Player Comment" Classes="SectionTitle" FontSize="20" />
+      <TextBlock Text="{Binding PlayerName, StringFormat='Player: {0}'}" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Administrator Comment / Notes" Classes="Label" />
+        <TextBox Text="{Binding Comment}" PlaceholderText="Enter player notes..." AcceptsReturn="True" MinHeight="80" />
+      </StackPanel>
+
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
+        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
+        <Button Grid.Column="2" Classes="Primary" Content="Save Comment" Command="{Binding SaveCommand}" />
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>

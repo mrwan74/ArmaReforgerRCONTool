@@ -1,0 +1,12 @@
+﻿root = true
+
+[*.cs]
+# Disable all code spell-checker info/warning messages project-wide
+dotnet_diagnostic.CRRSP01.severity = none
+dotnet_diagnostic.CRRSP02.severity = none
+dotnet_diagnostic.CRRSP03.severity = none
+dotnet_diagnostic.CRRSP04.severity = none
+dotnet_diagnostic.CRRSP05.severity = none
+dotnet_diagnostic.CRRSP06.severity = none
+dotnet_diagnostic.CRRSP07.severity = none
+dotnet_diagnostic.CRRSP08.severity = none

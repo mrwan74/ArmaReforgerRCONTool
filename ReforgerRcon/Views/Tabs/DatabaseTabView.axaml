@@ -1,0 +1,227 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:models="using:ReforgerRcon.Models"
+             x:Class="ReforgerRcon.Views.Tabs.DatabaseTabView"
+             x:DataType="vm:DatabaseViewModel"
+             x:Name="RootDatabaseTab">
+
+  <UserControl.Styles>
+    <Style Selector="DataGridColumnHeader">
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style Selector="DataGridCell">
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="DataGridCell:current">
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+    <Style Selector="DataGridCell:focus">
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" Padding="16,8" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Classes="Outline Small" Command="{Binding LoadDbCommand}">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="Refresh" Width="14" Height="14" />
+              <TextBlock Text="Refresh Database" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          <ToggleButton Classes="Outline Small" IsChecked="{Binding IsMultiSelectMode}" Content="Multi-Select" />
+          <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <DataGrid x:Name="DatabaseGrid" 
+              Grid.Row="1" 
+              ItemsSource="{Binding Players}" 
+              SelectedItem="{Binding SelectedPlayer}" 
+              AutoGenerateColumns="False" 
+              IsReadOnly="True" 
+              GridLinesVisibility="Horizontal" 
+              CanUserResizeColumns="True"
+              CanUserReorderColumns="True"
+              CanUserSortColumns="True"
+              DoubleTapped="OnGridDoubleTapped"
+              SelectionMode="Single"
+              Margin="0"
+              x:CompileBindings="False">
+      
+      <DataGrid.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="Player Details" Command="{Binding OpenPlayerDetailsCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <MenuItem Header="Offline Ban..." Command="{Binding OpenOfflineBanCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <MenuItem Header="Quick Kick Active Session" Command="{Binding QuickKickCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <Separator />
+          <MenuItem Header="Set Comment..." Command="{Binding OpenSetCommentCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <MenuItem Header="Toggle Watchlist" Command="{Binding ToggleWatchlistCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <Separator />
+          <MenuItem Header="Copy Info" Command="{Binding CopyPlayerInfoCommand}" CommandParameter="{Binding SelectedPlayer}" />
+        </ContextMenu>
+      </DataGrid.ContextMenu>
+
+      <DataGrid.Columns>
+        <!-- Selection CheckBox Column -->
+        <DataGridTemplateColumn Tag="ColSelect" 
+                                Width="50" 
+                                MinWidth="50" 
+                                MaxWidth="50" 
+                                CanUserResize="False" 
+                                CanUserSort="False" 
+                                CanUserReorder="False"
+                                IsVisible="False">
+          <DataGridTemplateColumn.HeaderTemplate>
+            <DataTemplate>
+              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                <CheckBox IsChecked="{Binding $parent[UserControl].DataContext.IsAllSelected, Mode=TwoWay}"
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center"
+                          Margin="0" Padding="0" MinWidth="0" MinHeight="0"
+                          ToolTip.Tip="Select / Deselect All" />
+              </Border>
+            </DataTemplate>
+          </DataGridTemplateColumn.HeaderTemplate>
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center" 
+                          Margin="0" 
+                          Padding="0" 
+                          MinWidth="0" 
+                          MinHeight="0" />
+              </Border>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Status Column -->
+        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="95" MinWidth="75">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border Width="8" Height="8" CornerRadius="4" 
+                        Background="{DynamicResource LuminaSuccessBrush}" 
+                        IsVisible="{Binding IsOnline}" 
+                        ToolTip.Tip="Online" />
+                <Border Width="8" Height="8" CornerRadius="4" 
+                        Background="{DynamicResource LuminaTextTertiaryBrush}" 
+                        Opacity="0.4"
+                        IsVisible="{Binding !IsOnline}" 
+                        ToolTip.Tip="Offline Record" />
+
+                <icons:MaterialIcon Kind="Eye" Width="14" Height="14" Foreground="{DynamicResource LuminaWarningBrush}" IsVisible="{Binding IsWatchlisted}" ToolTip.Tip="Watchlisted Player" />
+                <icons:MaterialIcon Kind="AlertCircleOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaDangerBrush}" IsVisible="{Binding HasAliases}" ToolTip.Tip="Known Aliases / Name Changed" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Reforger: Player# -->
+        <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="90" MinWidth="80" />
+
+        <!-- Reforger: Player Name -->
+        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="220" MinWidth="130">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <TextBlock Text="{Binding Name}" 
+                         FontWeight="SemiBold" 
+                         VerticalAlignment="Center" 
+                         Margin="8,0"
+                         TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding Name}" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Reforger: Player UID -->
+        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="260" MinWidth="150" />
+
+        <!-- BattlEye: [#] -->
+        <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" />
+
+        <!-- BattlEye: Country Flag -->
+        <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <lumina:LuminaImage Source="{Binding Country.FlagUrl}" Width="32" Height="22" Stretch="Uniform" ToolTip.Tip="{Binding Country.Name}" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- BattlEye: Name -->
+        <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <TextBlock Text="{Binding Name}" 
+                         FontWeight="SemiBold" 
+                         VerticalAlignment="Center" 
+                         Margin="8,0"
+                         TextTrimming="CharacterEllipsis"
+                         ToolTip.Tip="{Binding Name}" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- BattlEye: BattlEye GUID -->
+        <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding Guid}" Width="343" MinWidth="150" />
+
+        <!-- BattlEye: IP:Port -->
+        <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" />
+
+        <!-- BattlEye: Ping -->
+        <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <TextBlock Text="{Binding PingDisplay}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Shared Columns -->
+        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="323" MinWidth="120" />
+
+        <!-- Shared Actions -->
+        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="models:DatabasePlayerModel">
+              <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,0,8,0">
+                <Button Classes="Small Outline" Content="Details" 
+                        Command="{Binding $parent[UserControl].DataContext.OpenPlayerDetailsCommand}"
+                        CommandParameter="{Binding}" />
+                <Button Classes="Small Danger Outline" Content="Offline Ban" 
+                        Command="{Binding $parent[UserControl].DataContext.OpenOfflineBanCommand}"
+                        CommandParameter="{Binding}" />
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,8" 
+            BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"
+            IsVisible="{Binding IsMultiSelectMode}">
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+        <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</UserControl>

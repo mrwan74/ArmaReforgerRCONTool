@@ -1,0 +1,124 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:models="using:ReforgerRcon.Models"
+             x:Class="ReforgerRcon.Views.LoginView"
+             x:DataType="vm:LoginViewModel"
+             x:Name="RootLoginView">
+
+  <Grid ColumnDefinitions="320,*" Margin="32">
+    <!-- Server Profiles Sidebar -->
+    <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16">
+      <Grid RowDefinitions="Auto,*,Auto,Auto">
+        <TextBlock Text="Saved Profiles" Classes="SectionTitle" Margin="0,0,0,12" />
+
+        <ListBox Grid.Row="1" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="models:ServerProfile">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding ServerIp}" Classes="Caption" />
+                </StackPanel>
+                <Button Grid.Column="1" Classes="Small Ghost" Content="✕" 
+                        Command="{Binding $parent[UserControl].DataContext.DeleteProfileCommand}"
+                        CommandParameter="{Binding}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel Grid.Row="2" Spacing="8" Margin="0,12,0,0">
+          <TextBox PlaceholderText="New Profile Name..." Text="{Binding NewProfileName}" />
+          <Button Content="Save Profile" Classes="Outline" Command="{Binding SaveCurrentProfileCommand}" HorizontalAlignment="Stretch" />
+        </StackPanel>
+
+        <!-- Diagnostic Crash Simulation Test Button -->
+        <Button Grid.Row="3" Classes="Danger Outline Small" 
+                Content="Test Crash Reporter" 
+                Command="{Binding TriggerTestCrashCommand}" 
+                HorizontalAlignment="Stretch" 
+                Margin="0,12,0,0"
+                ToolTip.Tip="Throws a test unhandled exception to verify the crash report window" />
+      </Grid>
+    </lumina:LuminaCard>
+
+    <!-- Connection Box -->
+    <lumina:LuminaCard Grid.Column="1" Padding="32" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="18">
+        <StackPanel Spacing="4">
+          <TextBlock Text="Connect to Server" Classes="Display" FontSize="26" />
+          <TextBlock Text="Manage your ARMA Reforger server using Reforger's Built-In RCON or BattlEye RCON" Classes="Caption" />
+        </StackPanel>
+
+        <!-- Protocol Selector Toggle -->
+        <StackPanel Spacing="6">
+          <TextBlock Text="RCON Protocol" Classes="Label" />
+          <lumina:LuminaButtonGroup SelectedIndex="{Binding Protocol, Mode=TwoWay}">
+            <lumina:LuminaButtonGroupItem Content="Reforger Built-in RCON" />
+            <lumina:LuminaButtonGroupItem Content="BattlEye RCON" />
+          </lumina:LuminaButtonGroup>
+        </StackPanel>
+
+        <!-- IP & Port -->
+        <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Server IP / Hostname" Classes="Label" />
+            <TextBox Text="{Binding ServerIp}" PlaceholderText="127.0.0.1" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Spacing="4">
+            <TextBlock Text="Port" Classes="Label" />
+            <TextBox Text="{Binding Port}" PlaceholderText="19999" />
+          </StackPanel>
+        </Grid>
+
+        <!-- Password with Reveal Toggle and Bullet Dots Mask -->
+        <StackPanel Spacing="4">
+          <TextBlock Text="RCON Password" Classes="Label" />
+          <TextBox Text="{Binding Password}" 
+                   PasswordChar="{Binding PasswordMaskChar}" 
+                   PlaceholderText="Enter RCON password...">
+            <TextBox.InnerRightContent>
+              <Button Classes="Ghost Icon" 
+                      Command="{Binding TogglePasswordRevealCommand}" 
+                      Margin="0,0,4,0" 
+                      Width="30" Height="30"
+                      ToolTip.Tip="Show / Hide Password">
+                <icons:MaterialIcon Kind="{Binding PasswordIconKind}" Width="16" Height="16" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+              </Button>
+            </TextBox.InnerRightContent>
+          </TextBox>
+        </StackPanel>
+
+        <!-- Auto connect -->
+        <CheckBox IsChecked="{Binding AutoConnect}" Content="Auto-connect on startup" />
+
+        <!-- Error message banner -->
+        <Border Background="{DynamicResource LuminaDangerBgBrush}" 
+                BorderBrush="{DynamicResource LuminaDangerBrush}" 
+                BorderThickness="1" 
+                CornerRadius="6" 
+                Padding="12"
+                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+          <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource LuminaDangerBrush}" TextWrapping="Wrap" />
+        </Border>
+
+        <!-- Primary Live Connection Action -->
+        <Button Content="Connect to Server"
+                Classes="Primary Large"
+                Command="{Binding ConnectCommand}"
+                lumina:LuminaButton.IsLoading="{Binding IsConnecting}"
+                HorizontalAlignment="Stretch" />
+
+        <!-- Simulated Demo Mode Button -->
+        <Button Content="Launch Demo Mode (Simulated Server)"
+                Classes="Outline"
+                Command="{Binding LaunchDemoModeCommand}"
+                HorizontalAlignment="Stretch"
+                ToolTip.Tip="Launch full management suite with simulated players and data" />
+      </StackPanel>
+    </lumina:LuminaCard>
+  </Grid>
+</UserControl>
