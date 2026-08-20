@@ -15,7 +15,19 @@
 The ARMA REFORGER RCON TOOL (ARRT) is a desktop administration tool developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
 
 ---
+## 📥 Download
 
+Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
+
+[](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.6.2-alpha)
+
+👉 Download the ARMA Reforger RCON Tool v0.6.2-alpha (.zip) from https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.6.2-alpha
+
+### 🚀 Quick Start (100% Portable / Zero-Install)
+
+1. Obtain the `.zip` file from the **[v0.6.2-alpha Release Page](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.6.2-alpha)**.
+2. Copy the files anywhere on your PC (for example, to the Desktop, a USB drive, or the server tools folder).
+3. Double-click **`ReforgerRcon.exe`** to start. You do not need to install anything or have administrator rights.
 ## Key Features
 
 - **Dual Protocol Support:** You can smoothly switch between the built in RCON provided natively by ARMA Reforger and the standard BattlEye RCON.
