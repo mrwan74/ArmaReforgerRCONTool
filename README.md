@@ -5,7 +5,7 @@
 [![Avalonia UI](https://img.shields.io/badge/UI-Avalonia_12-8A2BE2?style=flat&logo=avalonia)](https://avaloniaui.net/)
 [![Release](https://img.shields.io/badge/Version-v0.6.2-blue?style=flat)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat&logo=windows)](https://github.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 > [!NOTE]
 > 🤖 **AI-Assisted Development Notice**  
