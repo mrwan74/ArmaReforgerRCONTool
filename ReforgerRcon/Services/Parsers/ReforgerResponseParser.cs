@@ -20,6 +20,65 @@ public static partial class ReforgerResponseParser
     [GeneratedRegex(@"[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
     private static partial Regex ExcessiveZalgoRegex();
 
+    public static string SanitizeText(string? raw, string fallback = "")
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+
+        var sb = new StringBuilder(raw.Length);
+
+        foreach (char c in raw)
+        {
+            if (c is '\r' or '\n' or '\t')
+            {
+                sb.Append(' ');
+                continue;
+            }
+
+            if (char.IsControl(c))
+            {
+                continue;
+            }
+
+            if (c is '\u202A' or '\u202B' or '\u202C' or '\u202D' or '\u202E' or
+                     '\u2066' or '\u2067' or '\u2068' or '\u2069' or '\u200E' or '\u200F')
+            {
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        var sanitized = sb.ToString();
+
+        try
+        {
+            sanitized = ExcessiveZalgoRegex().Replace(sanitized, string.Empty);
+        }
+        catch (RegexMatchTimeoutException regexEx)
+        {
+            AppLogger.Debug($"[ReforgerResponseParser] Regex evaluation timed out during zalgo filtering: {regexEx.Message}");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug($"[ReforgerResponseParser] Non-fatal exception during text sanitization: {ex.Message}");
+        }
+
+        sanitized = sanitized.Trim();
+
+        if (sanitized.Length > 120)
+        {
+            sanitized = sanitized[..120].TrimEnd();
+        }
+
+        return string.IsNullOrWhiteSpace(sanitized) ? fallback : sanitized;
+    }
+
+    public static string SanitizePlayerName(string? raw) => SanitizeText(raw, "Unnamed Player");
+    public static string SanitizeReason(string? raw) => SanitizeText(raw, "Server Ban");
+
     public static List<PlayerModel> ParsePlayers(string rawResponse)
     {
         var players = new List<PlayerModel>();
@@ -162,7 +221,7 @@ public static partial class ReforgerResponseParser
             {
                 BanNumber = index,
                 IdentityId = identityId,
-                BannedName = string.IsNullOrWhiteSpace(sanitizedBannedName) ? "Unknown Target" : sanitizedBannedName,
+                BannedName = sanitizedBannedName,
                 Reason = "Server Ban",
                 DurationSeconds = 0,
                 BannedAt = DateTime.UtcNow
@@ -187,54 +246,5 @@ public static partial class ReforgerResponseParser
         }
 
         return false;
-    }
-
-    public static string SanitizePlayerName(string raw)
-    {
-        if (string.IsNullOrEmpty(raw)) return "Unnamed Player";
-
-        var sb = new StringBuilder(raw.Length);
-
-        foreach (char c in raw)
-        {
-            if (c is '\r' or '\n' or '\t')
-            {
-                sb.Append(' ');
-                continue;
-            }
-
-            if (char.IsControl(c))
-            {
-                continue;
-            }
-
-            if (c is '\u202A' or '\u202B' or '\u202C' or '\u202D' or '\u202E' or
-                     '\u2066' or '\u2067' or '\u2068' or '\u2069' or '\u200E' or '\u200F')
-            {
-                continue;
-            }
-
-            sb.Append(c);
-        }
-
-        var sanitized = sb.ToString();
-
-        try
-        {
-            sanitized = ExcessiveZalgoRegex().Replace(sanitized, "");
-        }
-        catch
-        {
-            // Fallback if regex times out on huge zalgo payload
-        }
-
-        sanitized = sanitized.Trim();
-
-        if (sanitized.Length > 120)
-        {
-            sanitized = sanitized[..120].TrimEnd();
-        }
-
-        return string.IsNullOrWhiteSpace(sanitized) ? "Unnamed Player" : sanitized;
     }
 }

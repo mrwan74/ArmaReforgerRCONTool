@@ -8,7 +8,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
 using Avalonia.Threading;
 using Microsoft.Win32.SafeHandles;
 using ReforgerRcon.Models;
@@ -46,7 +45,7 @@ public static partial class CrashReportService
         MiniDumpWithCodeSegs = 0x00002000
     }
 
-    [SuppressMessage("Interoperability", "SYSLIB1054:Use 'LibraryImportAttribute' instead of 'DllImportAttribute'", Justification = "DllImport with SafeFileHandle provides deterministic unmanaged minidump generation without requiring manual pointer pinning")]
+    [SuppressMessage("Interoperability", "SYSLIB1054:Use 'LibraryImportAttribute' instead of 'DllImportAttribute'", Justification = "DllImport with SafeFileHandle provides deterministic unmanaged minidump generation on Windows")]
     [DllImport("dbghelp.dll", EntryPoint = "MiniDumpWriteDump", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool MiniDumpWriteDump(
@@ -106,6 +105,7 @@ public static partial class CrashReportService
                 [
                     new KeyValuePair<string, object>("source", source),
                     new KeyValuePair<string, object>("terminating", isTerminating.ToString(CultureInfo.InvariantCulture)),
+                    new KeyValuePair<string, object>("os", RuntimeInformation.OSDescription),
                     new KeyValuePair<string, object>("exception_type", demystifiedEx.GetType().Name)
                 ]);
 
@@ -114,6 +114,7 @@ public static partial class CrashReportService
                     scope.Level = isTerminating ? SentryLevel.Fatal : SentryLevel.Error;
                     scope.SetTag("crash_id", crashId);
                     scope.SetTag("fault_source", source);
+                    scope.SetTag("os_platform", RuntimeInformation.OSDescription);
                     scope.SetTag("is_terminating", isTerminating.ToString(CultureInfo.InvariantCulture));
                     scope.SetExtra("dump_file_name", dumpFileName);
                     scope.SetExtra("dump_size_bytes", dumpSize);
@@ -121,9 +122,23 @@ public static partial class CrashReportService
                     scope.SetExtra("uptime_formatted", uptime.ToString());
                 });
             }
-            catch
+            catch (Exception sentryEx)
             {
-                // Sentry dispatch resilience
+                SafeLogAppWarn($"[CrashReportService] Sentry telemetry dispatch bypassed during crash reporting: {sentryEx.Message}");
+            }
+
+            string memoryDumpStatus;
+            if (dumpGenerated)
+            {
+                memoryDumpStatus = $"{dumpFileName} ({dumpSize / (1024.0 * 1024.0):F2} MB)";
+            }
+            else if (OperatingSystem.IsWindows())
+            {
+                memoryDumpStatus = "Unavailable";
+            }
+            else
+            {
+                memoryDumpStatus = "Windows Minidump Native Only (Linux Text Dump Captured)";
             }
 
             var sb = new StringBuilder();
@@ -135,7 +150,7 @@ public static partial class CrashReportService
             sb.AppendLine(CultureInfo.InvariantCulture, $"Terminating:     {isTerminating}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Exception Type:  {demystifiedEx.GetType().FullName}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Error Message:   {demystifiedEx.Message}");
-            sb.AppendLine(CultureInfo.InvariantCulture, $"Memory Dump:     {(dumpGenerated ? $"{dumpFileName} ({dumpSize / (1024.0 * 1024.0):F2} MB)" : "Unavailable")}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Memory Dump:     {memoryDumpStatus}");
             sb.AppendLine("================================================================================");
             sb.AppendLine();
             sb.AppendLine("--- SYSTEM ENVIRONMENT & RUNTIME SNAPSHOT ---");
@@ -192,7 +207,7 @@ public static partial class CrashReportService
                 FullReportText = fullReportText
             };
 
-            SafeLogAppFatal(string.Create(CultureInfo.InvariantCulture, $"CRITICAL ERROR [{source}] (CrashId: {crashId}, Terminating: {isTerminating}, Dump: {(dumpGenerated ? $"{dumpSize / 1024} KB" : "None")})"), demystifiedEx);
+            SafeLogAppFatal(string.Create(CultureInfo.InvariantCulture, $"CRITICAL ERROR [{source}] (CrashId: {crashId}, Terminating: {isTerminating}, OS: {RuntimeInformation.OSDescription})"), demystifiedEx);
 
             try
             {
@@ -216,7 +231,7 @@ public static partial class CrashReportService
                         UnhandledErrorCaptured?.Invoke(report);
                         ToastNotificationService.Instance.ShowToast(
                             $"System Alert [{crashId}]",
-                            $"{demystifiedEx.GetType().Name}: {demystifiedEx.Message}. Dump: {dumpFileName} ({report.FormattedDumpSize})",
+                            $"{demystifiedEx.GetType().Name}: {demystifiedEx.Message}",
                             "CRASH_DUMP"
                         );
                     }
@@ -230,7 +245,7 @@ public static partial class CrashReportService
             {
                 SafeLogAppError("Dispatcher failed posting crash event to UI thread.", postEx);
 
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                if (OperatingSystem.IsWindows())
                 {
                     var outcomeText = isTerminating
                         ? "The application will now shut down."
@@ -240,6 +255,13 @@ public static partial class CrashReportService
                         $"A critical application fault occurred:\n\nSource: {source}\nException: {demystifiedEx.GetType().Name}\nMessage: {demystifiedEx.Message}\n\nCrash ID: #{crashId}\nDiagnostic Report: {textFilePath}\nMemory Dump: {(dumpGenerated ? dumpFilePath : "Unavailable")}\n\n{outcomeText}");
 
                     MessageBox(IntPtr.Zero, dialogMessage, isTerminating ? "ARMA Reforger RCON - Fatal Error" : "ARMA Reforger RCON - System Fault", MbIconError);
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"[CRITICAL FAULT] {source} -> {demystifiedEx.GetType().Name}: {demystifiedEx.Message}");
+                    Console.Error.WriteLine($"Report written to: {textFilePath}");
+                    Console.ResetColor();
                 }
             }
         }
@@ -257,7 +279,6 @@ public static partial class CrashReportService
         dumpSize = 0;
         if (!OperatingSystem.IsWindows())
         {
-            SafeLogAppWarn("[CrashReportService] Memory dump generation via MiniDumpWriteDump is only supported on Windows.");
             return false;
         }
 

@@ -133,7 +133,7 @@ public static class GeoIpService
         }
         catch (OperationCanceledException)
         {
-            // Clean shutdown on application exit
+            AppLogger.Debug("[GeoIpService] Periodic background GeoIP update loop terminated cleanly via cancellation token.");
         }
         catch (Exception ex)
         {
@@ -155,7 +155,9 @@ public static class GeoIpService
         string[] potentialSourcePaths =
         [
             Path.Combine(AppContext.BaseDirectory, "GeoIP", fileName),
+            Path.Combine(AppContext.BaseDirectory, "geoip", fileName),
             Path.Combine(AppContext.BaseDirectory, "Assets", fileName),
+            Path.Combine(AppContext.BaseDirectory, "assets", fileName),
             Path.Combine(AppContext.BaseDirectory, fileName)
         ];
 

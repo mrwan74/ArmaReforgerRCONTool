@@ -33,7 +33,6 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
         ApplyFilter(string.Empty, string.Empty);
     });
 
-    // Bans search only matches Banned Name or Identity ID
     public void ApplyFilter(string query, string searchType)
     {
         ExecuteSafe(() =>
@@ -72,24 +71,30 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
 
     private void OnBanPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (_isUpdatingSelection) return;
         if (e.PropertyName == nameof(BanModel.IsSelected))
         {
             UpdateSelectedState();
         }
     }
 
-    [SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Generated partial property change hook")]
     partial void OnIsAllSelectedChanged(bool value)
     {
         ExecuteSafe(() =>
         {
             if (_isUpdatingSelection) return;
             _isUpdatingSelection = true;
-            foreach (var b in Bans)
+            try
             {
-                b.IsSelected = value;
+                foreach (var b in Bans)
+                {
+                    b.IsSelected = value;
+                }
             }
-            _isUpdatingSelection = false;
+            finally
+            {
+                _isUpdatingSelection = false;
+            }
         });
     }
 
@@ -97,11 +102,19 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            if (!_isUpdatingSelection)
+            if (_isUpdatingSelection) return;
+            bool allSelected = Bans.Count > 0 && Bans.All(b => b.IsSelected);
+            if (IsAllSelected != allSelected)
             {
                 _isUpdatingSelection = true;
-                IsAllSelected = Bans.Count > 0 && Bans.All(b => b.IsSelected);
-                _isUpdatingSelection = false;
+                try
+                {
+                    IsAllSelected = allSelected;
+                }
+                finally
+                {
+                    _isUpdatingSelection = false;
+                }
             }
         });
     }

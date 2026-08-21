@@ -20,7 +20,6 @@ public partial class PlayersTabView : UserControl
             InitializeComponent();
             AddHandler(PointerPressedEvent, OnGridPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
-            // Direct event wiring for the Select-All Header CheckBox
             if (this.FindControl<CheckBox>("SelectAllCheckBox") is { } selectAllBox)
             {
                 selectAllBox.IsCheckedChanged += (_, _) =>
@@ -33,7 +32,6 @@ public partial class PlayersTabView : UserControl
                 };
             }
 
-            // Direct event wiring for the Select-All Header Border (click anywhere on header cell)
             if (this.FindControl<Border>("SelectAllHeaderBorder") is { } selectAllBorder)
             {
                 selectAllBorder.PointerPressed += (_, e) =>
@@ -57,16 +55,21 @@ public partial class PlayersTabView : UserControl
 
                         UpdateColumnVisibilities(vm);
 
-                        // Keep the header checkbox synchronized when ViewModel selection changes
                         vm.PropertyChanged += (s, e) =>
                         {
                             if (e.PropertyName == nameof(PlayersViewModel.IsAllSelected))
                             {
-                                if (this.FindControl<CheckBox>("SelectAllCheckBox") is { } box)
+                                if (this.FindControl<CheckBox>("SelectAllCheckBox") is { } box && box.IsChecked != vm.IsAllSelected)
                                 {
                                     _isSyncingHeaderCheck = true;
-                                    box.IsChecked = vm.IsAllSelected;
-                                    _isSyncingHeaderCheck = false;
+                                    try
+                                    {
+                                        box.IsChecked = vm.IsAllSelected;
+                                    }
+                                    finally
+                                    {
+                                        _isSyncingHeaderCheck = false;
+                                    }
                                 }
                             }
                             else if (e.PropertyName is nameof(PlayersViewModel.IsMultiSelectMode) or
@@ -134,7 +137,6 @@ public partial class PlayersTabView : UserControl
         {
             var point = e.GetCurrentPoint(this);
 
-            // Right-click row selection: only select if clicking a real DataGridRow
             if (point.Properties.IsRightButtonPressed && e.Source is Visual visual)
             {
                 var row = visual.FindAncestorOfType<DataGridRow>();
@@ -144,7 +146,6 @@ public partial class PlayersTabView : UserControl
                 }
                 else
                 {
-                    // Prevent selection or context menu on empty space
                     PlayersGrid.SelectedItem = null;
                 }
             }

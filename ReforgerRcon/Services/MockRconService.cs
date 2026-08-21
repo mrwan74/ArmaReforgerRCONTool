@@ -24,25 +24,35 @@ public class MockRconService : IRconService
     public event EventHandler<PlayerModel>? PlayerLeft;
     public event EventHandler<string>? OutputReceived;
 
-    private static readonly (int id, string name, string uid, string guid, string ip, int port, int ping, string cc, string cn, string city, string state, bool watch, bool warn, string comment, string[] aliases)[] RealCapturePlayers =
+    private static readonly (int id, string name, string uid, string guid, string ip, int port, int ping, string cc, string cn, string city, string state, bool watch, bool warn, string comment, string[] aliases)[] MockPlayers =
     [
-        (1, "AlphaSquadLead", "a1a1a1a1-0000-4000-8000-000000000001", "a1a1a1a1-0000-4000-8000-000000000001", "192.0.2.10", 19999, 18, "de", "Germany", "Frankfurt", "Hesse", false, false, "Regular infantry", ["AlphaSquadLead"]),
-        (2, "BravoTactical", "b2b2b2b2-0000-4000-8000-000000000002", "b2b2b2b2-0000-4000-8000-000000000002", "192.0.2.25", 2305, 34, "gb", "United Kingdom", "London", "Greater London", true, false, "VIP Squad Leader", ["BravoTactical"]),
-        (3, "CharlieMarksman", "c3c3c3c3-0000-4000-8000-000000000003", "c3c3c3c3-0000-4000-8000-000000000003", "198.51.100.33", 2304, 42, "ua", "Ukraine", "Kyiv", "Kyiv", false, false, "", ["CharlieMarksman"]),
-        (4, "DeltaAviator", "d4d4d4d4-0000-4000-8000-000000000004", "d4d4d4d4-0000-4000-8000-000000000004", "198.51.100.37", 2306, 68, "ca", "Canada", "Montreal", "Quebec", false, false, "Transport Pilot", ["DeltaAviator"]),
-        (5, "EchoVanguard", "e5e5e5e5-0000-4000-8000-000000000005", "e5e5e5e5-0000-4000-8000-000000000005", "203.0.113.38", 2304, 115, "au", "Australia", "Sydney", "NSW", true, true, "Watchlisted player note", ["EchoVanguard", "Echo_Old"]),
-        (6, "FoxtrotSupport", "f6f6f6f6-0000-4000-8000-000000000006", "f6f6f6f6-0000-4000-8000-000000000006", "192.0.2.48", 2307, 45, "us", "United States", "Dallas", "Texas", false, false, "", ["FoxtrotSupport"]),
-        (7, "GolfOperator", "a7a7a7a7-0000-4000-8000-000000000007", "a7a7a7a7-0000-4000-8000-000000000007", "198.51.100.22", 2304, 22, "de", "Germany", "Frankfurt", "Hesse", true, false, "Clan Leader", ["GolfOperator", "Golf_Alt"]),
-        (8, "HotelGunner", "00112233445566778899aabbccddeeff", "00112233445566778899aabbccddeeff", "203.0.113.50", 60464, 25, "us", "United States", "Chicago", "Illinois", false, false, "BattlEye connected lobby user", ["HotelGunner"])
+        (1, "ViperActual", "00000000-0000-4000-8000-000000000001", "00000000000040008000000000000001", "192.0.2.10", 19999, 18, "de", "Germany", "Frankfurt", "Hesse", false, false, "Squad Leader - Alpha", ["ViperActual"]),
+        (2, "GhostNomad", "00000000-0000-4000-8000-000000000002", "00000000000040008000000000000002", "192.0.2.25", 2305, 34, "gb", "United Kingdom", "London", "Greater London", true, false, "VIP Squad Member", ["GhostNomad"]),
+        (3, "SierraMarksman", "00000000-0000-4000-8000-000000000003", "00000000000040008000000000000003", "198.51.100.33", 2304, 42, "fr", "France", "Paris", "Ile-de-France", false, false, "", ["SierraMarksman"]),
+        (4, "DeltaAviator", "00000000-0000-4000-8000-000000000004", "00000000000040008000000000000004", "198.51.100.37", 2306, 68, "ca", "Canada", "Montreal", "Quebec", false, false, "Dedicated Transport Pilot", ["DeltaAviator"]),
+        (5, "EchoOperator", "00000000-0000-4000-8000-000000000005", "00000000000040008000000000000005", "203.0.113.38", 2304, 115, "au", "Australia", "Sydney", "NSW", true, true, "Watchlisted: Frequent team-damage alerts", ["EchoOperator", "Echo_OldCallsign"]),
+        (6, "RavenSupport", "00000000-0000-4000-8000-000000000006", "00000000000040008000000000000006", "192.0.2.48", 2307, 45, "us", "United States", "Dallas", "Texas", false, false, "Logistics Officer", ["RavenSupport"]),
+        (7, "KiloTactical", "00000000-0000-4000-8000-000000000007", "00000000000040008000000000000007", "198.51.100.22", 2304, 22, "jp", "Japan", "Tokyo", "Tokyo", true, false, "Verified Clan Member", ["KiloTactical", "Kilo_Alt"]),
+        (8, "TangoGunner", "00000000-0000-4000-8000-000000000008", "00000000000040008000000000000008", "203.0.113.50", 60464, 25, "us", "United States", "Chicago", "Illinois", false, false, "Regular Infantry", ["TangoGunner"])
     ];
 
-    private static readonly (string identity, string name)[] RealServerBans =
+    private static readonly (string identity, string name, string reason, long durationSeconds)[] MockServerBans =
     [
-        ("11111111-2df8-4d5b-972e-000000000001", "DemoBannedUser01"),
-        ("22222222-8137-4eeb-9a1d-000000000002", "DemoBannedUser02"),
-        ("33333333-79bf-4953-bc3b-000000000003", "DemoBannedUser03"),
-        ("44444444-1ba2-4c75-91f8-000000000004", "DemoBannedUser04"),
-        ("55555555-cd9a-43f3-9adc-000000000005", "DemoBannedUser05")
+        ("00000000-0000-4000-8000-000000000010", "DemoTroll_01", "Griefing friendly base structures", 0),
+        ("00000000-0000-4000-8000-000000000011", "ExploitTester_99", "Terrain collision clipping / Map exploit", 604800),
+        ("00000000-0000-4000-8000-000000000012", "SpeedHacker_Demo", "Third-party memory modification / Speedhack", 0),
+        ("00000000-0000-4000-8000-000000000013", "ToxicUser_Demo", "Severe toxicity in side voice channel", 86400),
+        ("00000000-0000-4000-8000-000000000014", "SpamBot_Test", "Automated chat advertisement spam", 0),
+        ("00000000-0000-4000-8000-000000000015", "Teamkiller_Mock", "Intentional spawn teamkilling", 259200),
+        ("00000000-0000-4000-8000-000000000016", "GlitchAbuser_Demo", "Asset duplication exploit", 2592000),
+        ("00000000-0000-4000-8000-000000000017", "StreamSniper_Test", "Targeted stream sniping / Community violation", 604800),
+        ("00000000-0000-4000-8000-000000000018", "AssetDestroyer_01", "Destroying friendly logistics trucks at main base", 86400),
+        ("00000000-0000-4000-8000-000000000019", "DemoBannedUser_09", "Server rule #3 violation (Econ exploitation)", 0),
+        ("00000000-0000-4000-8000-000000000020", "DemoBannedUser_10", "Impersonating server administrator", 0),
+        ("00000000-0000-4000-8000-000000000021", "MicSpammer_Demo", "Continuous audio spam in global radio", 21600),
+        ("00000000-0000-4000-8000-000000000022", "DemoBannedUser_12", "Ban evasion attempt (Linked HWID)", 0),
+        ("00000000-0000-4000-8000-000000000023", "DemoBannedUser_13", "Unauthorized GM tool execution attempt", 0),
+        ("00000000-0000-4000-8000-000000000024", "DemoBannedUser_14", "Intentional server crash exploit", 0)
     ];
 
     public MockRconService()
@@ -52,7 +62,7 @@ public class MockRconService : IRconService
 
     private void SeedMockData()
     {
-        foreach (var (id, name, uid, guid, ip, port, ping, cc, cn, city, state, watch, warn, comment, aliases) in RealCapturePlayers)
+        foreach (var (id, name, uid, guid, ip, port, ping, cc, cn, city, state, watch, warn, comment, aliases) in MockPlayers)
         {
             _players.Add(new PlayerModel
             {
@@ -93,15 +103,15 @@ public class MockRconService : IRconService
         }
 
         int banIndex = 1;
-        foreach (var (identity, name) in RealServerBans)
+        foreach (var (identity, name, reason, durationSeconds) in MockServerBans)
         {
             _bans.Add(new BanModel
             {
                 BanNumber = banIndex++,
                 IdentityId = identity,
                 BannedName = name,
-                Reason = "Demo Server Ban",
-                DurationSeconds = 0,
+                Reason = reason,
+                DurationSeconds = durationSeconds,
                 BannedAt = DateTime.UtcNow.AddDays(-banIndex)
             });
         }
@@ -114,7 +124,7 @@ public class MockRconService : IRconService
         IsConnected = true;
         LastPacketTime = DateTime.UtcNow;
         OutputReceived?.Invoke(this, $"[SYSTEM] Connected to {profile.ServerIp}:{profile.Port} via {profile.Protocol}");
-        OutputReceived?.Invoke(this, "[RCON] Logged in successfully as Administrator.");
+        OutputReceived?.Invoke(this, "[RCON] Logged in successfully as Administrator (Demo Mode).");
 
         if (_players.Count > 0)
         {

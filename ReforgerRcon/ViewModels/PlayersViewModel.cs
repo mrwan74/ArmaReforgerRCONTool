@@ -76,6 +76,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
     private void OnPlayerPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (_isUpdatingSelection) return;
         if (e.PropertyName == nameof(PlayerModel.IsSelected))
         {
             UpdateSelectedCount();
@@ -116,12 +117,18 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             if (_isUpdatingSelection) return;
             _isUpdatingSelection = true;
-            foreach (var p in Players)
+            try
             {
-                p.IsSelected = value;
+                foreach (var p in Players)
+                {
+                    p.IsSelected = value;
+                }
+                SelectedCount = value ? Players.Count : 0;
             }
-            SelectedCount = value ? Players.Count : 0;
-            _isUpdatingSelection = false;
+            finally
+            {
+                _isUpdatingSelection = false;
+            }
         });
     }
 
@@ -130,12 +137,20 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     {
         ExecuteSafe(() =>
         {
+            if (_isUpdatingSelection) return;
             SelectedCount = Players.Count(p => p.IsSelected);
-            if (!_isUpdatingSelection)
+            bool allSelected = Players.Count > 0 && SelectedCount == Players.Count;
+            if (IsAllSelected != allSelected)
             {
                 _isUpdatingSelection = true;
-                IsAllSelected = Players.Count > 0 && SelectedCount == Players.Count;
-                _isUpdatingSelection = false;
+                try
+                {
+                    IsAllSelected = allSelected;
+                }
+                finally
+                {
+                    _isUpdatingSelection = false;
+                }
             }
         });
     }

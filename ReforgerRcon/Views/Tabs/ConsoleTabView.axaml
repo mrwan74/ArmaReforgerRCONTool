@@ -13,7 +13,6 @@
         <TextBlock Text="RCON Console" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0" />
       </StackPanel>
 
-      <!-- Standard Reforger RCON Console Filter Tabs -->
       <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
         <Button Classes="Small Outline" Content="ALL" Command="{Binding SetCategoryCommand}" CommandParameter="All" />
         <Button Classes="Small Outline" Content="RCON" Command="{Binding SetCategoryCommand}" CommandParameter="RCON" />

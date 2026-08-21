@@ -11,6 +11,7 @@ namespace ReforgerRcon.ViewModels;
 
 public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action onClose) : ViewModelBase
 {
+    private static readonly string[] UnixStandardBinDirectories = ["/usr/bin", "/bin", "/usr/local/bin"];
     private readonly Action _onClose = onClose;
 
     [ObservableProperty] public partial ErrorReportModel Report { get; set; } = report;
@@ -44,36 +45,125 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         SelectedTab = tab;
     }
 
+    private static string ResolveExplorerPath()
+    {
+        var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var candidate = Path.Combine(winDir, "explorer.exe");
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        var sysDir = Environment.SystemDirectory;
+        var sysCandidate = Path.GetFullPath(Path.Combine(sysDir, "..", "explorer.exe"));
+        return File.Exists(sysCandidate) ? sysCandidate : candidate;
+    }
+
+    private static string ResolveUnixExecutable(string binaryName, string defaultFallback)
+    {
+        foreach (var dir in UnixStandardBinDirectories)
+        {
+            var candidate = Path.Combine(dir, binaryName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return defaultFallback;
+    }
+
+    private static string ResolveMacFileOpener() => ResolveUnixExecutable("open", "/usr/bin/open");
+
+    private static string ResolveLinuxFileOpener() => ResolveUnixExecutable("xdg-open", "/usr/bin/xdg-open");
+
     [RelayCommand]
     public static void OpenLogFolder(string? filePath)
     {
         try
         {
             var targetPath = filePath;
-            var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-            var explorerPath = Path.Combine(winDir, "explorer.exe");
-
-            if (!string.IsNullOrEmpty(targetPath) && File.Exists(targetPath))
+            if (string.IsNullOrEmpty(targetPath))
             {
-                Process.Start(explorerPath, $"/select,\"{targetPath}\"");
+                targetPath = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
             }
-            else
+
+            if (OperatingSystem.IsWindows())
             {
-                var dir = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
-                if (Directory.Exists(dir))
+                var explorerPath = ResolveExplorerPath();
+                if (File.Exists(targetPath))
                 {
                     Process.Start(new ProcessStartInfo
                     {
-                        FileName = dir,
-                        UseShellExecute = true
+                        FileName = explorerPath,
+                        Arguments = $"/select,\"{targetPath}\"",
+                        UseShellExecute = false
+                    });
+                }
+                else
+                {
+                    var dir = Directory.Exists(targetPath) ? targetPath : Path.GetDirectoryName(targetPath);
+                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = explorerPath,
+                            Arguments = $"\"{dir}\"",
+                            UseShellExecute = false
+                        });
+                    }
+                }
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                var macOpenPath = ResolveMacFileOpener();
+                if (File.Exists(targetPath))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = macOpenPath,
+                        Arguments = $"-R \"{targetPath}\"",
+                        UseShellExecute = false
+                    });
+                }
+                else
+                {
+                    var dir = Directory.Exists(targetPath) ? targetPath : Path.GetDirectoryName(targetPath);
+                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = macOpenPath,
+                            Arguments = $"\"{dir}\"",
+                            UseShellExecute = false
+                        });
+                    }
+                }
+            }
+            else // Linux / Unix
+            {
+                var dir = Directory.Exists(targetPath) ? targetPath : Path.GetDirectoryName(targetPath);
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+                {
+                    dir = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
+                }
+
+                if (Directory.Exists(dir))
+                {
+                    var xdgOpenPath = ResolveLinuxFileOpener();
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = xdgOpenPath,
+                        Arguments = $"\"{dir}\"",
+                        UseShellExecute = false
                     });
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Error("Failed to open crash log folder in File Explorer.", ex);
-            ToastNotificationService.Instance.ShowToast("Explorer Error", "Unable to open File Explorer.");
+            AppLogger.Error("Failed to open crash log folder in native file manager.", ex);
+            ToastNotificationService.Instance.ShowToast("File Manager Error", "Unable to launch native file explorer.");
         }
     }
 
@@ -100,7 +190,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         var success = await ClipboardService.SetTextAsync(Report.DumpFilePath);
         if (success)
         {
-            ToastNotificationService.Instance.ShowToast("Copied", "Memory dump (.dmp) file path copied to clipboard.");
+            ToastNotificationService.Instance.ShowToast("Copied", "Memory dump file path copied to clipboard.");
         }
     }
 
@@ -115,7 +205,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = exePath,
-                    UseShellExecute = true
+                    UseShellExecute = false
                 });
             }
             Environment.Exit(0);

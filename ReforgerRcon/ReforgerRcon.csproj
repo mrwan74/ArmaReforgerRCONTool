@@ -5,8 +5,8 @@
 		<LangVersion>latest</LangVersion>
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
-		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<BuiltInComInteropSupport Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</BuiltInComInteropSupport>
+		<ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
 		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08</NoWarn>
 	</PropertyGroup>
@@ -40,7 +40,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Update="GeoIP\*.mmdb" CopyToOutputDirectory="PreserveNewest" />
-		<None Update="appdata\geoip\*.mmdb" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="GeoIP/*.mmdb" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="geoip/*.mmdb" CopyToOutputDirectory="PreserveNewest" />
+		<None Update="appdata/geoip/*.mmdb" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 </Project>

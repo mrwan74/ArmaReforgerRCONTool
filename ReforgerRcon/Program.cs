@@ -51,7 +51,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@1.0.0";
+                options.Release = "ReforgerRcon@0.7.2";
             });
         }
 
@@ -60,7 +60,7 @@ internal static partial class Program
             using (sentrySdk)
             {
                 CrashReportService.Initialize();
-                AppLogger.Info(string.Create(CultureInfo.InvariantCulture, $"Process started with {args.Length} arguments. Global safety nets active."));
+                AppLogger.Info(string.Create(CultureInfo.InvariantCulture, $"Process started on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture}) with {args.Length} arguments. Global safety nets active."));
 
                 BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
 
@@ -98,17 +98,28 @@ internal static partial class Program
                 var crashDir = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
                 Directory.CreateDirectory(crashDir);
                 var crashFile = Path.Combine(crashDir, string.Create(CultureInfo.InvariantCulture, $"emergency_crash_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt"));
-                var report = string.Create(CultureInfo.InvariantCulture, $"FATAL STARTUP CRASH\nSource: {source}\nException: {ex.GetType().FullName}: {ex.Message}\nStackTrace:\n{ex.StackTrace}\n\nHandler Fault: {fallbackEx.Message}");
+                var report = string.Create(CultureInfo.InvariantCulture, $"FATAL STARTUP CRASH\nOS: {RuntimeInformation.OSDescription}\nArchitecture: {RuntimeInformation.ProcessArchitecture}\nSource: {source}\nException: {ex.GetType().FullName}: {ex.Message}\nStackTrace:\n{ex.StackTrace}\n\nHandler Fault: {fallbackEx.Message}");
                 File.WriteAllText(crashFile, report);
 
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                if (OperatingSystem.IsWindows())
                 {
                     MessageBox(IntPtr.Zero, $"A fatal error occurred during startup:\n\n{ex.GetType().Name}: {ex.Message}\n\nDiagnostic report written to:\n{crashFile}", "ARMA Reforger RCON - Fatal Startup Error", MbIconError);
                 }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine("================================================================================");
+                    Console.Error.WriteLine("FATAL APPLICATION STARTUP ERROR");
+                    Console.Error.WriteLine($"Source:    {source}");
+                    Console.Error.WriteLine($"Exception: {ex.GetType().FullName}: {ex.Message}");
+                    Console.Error.WriteLine($"Report:    {crashFile}");
+                    Console.Error.WriteLine("================================================================================");
+                    Console.ResetColor();
+                }
             }
-            catch
+            catch (Exception diskEx)
             {
-                // Last-resort fallback
+                System.Diagnostics.Debug.WriteLine($"[Program] Failed writing emergency crash to disk: {diskEx.Message}");
             }
         }
     }

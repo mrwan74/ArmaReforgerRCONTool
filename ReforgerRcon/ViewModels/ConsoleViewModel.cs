@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -11,9 +12,12 @@ namespace ReforgerRcon.ViewModels;
 
 public partial class ConsoleViewModel : ViewModelBase
 {
+    private const int MaxLogHistoryCount = 2500;
+    private const int TrimToLogCount = 2000;
+
     private readonly IRconService _rconService;
     private readonly DashboardViewModel? _dashboard;
-    private readonly ObservableCollection<LogEntryModel> _allLogs = [];
+    private readonly List<LogEntryModel> _allLogs = [];
 
     [ObservableProperty] public partial ObservableCollection<LogEntryModel> FilteredLogs { get; set; } = [];
     [ObservableProperty] public partial string CommandInput { get; set; } = string.Empty;
@@ -21,6 +25,8 @@ public partial class ConsoleViewModel : ViewModelBase
     [ObservableProperty] public partial bool IsFullscreen { get; set; }
     [ObservableProperty] public partial bool IsDetached { get; set; }
     [ObservableProperty] public partial LogCategory SelectedTab { get; set; } = LogCategory.All;
+
+    public event Action? ScrollToEndRequested;
 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
@@ -87,11 +93,47 @@ public partial class ConsoleViewModel : ViewModelBase
             Message = message,
             Timestamp = DateTime.Now
         };
+
         _allLogs.Add(entry);
-        ApplyTabFilter();
+
+        if (_allLogs.Count > MaxLogHistoryCount)
+        {
+            int removeCount = _allLogs.Count - TrimToLogCount;
+            for (int i = 0; i < removeCount && _allLogs.Count > 0; i++)
+            {
+                var oldest = _allLogs[0];
+                _allLogs.RemoveAt(0);
+                if (FilteredLogs.Count > 0 && FilteredLogs[0] == oldest)
+                {
+                    FilteredLogs.RemoveAt(0);
+                }
+            }
+        }
+
+        if (SelectedTab == LogCategory.All || SelectedTab == category)
+        {
+            FilteredLogs.Add(entry);
+            if (AutoScroll)
+            {
+                RequestScrollToEnd();
+            }
+        }
     }
 
     partial void OnSelectedTabChanged(LogCategory value) => ApplyTabFilter();
+
+    partial void OnAutoScrollChanged(bool value)
+    {
+        if (value)
+        {
+            RequestScrollToEnd();
+        }
+    }
+
+    public void RequestScrollToEnd()
+    {
+        ScrollToEndRequested?.Invoke();
+    }
 
     [RelayCommand]
     private void SetCategory(string category)
@@ -106,10 +148,20 @@ public partial class ConsoleViewModel : ViewModelBase
 
     private void ApplyTabFilter()
     {
-        if (SelectedTab == LogCategory.All)
-            FilteredLogs = new ObservableCollection<LogEntryModel>(_allLogs);
-        else
-            FilteredLogs = new ObservableCollection<LogEntryModel>(_allLogs.Where(l => l.Category == SelectedTab));
+        FilteredLogs.Clear();
+        var matching = SelectedTab == LogCategory.All
+            ? _allLogs
+            : _allLogs.Where(l => l.Category == SelectedTab);
+
+        foreach (var log in matching)
+        {
+            FilteredLogs.Add(log);
+        }
+
+        if (AutoScroll)
+        {
+            RequestScrollToEnd();
+        }
     }
 
     [RelayCommand]

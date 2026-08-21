@@ -163,14 +163,14 @@ public static partial class BattlEyeResponseParser
                 durationSeconds = minutes * 60;
             }
 
-            var cleanReason = ReforgerResponseParser.SanitizePlayerName(rawReason);
+            var cleanReason = ReforgerResponseParser.SanitizeReason(rawReason);
 
             ban = new BanModel
             {
                 BanNumber = banNumber,
                 IdentityId = identity,
                 BannedName = "Banned Target",
-                Reason = string.IsNullOrWhiteSpace(cleanReason) ? "No reason specified" : cleanReason,
+                Reason = cleanReason,
                 DurationSeconds = durationSeconds,
                 BannedAt = DateTime.UtcNow
             };

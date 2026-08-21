@@ -171,9 +171,9 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             AppLogger.Error($"[BattlEyeClient] Socket error sending command (Seq: {seq}, Cmd: '{command}'): {sockEx.SocketErrorCode}", sockEx);
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException dispEx)
         {
-            AppLogger.Warn($"[BattlEyeClient] Socket disposed while sending command '{command}'.");
+            AppLogger.Warn($"[BattlEyeClient] Socket disposed while sending command '{command}': {dispEx.Message}");
         }
         catch (Exception ex)
         {
@@ -208,9 +208,9 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             AppLogger.Warn($"[BattlEyeClient] Socket error sending keepalive: {sockEx.SocketErrorCode}");
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException dispEx)
         {
-            // Socket teardown
+            AppLogger.Debug($"[BattlEyeClient] Socket disposed during keepalive transmission: {dispEx.Message}");
         }
     }
 
@@ -229,9 +229,9 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             AppLogger.Error($"[BattlEyeClient] Socket error sending Server Message ACK (Seq: {sequenceNumber}): {sockEx.SocketErrorCode}", sockEx);
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException dispEx)
         {
-            // Socket teardown
+            AppLogger.Debug($"[BattlEyeClient] Socket disposed during server message ACK (Seq: {sequenceNumber}): {dispEx.Message}");
         }
     }
 
@@ -336,7 +336,10 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             {
                 if (_socket is { Connected: true })
                 {
-                    _socket.Shutdown(SocketShutdown.Both);
+                    if (OperatingSystem.IsWindows())
+                    {
+                        _socket.Shutdown(SocketShutdown.Both);
+                    }
                     _socket.Close();
                 }
             }
@@ -344,9 +347,9 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             {
                 AppLogger.Debug($"[BattlEyeClient] SocketException during disconnect: {sockEx.SocketErrorCode}");
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException dispEx)
             {
-                // Already disposed
+                AppLogger.Debug($"[BattlEyeClient] Socket already disposed during disconnect: {dispEx.Message}");
             }
         }
 

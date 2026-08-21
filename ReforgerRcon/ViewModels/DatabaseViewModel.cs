@@ -41,7 +41,6 @@ public partial class DatabaseViewModel : ViewModelBase
         ApplyFilter(string.Empty, string.Empty);
     });
 
-    // Database search strictly checks Player Name, Player UID, and Comment
     public void ApplyFilter(string query, string searchType)
     {
         ExecuteSafe(() =>
@@ -83,24 +82,30 @@ public partial class DatabaseViewModel : ViewModelBase
 
     private void OnPlayerPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (_isUpdatingSelection) return;
         if (e.PropertyName == nameof(DatabasePlayerModel.IsSelected))
         {
             UpdateSelectedState();
         }
     }
 
-    [SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Generated partial property change hook")]
     partial void OnIsAllSelectedChanged(bool value)
     {
         ExecuteSafe(() =>
         {
             if (_isUpdatingSelection) return;
             _isUpdatingSelection = true;
-            foreach (var p in Players)
+            try
             {
-                p.IsSelected = value;
+                foreach (var p in Players)
+                {
+                    p.IsSelected = value;
+                }
             }
-            _isUpdatingSelection = false;
+            finally
+            {
+                _isUpdatingSelection = false;
+            }
         });
     }
 
@@ -108,11 +113,19 @@ public partial class DatabaseViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            if (!_isUpdatingSelection)
+            if (_isUpdatingSelection) return;
+            bool allSelected = Players.Count > 0 && Players.All(p => p.IsSelected);
+            if (IsAllSelected != allSelected)
             {
                 _isUpdatingSelection = true;
-                IsAllSelected = Players.Count > 0 && Players.All(p => p.IsSelected);
-                _isUpdatingSelection = false;
+                try
+                {
+                    IsAllSelected = allSelected;
+                }
+                finally
+                {
+                    _isUpdatingSelection = false;
+                }
             }
         });
     }
@@ -208,7 +221,6 @@ public partial class DatabaseViewModel : ViewModelBase
             status = "Offline";
         }
 
-        // For Reforger, Player# is dynamic and not shown in database info
         if (IsReforgerProtocol)
         {
             return $"Status: {status}\n" +
