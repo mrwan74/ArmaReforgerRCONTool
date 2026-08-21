@@ -174,3 +174,23 @@ Special thanks to the authors of the open-source projects and libraries used in 
 The project is covered by the **MIT License**; for more details see the [LICENSE](LICENSE) file.
 
 ---
+
+## ⚠️ Known Issues
+
+* Comments from Administrators require a manual refresh: the notes or comments added to players are only displayed in the grid after you manually click **Refresh**.
+* Autoscroll on the console is inactive: the terminal's autoscroll option does not currently cause the scroll viewer to jump to the bottom when a new log entry arrives.
+* **Incorrect hint regarding the #say command:** The console placeholder indicates #say, but this is not a valid command in vanilla ARMA Reforger RCON.
+* Creation of a Forger ban (change in syntax since v1.8 to #ban create):
+  Since the release of ARMA Reforger 1.8, the `#ban create` command has stopped accepting the long Reforger Identity ID (UID) for online players and now requires the session **`Player#`** obtained from the `#players` command (for example, `#ban create <playerId> <duration> <reason>`).
+  Note that the command #ban remove <identityId> still requires the Reforger Identity ID.
+
+---
+
+## 🗺️ Roadmap / TODO
+
+- [ ] **Audio Alerts & Push Notifications:** Implement sound chimes and external notification channels ( desktop alerts) for user-configured triggers (player joins/leaves, watchlisted player joins/leaves, server disconnection...etc).
+- [ ] **Auto App Updater:** Checks for new GitHub releases within the app and provides a one-click download & update.
+- [ ] **Custom Commands & Plugin System:**  register custom RCON commands and mod actions as clickable toolbar buttons.( for reforger)
+- [ ] **Synchronisation of the Global Player Database:** A cloud syncing feature which enables administrators to synchronise the player database list with a master database(for all communities ).
+- [ ] **Session and Playtime Tracking:** Record the total number of play hours, the duration of each session, and the historical data regarding players' joining and leavings and other stats.
+---
