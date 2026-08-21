@@ -17,7 +17,7 @@ public static partial class ReforgerResponseParser
     [GeneratedRegex(@"^\s*(?:-\s*)?([a-fA-F0-9\-]{36})\s*$", RegexOptions.Compiled, matchTimeoutMilliseconds: 1000)]
     private static partial Regex BanRowIdentityOnlyRegex();
 
-    [GeneratedRegex(@"[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{3,}", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{4,}", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
     private static partial Regex ExcessiveZalgoRegex();
 
     public static string SanitizeText(string? raw, string fallback = "")

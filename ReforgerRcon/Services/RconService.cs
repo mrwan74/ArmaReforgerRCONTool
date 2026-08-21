@@ -179,13 +179,12 @@ public class RconService : IRconService
         try
         {
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#players" : "players";
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromMilliseconds(1500));
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromMilliseconds(1200));
 
             List<PlayerModel> currentPlayers = CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? ReforgerResponseParser.ParsePlayers(rawResponse)
                 : BattlEyeResponseParser.ParsePlayers(rawResponse);
 
-            // Pass protocol flag so Reforger doesn't store dynamic session player#
             await PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol == RconProtocol.ReforgerBuiltIn);
 
             var currentKeys = currentPlayers.Select(p => p.Uid).ToHashSet();
@@ -244,7 +243,7 @@ public class RconService : IRconService
         try
         {
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#ban list" : "bans";
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromMilliseconds(1500));
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromMilliseconds(1200));
 
             var bans = CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? ReforgerResponseParser.ParseBans(rawResponse)
@@ -293,7 +292,6 @@ public class RconService : IRconService
         return SendCommandAsync(cmd);
     }
 
-    // Converts seconds to minutes for BattlEye; passes exact seconds for Reforger
     public Task BanPlayerAsync(PlayerModel player, long durationSeconds, string reason)
     {
         long beMinutes = durationSeconds <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(durationSeconds / 60.0));
@@ -308,7 +306,6 @@ public class RconService : IRconService
         return SendCommandAsync(cmd);
     }
 
-    // Converts seconds to minutes for BattlEye; passes exact seconds for Reforger
     public Task OfflineBanAsync(string identity, long durationSeconds, string reason, bool isIp)
     {
         long beMinutes = durationSeconds <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(durationSeconds / 60.0));
@@ -357,12 +354,21 @@ public class RconService : IRconService
 
     private async Task<string> ExecuteCommandWithAggregateResponseAsync(string command, TimeSpan waitDuration)
     {
+        if (_client == null) return string.Empty;
+
         lock (_bufferLock)
         {
             _aggregatedBuffer.Clear();
         }
 
-        await SendCommandAsync(command);
+        OutputReceived?.Invoke(this, $"[RCON OUT] {command}");
+        string directResponse = await _client.SendCommandWithResponseAsync(command, waitDuration);
+
+        if (CurrentProtocol == RconProtocol.BattlEye && !string.IsNullOrWhiteSpace(directResponse))
+        {
+            return directResponse;
+        }
+
         await Task.Delay(waitDuration);
 
         lock (_bufferLock)

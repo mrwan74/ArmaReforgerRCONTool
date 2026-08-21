@@ -9,12 +9,11 @@
              x:Name="RootLoginView">
 
   <Grid ColumnDefinitions="320,*" Margin="32">
-    <!-- Server Profiles Sidebar -->
     <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16">
       <Grid RowDefinitions="Auto,*,Auto,Auto">
         <TextBlock Text="Saved Profiles" Classes="SectionTitle" Margin="0,0,0,12" />
 
-        <ListBox Grid.Row="1" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}">
+        <ListBox Grid.Row="1" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" x:CompileBindings="False">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="models:ServerProfile">
               <Grid ColumnDefinitions="*,Auto">
@@ -23,7 +22,7 @@
                   <TextBlock Text="{Binding ServerIp}" Classes="Caption" />
                 </StackPanel>
                 <Button Grid.Column="1" Classes="Small Ghost" Content="✕" 
-                        Command="{Binding $parent[UserControl].DataContext.DeleteProfileCommand}"
+                        Command="{Binding $parent[ListBox].DataContext.DeleteProfileCommand}"
                         CommandParameter="{Binding}" />
               </Grid>
             </DataTemplate>
@@ -35,7 +34,6 @@
           <Button Content="Save Profile" Classes="Outline" Command="{Binding SaveCurrentProfileCommand}" HorizontalAlignment="Stretch" />
         </StackPanel>
 
-        <!-- Diagnostic Crash Simulation Test Button -->
         <Button Grid.Row="3" Classes="Danger Outline Small" 
                 Content="Test Crash Reporter" 
                 Command="{Binding TriggerTestCrashCommand}" 
@@ -45,7 +43,6 @@
       </Grid>
     </lumina:LuminaCard>
 
-    <!-- Connection Box -->
     <lumina:LuminaCard Grid.Column="1" Padding="32" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center">
       <StackPanel Spacing="18">
         <StackPanel Spacing="4">
@@ -53,7 +50,6 @@
           <TextBlock Text="Manage your ARMA Reforger server using Reforger's Built-In RCON or BattlEye RCON" Classes="Caption" />
         </StackPanel>
 
-        <!-- Protocol Selector Toggle -->
         <StackPanel Spacing="6">
           <TextBlock Text="RCON Protocol" Classes="Label" />
           <lumina:LuminaButtonGroup SelectedIndex="{Binding Protocol, Mode=TwoWay}">
@@ -62,7 +58,6 @@
           </lumina:LuminaButtonGroup>
         </StackPanel>
 
-        <!-- IP & Port -->
         <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
           <StackPanel Spacing="4">
             <TextBlock Text="Server IP / Hostname" Classes="Label" />
@@ -74,7 +69,6 @@
           </StackPanel>
         </Grid>
 
-        <!-- Password with Reveal Toggle and Bullet Dots Mask -->
         <StackPanel Spacing="4">
           <TextBlock Text="RCON Password" Classes="Label" />
           <TextBox Text="{Binding Password}" 
@@ -92,10 +86,8 @@
           </TextBox>
         </StackPanel>
 
-        <!-- Auto connect -->
         <CheckBox IsChecked="{Binding AutoConnect}" Content="Auto-connect on startup" />
 
-        <!-- Error message banner -->
         <Border Background="{DynamicResource LuminaDangerBgBrush}" 
                 BorderBrush="{DynamicResource LuminaDangerBrush}" 
                 BorderThickness="1" 
@@ -105,14 +97,12 @@
           <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource LuminaDangerBrush}" TextWrapping="Wrap" />
         </Border>
 
-        <!-- Primary Live Connection Action -->
         <Button Content="Connect to Server"
                 Classes="Primary Large"
                 Command="{Binding ConnectCommand}"
                 lumina:LuminaButton.IsLoading="{Binding IsConnecting}"
                 HorizontalAlignment="Stretch" />
 
-        <!-- Simulated Demo Mode Button -->
         <Button Content="Launch Demo Mode (Simulated Server)"
                 Classes="Outline"
                 Command="{Binding LaunchDemoModeCommand}"

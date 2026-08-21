@@ -32,6 +32,12 @@ public partial class AvaloniaLogSink(LogEventLevel minimumLevel = LogEventLevel.
         var sourceName = source?.GetType().Name ?? "Visual";
         var msg = $"[Avalonia:{area}] [{sourceName}] {formatted}";
 
+        if (area.Equals("Binding", StringComparison.OrdinalIgnoreCase) && formatted.Contains("DataContext: Value is null", StringComparison.OrdinalIgnoreCase))
+        {
+            AppLogger.Trace(msg);
+            return;
+        }
+
         switch (level)
         {
             case LogEventLevel.Verbose:

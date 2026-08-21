@@ -75,7 +75,6 @@
       </DataGrid.ContextMenu>
 
       <DataGrid.Columns>
-        <!-- Selection CheckBox Column -->
         <DataGridTemplateColumn Tag="ColSelect" 
                                 Width="50" 
                                 MinWidth="50" 
@@ -87,7 +86,7 @@
           <DataGridTemplateColumn.HeaderTemplate>
             <DataTemplate>
               <Border HorizontalAlignment="Center" VerticalAlignment="Center">
-                <CheckBox IsChecked="{Binding $parent[UserControl].DataContext.IsAllSelected, Mode=TwoWay}"
+                <CheckBox IsChecked="{Binding $parent[DataGrid].DataContext.IsAllSelected, Mode=TwoWay}"
                           HorizontalAlignment="Center" 
                           VerticalAlignment="Center"
                           Margin="0" Padding="0" MinWidth="0" MinHeight="0"
@@ -110,7 +109,6 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <!-- Status Column -->
         <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="95" MinWidth="75">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:DatabasePlayerModel">
@@ -132,10 +130,8 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <!-- Reforger: Player# -->
         <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="90" MinWidth="80" />
 
-        <!-- Reforger: Player Name -->
         <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="220" MinWidth="130">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:DatabasePlayerModel">
@@ -149,13 +145,10 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <!-- Reforger: Player UID -->
         <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="260" MinWidth="150" />
 
-        <!-- BattlEye: [#] -->
         <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" />
 
-        <!-- BattlEye: Country Flag -->
         <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:DatabasePlayerModel">
@@ -166,7 +159,6 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <!-- BattlEye: Name -->
         <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:DatabasePlayerModel">
@@ -180,13 +172,10 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <!-- BattlEye: BattlEye GUID -->
         <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding Guid}" Width="343" MinWidth="150" />
 
-        <!-- BattlEye: IP:Port -->
         <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" />
 
-        <!-- BattlEye: Ping -->
         <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:DatabasePlayerModel">
@@ -195,19 +184,17 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <!-- Shared Columns -->
         <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="323" MinWidth="120" />
 
-        <!-- Shared Actions -->
         <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:DatabasePlayerModel">
               <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,0,8,0">
                 <Button Classes="Small Outline" Content="Details" 
-                        Command="{Binding $parent[UserControl].DataContext.OpenPlayerDetailsCommand}"
+                        Command="{Binding $parent[DataGrid].DataContext.OpenPlayerDetailsCommand}"
                         CommandParameter="{Binding}" />
                 <Button Classes="Small Danger Outline" Content="Offline Ban" 
-                        Command="{Binding $parent[UserControl].DataContext.OpenOfflineBanCommand}"
+                        Command="{Binding $parent[DataGrid].DataContext.OpenOfflineBanCommand}"
                         CommandParameter="{Binding}" />
               </StackPanel>
             </DataTemplate>

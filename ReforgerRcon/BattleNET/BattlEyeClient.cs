@@ -30,7 +30,8 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     private bool _isDisposed;
 
     private readonly ConcurrentDictionary<byte, (byte[] Packet, string Command, DateTime SentTime)> _pendingCommands = new();
-    private readonly ConcurrentDictionary<byte, SortedDictionary<byte, string>> _multiPacketResponses = new();
+    private readonly ConcurrentDictionary<byte, TaskCompletionSource<string>> _pendingCommandTcs = new();
+    private readonly ConcurrentDictionary<byte, MultiPacketBuffer> _multiPacketResponses = new();
     private readonly BattlEyeLoginCredentials _loginCredentials = loginCredentials;
     private readonly Lock _syncLock = new();
 
@@ -62,6 +63,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             _sequenceNumber = 0;
             _currentResendPacket = -1;
             _pendingCommands.Clear();
+            _pendingCommandTcs.Clear();
             _multiPacketResponses.Clear();
             _keepRunning = true;
 
@@ -139,7 +141,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         }
     }
 
-    public void SendCommand(string command, bool log = true)
+    public byte SendCommand(string command, bool log = true)
     {
         byte seq;
         lock (_syncLock)
@@ -153,7 +155,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             if (_socket is not { Connected: true })
             {
                 AppLogger.Warn($"[BattlEyeClient] Cannot send command '{command}': Socket disconnected.");
-                return;
+                return seq;
             }
 
             byte[] packet = ConstructPacket(PacketTypeCommand, seq, command);
@@ -178,6 +180,34 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         catch (Exception ex)
         {
             AppLogger.Error($"[BattlEyeClient] Unexpected failure sending command '{command}' (Seq: {seq})", ex);
+        }
+
+        return seq;
+    }
+
+    public async Task<string> SendCommandWithResponseAsync(string command, TimeSpan timeout)
+    {
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        byte seq = SendCommand(command, log: true);
+        _pendingCommandTcs[seq] = tcs;
+
+        using var cts = new CancellationTokenSource(timeout);
+        cts.Token.Register(() =>
+        {
+            if (_pendingCommandTcs.TryRemove(seq, out var pending))
+            {
+                pending.TrySetCanceled();
+            }
+        });
+
+        try
+        {
+            return await tcs.Task;
+        }
+        catch (TaskCanceledException)
+        {
+            AppLogger.Trace($"[BattlEyeClient] Command '{command}' (Seq: {seq}) direct response wait period completed.");
+            return string.Empty;
         }
     }
 
@@ -492,6 +522,10 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         if (payload.Length == 2)
         {
             AppLogger.Trace($"[BattlEyeClient] Empty Command ACK (Seq: {seq}).");
+            if (_pendingCommandTcs.TryRemove(seq, out var pendingTcs))
+            {
+                pendingTcs.TrySetResult(string.Empty);
+            }
             return;
         }
 
@@ -503,24 +537,30 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             string chunkText = Encoding.UTF8.GetString(payload[5..]);
             AppLogger.Trace($"[BattlEyeClient] Multi-packet chunk (Seq: {seq}, Index: {packetIndex + 1}/{totalPackets}, Length: {chunkText.Length}).");
 
-            var chunks = _multiPacketResponses.GetOrAdd(seq, _ => []);
-            lock (chunks)
+            var buffer = _multiPacketResponses.GetOrAdd(seq, _ => new MultiPacketBuffer());
+            if (buffer.TryAddChunk(packetIndex, totalPackets, chunkText, out var fullMessage))
             {
-                chunks[packetIndex] = chunkText;
+                _multiPacketResponses.TryRemove(seq, out _);
+                AppLogger.Debug($"[BattlEyeClient] Completed Multi-Packet Response (Seq: {seq}, Total Length: {fullMessage.Length}).");
 
-                if (chunks.Count == totalPackets)
+                if (_pendingCommandTcs.TryRemove(seq, out var pendingTcs))
                 {
-                    var fullMessage = string.Concat(chunks.Values);
-                    _multiPacketResponses.TryRemove(seq, out _);
-                    AppLogger.Debug($"[BattlEyeClient] Completed Multi-Packet Response (Seq: {seq}, Total Length: {fullMessage.Length}).");
-                    OnBattlEyeMessage(fullMessage, seq);
+                    pendingTcs.TrySetResult(fullMessage);
                 }
+
+                OnBattlEyeMessage(fullMessage, seq);
             }
         }
         else
         {
             string responseText = Encoding.UTF8.GetString(payload[2..]);
             AppLogger.Debug($"[BattlEyeClient] Command Response received (Seq: {seq}, Length: {responseText.Length}): '{responseText}'");
+
+            if (_pendingCommandTcs.TryRemove(seq, out var pendingTcs))
+            {
+                pendingTcs.TrySetResult(responseText);
+            }
+
             OnBattlEyeMessage(responseText, seq);
         }
     }
@@ -564,6 +604,30 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                 }
             }
             _isDisposed = true;
+        }
+    }
+
+    private sealed class MultiPacketBuffer
+    {
+        private readonly Lock _lock = new();
+        private readonly SortedDictionary<byte, string> _chunks = [];
+        public DateTime FirstReceived { get; } = DateTime.UtcNow;
+
+        public bool TryAddChunk(byte packetIndex, byte totalPackets, string chunkText, out string fullMessage)
+        {
+            lock (_lock)
+            {
+                _chunks[packetIndex] = chunkText;
+
+                if (_chunks.Count == totalPackets)
+                {
+                    fullMessage = string.Concat(_chunks.Values);
+                    return true;
+                }
+
+                fullMessage = string.Empty;
+                return false;
+            }
         }
     }
 }
