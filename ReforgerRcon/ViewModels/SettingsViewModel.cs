@@ -1,14 +1,15 @@
-using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
-using Material.Icons;
-using ReforgerRcon.Models;
-using ReforgerRcon.Services;
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Material.Icons;
+using ReforgerRcon.Models;
+using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -27,6 +28,10 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] public partial string GeoIpLastUpdatedText { get; set; } = "Never";
     [ObservableProperty] public partial bool IsLicenseKeyRevealed { get; set; }
 
+    [ObservableProperty] public partial string DatabaseEngineText { get; set; } = "SQLite 3 (WAL Mode Active)";
+    [ObservableProperty] public partial string DatabaseSizeText { get; set; } = "Calculating...";
+    [ObservableProperty] public partial string DatabaseRecordsText { get; set; } = "Calculating...";
+
     public char LicenseKeyMaskChar => IsLicenseKeyRevealed ? '\0' : '•';
     public MaterialIconKind LicenseKeyIconKind => IsLicenseKeyRevealed ? MaterialIconKind.EyeOff : MaterialIconKind.Eye;
 
@@ -36,6 +41,7 @@ public partial class SettingsViewModel : ViewModelBase
         LoadSettings();
         GeoIpService.DatabasesUpdated += RefreshGeoIpStatus;
         RefreshGeoIpStatus();
+        _ = RefreshDatabaseStatsAsync();
     }
 
     private void LoadSettings()
@@ -55,6 +61,14 @@ public partial class SettingsViewModel : ViewModelBase
             }
         }, "Failed to load application settings from disk.");
     }
+
+    [RelayCommand]
+    public Task<bool> RefreshDatabaseStatsAsync() => ExecuteSafeAsync(async () =>
+    {
+        var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync();
+        DatabaseSizeText = $"{stats.DatabaseSizeBytes / (1024.0 * 1024.0):F2} MB (WAL: {stats.WalSizeBytes / 1024.0:F1} KB)";
+        DatabaseRecordsText = $"{stats.TotalPlayers:N0} Players ({stats.TotalAliases:N0} Recorded Aliases)";
+    }, "Failed to query SQLite database telemetry stats.");
 
     [RelayCommand]
     public void ToggleLicenseKeyReveal()
@@ -165,14 +179,15 @@ public partial class SettingsViewModel : ViewModelBase
         ExecuteSafe(() =>
         {
             _dashboard?.ShowDialog(new ConfirmDialogViewModel(
-                "Clear Player Database",
-                "Are you sure you want to permanently clear all historical player entries?",
+                "Clear SQLite Database",
+                "Are you sure you want to permanently clear all historical player records and alias tables from SQLite?",
                 "Clear Database",
                 true,
                 async () =>
                 {
                     await PlayerDatabaseStorageService.ClearAsync();
-                    ToastNotificationService.Instance.ShowToast("Database Cleared", "Historical database purged.");
+                    await RefreshDatabaseStatsAsync();
+                    ToastNotificationService.Instance.ShowToast("Database Cleared", "SQLite historical database purged.");
                 },
                 () => _dashboard.CloseDialog()
             ));

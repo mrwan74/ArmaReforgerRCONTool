@@ -8,30 +8,117 @@
              x:DataType="vm:LoginViewModel"
              x:Name="RootLoginView">
 
-  <Grid ColumnDefinitions="320,*" Margin="32">
-    <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16">
+  <Grid ColumnDefinitions="360,*" Margin="32">
+    <!-- Left Sidebar: Saved Profiles Management -->
+    <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16" x:CompileBindings="False">
       <Grid RowDefinitions="Auto,*,Auto,Auto">
-        <TextBlock Text="Saved Profiles" Classes="SectionTitle" Margin="0,0,0,12" />
+        <!-- Section Header with Save Changes Button -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12" VerticalAlignment="Center">
+          <TextBlock Text="Saved Profiles" Classes="SectionTitle" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Classes="Small Primary" 
+                  Command="{Binding SaveProfileChangesCommand}" 
+                  CommandParameter="{Binding SelectedProfile}"
+                  ToolTip.Tip="Save current form values to the selected profile">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="ContentSaveOutline" Width="14" Height="14" />
+              <TextBlock Text="Save Changes" FontSize="11" />
+            </StackPanel>
+          </Button>
+        </Grid>
 
-        <ListBox Grid.Row="1" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" x:CompileBindings="False">
+        <!-- Profiles List with Edit/Save/Delete Icons -->
+        <ListBox Grid.Row="1" 
+                 ItemsSource="{Binding Profiles}" 
+                 SelectedItem="{Binding SelectedProfile}">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="models:ServerProfile">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Spacing="2">
-                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding ServerIp}" Classes="Caption" />
-                </StackPanel>
-                <Button Grid.Column="1" Classes="Small Ghost" Content="✕" 
-                        Command="{Binding $parent[ListBox].DataContext.DeleteProfileCommand}"
-                        CommandParameter="{Binding}" />
+              <Grid Margin="0,2">
+                <!-- 1. Normal View Mode -->
+                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding !IsEditing}">
+                  <StackPanel Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="{Binding FormattedEndpoint}" Classes="Caption" />
+                      <Border Padding="4,1" CornerRadius="3" Background="{DynamicResource LuminaPrimaryBgBrush}">
+                        <TextBlock Text="{Binding ProtocolShortName}" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+                      </Border>
+                    </StackPanel>
+                  </StackPanel>
+
+                  <!-- Item Actions: Edit Name | Save Details | Delete -->
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <Button Classes="Small Ghost Icon" 
+                            Command="{Binding $parent[ListBox].DataContext.StartEditProfileNameCommand}" 
+                            CommandParameter="{Binding}"
+                            ToolTip.Tip="Rename profile">
+                      <icons:MaterialIcon Kind="PencilOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                    </Button>
+
+                    <Button Classes="Small Ghost Icon" 
+                            Command="{Binding $parent[ListBox].DataContext.SaveProfileChangesCommand}" 
+                            CommandParameter="{Binding}"
+                            ToolTip.Tip="Save current connection settings to this profile">
+                      <icons:MaterialIcon Kind="ContentSaveCheckOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaSuccessBrush}" />
+                    </Button>
+
+                    <Button Classes="Small Ghost Icon" 
+                            Command="{Binding $parent[ListBox].DataContext.DeleteProfileCommand}" 
+                            CommandParameter="{Binding}"
+                            ToolTip.Tip="Delete profile">
+                      <icons:MaterialIcon Kind="TrashCanOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaDangerBrush}" />
+                    </Button>
+                  </StackPanel>
+                </Grid>
+
+                <!-- 2. Inline Edit Name Mode -->
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4" IsVisible="{Binding IsEditing}">
+                  <TextBox Text="{Binding EditNameBuffer}" 
+                           FontSize="12" 
+                           VerticalAlignment="Center">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" 
+                                  Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
+                                  CommandParameter="{Binding}" />
+                      <KeyBinding Gesture="Escape" 
+                                  Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
+                                  CommandParameter="{Binding}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+
+                  <Button Grid.Column="1" Classes="Small Primary Icon" 
+                          Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
+                          CommandParameter="{Binding}"
+                          ToolTip.Tip="Confirm rename">
+                    <icons:MaterialIcon Kind="Check" Width="14" Height="14" />
+                  </Button>
+
+                  <Button Grid.Column="2" Classes="Small Ghost Icon" 
+                          Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
+                          CommandParameter="{Binding}"
+                          ToolTip.Tip="Cancel rename">
+                    <icons:MaterialIcon Kind="Close" Width="14" Height="14" />
+                  </Button>
+                </Grid>
               </Grid>
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
 
+        <!-- New Profile Creator Box -->
         <StackPanel Grid.Row="2" Spacing="8" Margin="0,12,0,0">
-          <TextBox PlaceholderText="New Profile Name..." Text="{Binding NewProfileName}" />
-          <Button Content="Save Profile" Classes="Outline" Command="{Binding SaveCurrentProfileCommand}" HorizontalAlignment="Stretch" />
+          <TextBox PlaceholderText="New Profile Name..." Text="{Binding NewProfileName}">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding SaveCurrentAsNewProfileCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+          <Button Classes="Outline" 
+                  Command="{Binding SaveCurrentAsNewProfileCommand}" 
+                  HorizontalAlignment="Stretch">
+            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+              <icons:MaterialIcon Kind="Plus" Width="14" Height="14" />
+              <TextBlock Text="Save as New Profile" />
+            </StackPanel>
+          </Button>
         </StackPanel>
 
         <Button Grid.Row="3" Classes="Danger Outline Small" 
@@ -43,6 +130,7 @@
       </Grid>
     </lumina:LuminaCard>
 
+    <!-- Right Area: Connection Parameters Form -->
     <lumina:LuminaCard Grid.Column="1" Padding="32" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center">
       <StackPanel Spacing="18">
         <StackPanel Spacing="4">

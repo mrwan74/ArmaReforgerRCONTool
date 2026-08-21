@@ -37,21 +37,35 @@ public partial class LoginViewModel : ViewModelBase
     public char PasswordMaskChar => IsPasswordRevealed ? '\0' : '•';
     public MaterialIconKind PasswordIconKind => IsPasswordRevealed ? MaterialIconKind.EyeOff : MaterialIconKind.Eye;
 
+    public IAsyncRelayCommand<ServerProfile?> SaveProfileChangesCommand { get; }
+    public IAsyncRelayCommand SaveCurrentAsNewProfileCommand { get; }
+    public IAsyncRelayCommand SaveCurrentProfileCommand { get; }
+    public IRelayCommand<ServerProfile?> StartEditProfileNameCommand { get; }
+    public IAsyncRelayCommand<ServerProfile?> ConfirmEditProfileNameCommand { get; }
+    public IRelayCommand<ServerProfile?> CancelEditProfileNameCommand { get; }
+    public IAsyncRelayCommand<ServerProfile?> DeleteProfileCommand { get; }
+
     public LoginViewModel(Action<ServerProfile, IRconService> onLoginSuccess)
     {
         _onLoginSuccess = onLoginSuccess;
-        _ = LoadProfiles();
+
+        SaveProfileChangesCommand = new AsyncRelayCommand<ServerProfile?>(SaveProfileChangesAsync);
+        SaveCurrentAsNewProfileCommand = new AsyncRelayCommand(SaveCurrentAsNewProfileAsync);
+        SaveCurrentProfileCommand = new AsyncRelayCommand(SaveCurrentProfileAsync);
+        StartEditProfileNameCommand = new RelayCommand<ServerProfile?>(StartEditProfileName);
+        ConfirmEditProfileNameCommand = new AsyncRelayCommand<ServerProfile?>(ConfirmEditProfileNameAsync);
+        CancelEditProfileNameCommand = new RelayCommand<ServerProfile?>(CancelEditProfileName);
+        DeleteProfileCommand = new AsyncRelayCommand<ServerProfile?>(DeleteProfileAsync);
+
+        _ = LoadProfilesAsync();
     }
 
-    private Task<bool> LoadProfiles()
+    private Task LoadProfilesAsync() => ExecuteSafeAsync(async () =>
     {
-        return ExecuteSafeAsync(async () =>
-        {
-            List<ServerProfile> list = await ProfileStorageService.LoadProfilesAsync();
-            Profiles = new ObservableCollection<ServerProfile>(list);
-            SelectedProfile = Profiles.FirstOrDefault();
-        }, "Failed to load saved server profiles.");
-    }
+        List<ServerProfile> list = await ProfileStorageService.LoadProfilesAsync();
+        Profiles = new ObservableCollection<ServerProfile>(list);
+        SelectedProfile = Profiles.FirstOrDefault();
+    }, "Failed to load saved server profiles.");
 
     partial void OnSelectedProfileChanged(ServerProfile? value)
     {
@@ -112,6 +126,110 @@ public partial class LoginViewModel : ViewModelBase
         });
     }
 
+    public void StartEditProfileName(ServerProfile? profile)
+    {
+        ExecuteSafe(() =>
+        {
+            profile ??= SelectedProfile;
+            if (profile == null) return;
+
+            foreach (var p in Profiles)
+            {
+                p.IsEditing = false;
+            }
+
+            profile.EditNameBuffer = profile.Name;
+            profile.IsEditing = true;
+        });
+    }
+
+    public Task ConfirmEditProfileNameAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
+    {
+        profile ??= SelectedProfile;
+        if (profile == null) return;
+
+        if (!string.IsNullOrWhiteSpace(profile.EditNameBuffer))
+        {
+            profile.Name = profile.EditNameBuffer.Trim();
+        }
+
+        profile.IsEditing = false;
+        await ProfileStorageService.SaveProfilesAsync([.. Profiles]);
+        ToastNotificationService.Instance.ShowToast("Profile Renamed", $"Renamed profile to '{profile.Name}'.");
+    }, "Failed to rename profile.");
+
+    public void CancelEditProfileName(ServerProfile? profile)
+    {
+        ExecuteSafe(() =>
+        {
+            profile ??= SelectedProfile;
+            if (profile == null) return;
+            profile.IsEditing = false;
+        });
+    }
+
+    public Task SaveProfileChangesAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
+    {
+        profile ??= SelectedProfile;
+        if (profile == null)
+        {
+            await SaveCurrentAsNewProfileAsync();
+            return;
+        }
+
+        profile.ServerIp = ServerIp.Trim();
+        profile.Port = Port;
+        profile.Password = Password;
+        profile.Protocol = Protocol;
+        profile.AutoConnect = AutoConnect;
+
+        await ProfileStorageService.SaveProfilesAsync([.. Profiles]);
+        ToastNotificationService.Instance.ShowToast("Profile Saved", $"Saved changes to '{profile.Name}'.");
+    }, "Failed to update profile settings.");
+
+    public Task SaveCurrentAsNewProfileAsync() => ExecuteSafeAsync(async () =>
+    {
+        var name = string.IsNullOrWhiteSpace(NewProfileName)
+            ? $"Server {ServerIp.Trim()}:{Port}"
+            : NewProfileName.Trim();
+
+        var newProfile = new ServerProfile
+        {
+            Name = name,
+            ServerIp = ServerIp.Trim(),
+            Port = Port,
+            Password = Password,
+            Protocol = Protocol,
+            AutoConnect = AutoConnect
+        };
+
+        Profiles.Add(newProfile);
+        SelectedProfile = newProfile;
+        NewProfileName = string.Empty;
+
+        await ProfileStorageService.SaveProfilesAsync([.. Profiles]);
+        ToastNotificationService.Instance.ShowToast("New Profile Added", $"Created server profile '{name}'.");
+    }, "Failed to save new server profile.");
+
+    public Task SaveCurrentProfileAsync() => SelectedProfile != null
+        ? SaveProfileChangesAsync(SelectedProfile)
+        : SaveCurrentAsNewProfileAsync();
+
+    public Task DeleteProfileAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
+    {
+        profile ??= SelectedProfile;
+        if (profile == null) return;
+
+        Profiles.Remove(profile);
+        if (SelectedProfile == profile)
+        {
+            SelectedProfile = Profiles.FirstOrDefault();
+        }
+
+        await ProfileStorageService.SaveProfilesAsync([.. Profiles]);
+        ToastNotificationService.Instance.ShowToast("Profile Deleted", $"Removed '{profile.Name}'.");
+    }, "Failed to delete profile.");
+
     [RelayCommand]
     public static void TriggerTestCrash()
     {
@@ -137,54 +255,6 @@ public partial class LoginViewModel : ViewModelBase
                 CrashReportService.HandleFatalException("NetworkService.HandshakeWorker", ex, isTerminating: false);
             }
         }, TaskContinuationOptions.OnlyOnFaulted);
-    }
-
-    [RelayCommand]
-    private Task<bool> SaveCurrentProfileAsync()
-    {
-        return ExecuteSafeAsync(async () =>
-        {
-            var name = string.IsNullOrWhiteSpace(NewProfileName) ? $"Server {ServerIp}:{Port}" : NewProfileName;
-            ServerProfile? existing = Profiles.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-            if (existing != null)
-            {
-                existing.ServerIp = ServerIp;
-                existing.Port = Port;
-                existing.Password = Password;
-                existing.Protocol = Protocol;
-                existing.AutoConnect = AutoConnect;
-            }
-            else
-            {
-                var p = new ServerProfile
-                {
-                    Name = name,
-                    ServerIp = ServerIp,
-                    Port = Port,
-                    Password = Password,
-                    Protocol = Protocol,
-                    AutoConnect = AutoConnect
-                };
-                Profiles.Add(p);
-                SelectedProfile = p;
-            }
-            NewProfileName = string.Empty;
-            List<ServerProfile> profileList = [.. Profiles];
-            await ProfileStorageService.SaveProfilesAsync(profileList);
-            ToastNotificationService.Instance.ShowToast("Profile Saved", $"Saved connection profile '{name}'.");
-        });
-    }
-
-    [RelayCommand]
-    public Task<bool> DeleteProfileAsync(ServerProfile profile)
-    {
-        return ExecuteSafeAsync(async () =>
-        {
-            Profiles.Remove(profile);
-            List<ServerProfile> profileList = [.. Profiles];
-            await ProfileStorageService.SaveProfilesAsync(profileList);
-            ToastNotificationService.Instance.ShowToast("Profile Deleted", $"Removed '{profile.Name}'.");
-        });
     }
 
     [RelayCommand]

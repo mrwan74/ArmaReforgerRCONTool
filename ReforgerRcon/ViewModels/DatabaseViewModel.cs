@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -23,6 +24,7 @@ public partial class DatabaseViewModel : ViewModelBase
     [ObservableProperty] public partial DatabasePlayerModel? SelectedPlayer { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
     [ObservableProperty] public partial bool IsAllSelected { get; set; }
+    [ObservableProperty] public partial string DatabaseStatsSummary { get; set; } = "Loading SQLite database...";
 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
@@ -38,8 +40,10 @@ public partial class DatabaseViewModel : ViewModelBase
     public Task<bool> LoadDbAsync() => ExecuteSafeAsync(async () =>
     {
         _allDbPlayers = await _rconService.GetDatabasePlayersAsync();
-        ApplyFilter(string.Empty, string.Empty);
-    });
+        var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync();
+        DatabaseStatsSummary = $"SQLite DB: {stats.TotalPlayers:N0} total players | {stats.OnlinePlayers:N0} online | {stats.WatchlistedPlayers:N0} watchlisted | Size: {stats.DatabaseSizeBytes / 1024.0:F1} KB";
+        ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+    }, "Failed to retrieve player database records from SQLite.");
 
     public void ApplyFilter(string query, string searchType)
     {
@@ -58,11 +62,13 @@ public partial class DatabaseViewModel : ViewModelBase
             {
                 IEnumerable<DatabasePlayerModel> filtered = searchType switch
                 {
-                    "Name" => _allDbPlayers.Where(p => p.Name.Contains(query, StringComparison.OrdinalIgnoreCase)),
+                    "Name" => _allDbPlayers.Where(p => p.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || p.Aliases?.Any(a => a.Contains(query, StringComparison.OrdinalIgnoreCase)) == true),
                     "UID" => _allDbPlayers.Where(p => p.Uid.Contains(query, StringComparison.OrdinalIgnoreCase) || p.Guid.Contains(query, StringComparison.OrdinalIgnoreCase)),
                     "Comment" => _allDbPlayers.Where(p => p.Comment.Contains(query, StringComparison.OrdinalIgnoreCase)),
+                    "Player #" => _allDbPlayers.Where(p => p.Id.ToString(CultureInfo.InvariantCulture).Contains(query, StringComparison.OrdinalIgnoreCase)),
                     _ => _allDbPlayers.Where(p =>
                         p.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                        p.Aliases?.Any(a => a.Contains(query, StringComparison.OrdinalIgnoreCase)) == true ||
                         p.Uid.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                         p.Guid.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                         p.Comment.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -194,16 +200,14 @@ public partial class DatabaseViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    public void ToggleWatchlist(DatabasePlayerModel? player)
+    public Task<bool> ToggleWatchlist(DatabasePlayerModel? player) => ExecuteSafeAsync(async () =>
     {
-        ExecuteSafe(() =>
-        {
-            player ??= SelectedPlayer;
-            if (player == null) return;
-            player.IsWatchlisted = !player.IsWatchlisted;
-            ToastNotificationService.Instance.ShowToast("Watchlist", $"{player.Name} watchlist status: {player.IsWatchlisted}");
-        });
-    }
+        player ??= SelectedPlayer;
+        if (player == null) return;
+        player.IsWatchlisted = !player.IsWatchlisted;
+        await PlayerDatabaseStorageService.ToggleWatchlistAsync(player.Uid);
+        ToastNotificationService.Instance.ShowToast("Watchlist", $"{player.Name} watchlist status: {player.IsWatchlisted}");
+    });
 
     private string FormatDatabasePlayerInfo(DatabasePlayerModel p)
     {
@@ -221,11 +225,14 @@ public partial class DatabaseViewModel : ViewModelBase
             status = "Offline";
         }
 
+        var aliasText = p.Aliases is { Count: > 0 } ? string.Join(", ", p.Aliases) : "None";
+
         if (IsReforgerProtocol)
         {
             return $"Status: {status}\n" +
                    $"Player Name: {p.Name}\n" +
                    $"Player UID: {p.Uid}\n" +
+                   $"Aliases: {aliasText}\n" +
                    $"Comment: {p.Comment}";
         }
 
@@ -233,6 +240,7 @@ public partial class DatabaseViewModel : ViewModelBase
                $"[#]: {p.Id}\n" +
                $"Country: {p.Country.Name}\n" +
                $"Name: {p.Name}\n" +
+               $"Aliases: {aliasText}\n" +
                $"BattlEye GUID: {p.Guid}\n" +
                $"IP:Port: {p.FormattedEndpoint}\n" +
                $"Ping: {p.PingDisplay}\n" +

@@ -9,7 +9,7 @@
                      xmlns:models="using:ReforgerRcon.Models"
                      x:Class="ReforgerRcon.Views.MainWindow"
                      x:DataType="vm:MainViewModel"
-                     Title="ARMA REFORGER RCON TOOL (ARRT) v0.7.3"
+                     Title="ARMA REFORGER RCON TOOL (ARRT) v0.8.1"
                      Width="1696" Height="937"
                      MinWidth="960" MinHeight="640"
                      WindowStartupLocation="CenterScreen"

@@ -185,7 +185,7 @@ public class RconService : IRconService
                 ? ReforgerResponseParser.ParsePlayers(rawResponse)
                 : BattlEyeResponseParser.ParsePlayers(rawResponse);
 
-            await PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol == RconProtocol.ReforgerBuiltIn);
+            await PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers);
 
             var currentKeys = currentPlayers.Select(p => p.Uid).ToHashSet();
             var lastKeys = _lastKnownPlayers.Select(p => p.Uid).ToHashSet();
