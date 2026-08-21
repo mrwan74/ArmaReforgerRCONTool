@@ -3,7 +3,7 @@
 [![AI Assisted](https://img.shields.io/badge/Development-AI--Assisted-8A2BE2?style=flat&logo=openai&logoColor=white)](#)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat&logo=dotnet)](https://dotnet.microsoft.com/)
 [![Avalonia UI](https://img.shields.io/badge/UI-Avalonia_12-8A2BE2?style=flat&logo=avalonia)](https://avaloniaui.net/)
-[![Release](https://img.shields.io/badge/Version-v0.6.2-blue?style=flat)](https://github.com/)
+[![Release](https://img.shields.io/badge/Version-v0.8.1-blue?style=flat)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat&logo=windows)](https://github.com/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
@@ -11,6 +11,9 @@
 > 🤖 **AI-Assisted Development Notice**  
 
 ---
+
+> ### 📦 Latest Release: `v0.8.1`
+> **Released on:** Aug 21, 2026, 3:30 PM (UTC)
 
 The Arma Reforger RCON Tool (ARRT) is a desktop administration tool for arma reforger developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
 <img width="1696" height="937" alt="ReforgerRcon_vS2DqXgTRv" src="https://github.com/user-attachments/assets/84a3deca-fd85-4175-8a37-0090701cf3ce" />
