@@ -13,6 +13,7 @@
 ---
 
 The ARMA REFORGER RCON TOOL (ARRT) is a desktop administration tool developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
+
 This readme is a work in progress..
 ---
 ## 📥 Download
@@ -57,11 +58,17 @@ Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 | Feature                 | Reforger Built-In RCON          | BattlEye RCON                     |
 | ----------------------- | ------------------------------- | --------------------------------- |
 | **Default Port**        | `19999` (UDP)                   | `20007` (UDP) (just an example)   |
-| **Identifier**          | Player UID (GUID format)        | BattlEye GUID / IP Address        |
+| **Identifier**          | Player UID                      | BattlEye GUID / IP Address        |
 | **Ban Duration Format** | Duration in **Seconds**         | Duration in **Minutes**           |
-| **Server Controls**     | `#restart`, `#shutdown`, `#say` | `loadBans`, `writeBans`, `admins` |
+| **Server Controls**     | `#restart`, `#shutdown`         | `loadBans`, `writeBans`, `admins` |
 | **Player List Query**   | `#players`                      | `players`                         |
 | **Ban List Query**      | `#ban list`                     | `bans`                            |
+
+full list of reforger commands : 
+https://community.bistudio.com/wiki/Arma_Reforger:Server_Management
+
+full list of battleye commands : 
+https://www.battleye.com/support/documentation/
 
 ---
 
@@ -151,13 +158,14 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=
 
 Special thanks to the authors of the open-source projects and libraries used in this tool:
 
-- **[BattleNET](https://github.com/marceldev89/BattleNET)** by **[@marceldev89](https://github.com/marceldev89)** – a C# library for the BattlEye protocol that enables the implementation of the BattlEye RCON network.
-  LuminaUI by @j4587698 – a modern and fluent UI component and theming library for Avalonia.
-- **[Avalonia UI](https://avaloniaui.net/)** is a cross-platform desktop XAML UI framework.
-- CommunityToolkit.Mvvm – Source generators and an architecture for modern and fast MVVM.
-  – The IP Geolocation engine from MaxMind GeoIP2.
-- **Serilog** – a structured logging framework.
-  – The Sentry .NET SDK provides application diagnostics and crash analytics.
+* **[BattleNET](https://github.com/marceldev89/BattleNET)** by **[@marceldev89](https://github.com/marceldev89)** – C# BattlEye protocol client library powering the BattlEye RCON network implementation.
+* **[LuminaUI](https://github.com/j4587698/LuminaUI)** by **[@j4587698](https://github.com/j4587698)** – UI component and theming library for Avalonia.
+* **[Avalonia UI](https://github.com/AvaloniaUI/Avalonia)** by **[@AvaloniaUI](https://github.com/AvaloniaUI)** – Avalonia is a cross-platform UI framework for .NET providing a flexible styling system and supporting a wide range of Operating Systems such as Windows, Linux, macOS and with experimental support for Android, iOS and WebAssembly.
+* **[MaxMind GeoIP2](https://github.com/maxmind/GeoIP2-dotnet)** by **[@maxmind](https://github.com/maxmind)** – IP Geolocation engine.
+* **[Serilog](https://github.com/serilog/serilog)** by **[@serilog](https://github.com/serilog)** – Structured logging framework.
+* **[Sentry .NET SDK](https://github.com/getsentry/sentry-dotnet)** by **[@getsentry](https://github.com/getsentry)** – Application diagnostics and crash analytics.
+
+ among many others 
 
 ---
 
