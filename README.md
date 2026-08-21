@@ -13,7 +13,7 @@
 ---
 
 > ### 📦 Latest Release: `v0.8.1`
-> **Released on:** Aug 21, 2026, 3:30 PM (UTC)
+> **Released on:** Aug 21, 2026, 3:30 PM (UTC) 
 
 The Arma Reforger RCON Tool (ARRT) is a desktop administration tool for arma reforger developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
 <img width="1696" height="937" alt="ReforgerRcon_vS2DqXgTRv" src="https://github.com/user-attachments/assets/84a3deca-fd85-4175-8a37-0090701cf3ce" />
