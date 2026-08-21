@@ -26,7 +26,7 @@ Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 
 ### 🚀 Quick Start
 
-1. Obtain the `.zip` file from the **[v0.6.2-alpha Release Page](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.6.2-alpha)**.
+1. Obtain the `.zip` file from the **[Releases Page](https://github.com/mrwan74/ArmaReforgerRCONTool/releases)**.
 2. Copy the files anywhere on your PC (for example, to the Desktop, a USB drive, or the server tools folder).
 3. Double-click **`ReforgerRcon.exe`** to start. You do not need to install anything or have administrator rights.
 
