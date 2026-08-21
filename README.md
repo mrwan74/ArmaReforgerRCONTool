@@ -22,7 +22,7 @@ This readme is a work in progress..
 
 Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 
-👉 Download the ARMA Reforger RCON Tool v0.6.2-alpha (.zip) from **[Releases Page](https://github.com/mrwan74/ArmaReforgerRCONTool/releases)**
+👉 Download the ARMA Reforger RCON Tool v0.6.2-alpha (.zip) from the **[Releases Page](https://github.com/mrwan74/ArmaReforgerRCONTool/releases)**
 
 ### 🚀 Quick Start
 
