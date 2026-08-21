@@ -191,3 +191,10 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 - [ ] **Custom Commands & Plugin System:** Register custom RCON commands and mod actions as clickable toolbar buttons (for Reforger).
 - [ ] **Global Player Database Synchronization:** A cloud syncing feature enabling administrators to synchronise the player database list with a master community database.
 - [ ] **Session and Playtime Tracking:** Record total play hours, session durations, and historical join/leave event tracking.
+
+
+## SAST Tools
+
+
+
+[PVS-Studio](https://pvs-studio.com/en/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) - static code analyzer for Enterprise (C, C++, C#, Go, and Java) and Web (JS and TS) development.
