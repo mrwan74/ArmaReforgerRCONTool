@@ -162,7 +162,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=
 Special thanks to the authors of the open-source projects and libraries used in this tool:
 
 * **[DaRT (DayZ / ArmA RCon Tool)](https://github.com/DomiStyle/DaRT)** by **[@DomiStyle](https://github.com/DomiStyle)** – The legendary DayZ and ARMA administration tool that served as the primary design and functional inspiration for ARRT.
-* **[BattleNET](https://github.com/marceldev89/BattleNET)** by **[@marceldev89](https://github.com/marceldev89)** – C# BattlEye protocol client library powering the BattlEye RCON network implementation.( but modernized) 
+* **[BattleNET](https://github.com/marceldev89/BattleNET)** by **[@marceldev89](https://github.com/marceldev89)** – C# BattlEye protocol client library powering the BattlEye RCON network implementation.(refactored and modernized for .NET 10) 
 * **[LuminaUI](https://github.com/j4587698/LuminaUI)** by **[@j4587698](https://github.com/j4587698)** – UI component and theming library for Avalonia.
 * **[Avalonia UI](https://github.com/AvaloniaUI/Avalonia)** by **[@AvaloniaUI](https://github.com/AvaloniaUI)** – Avalonia is a cross-platform UI framework for .NET providing a flexible styling system and supporting a wide range of operating systems.
 * **[MaxMind GeoIP2](https://github.com/maxmind/GeoIP2-dotnet)** by **[@maxmind](https://github.com/maxmind)** – IP Geolocation engine.
