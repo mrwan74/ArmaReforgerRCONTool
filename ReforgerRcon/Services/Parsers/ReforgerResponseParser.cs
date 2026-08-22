@@ -59,11 +59,7 @@ public static partial class ReforgerResponseParser
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Debug($"[ReforgerResponseParser] Regex evaluation timed out during zalgo filtering: {regexEx.Message}");
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Debug($"[ReforgerResponseParser] Non-fatal exception during text sanitization: {ex.Message}");
+            AppLogger.Debug($"[ReforgerResponseParser] Regex timeout during zalgo filtering: {regexEx.Message}");
         }
 
         sanitized = sanitized.Trim();
@@ -105,7 +101,7 @@ public static partial class ReforgerResponseParser
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[ReforgerResponseParser] Critical failure while parsing Reforger player payload: {ex.Message}", ex);
+            AppLogger.Error($"[ReforgerResponseParser] Critical failure parsing Reforger players: {ex.Message}", ex);
         }
 
         return players;
@@ -178,7 +174,7 @@ public static partial class ReforgerResponseParser
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[ReforgerResponseParser] Critical failure while parsing Reforger ban payload: {ex.Message}", ex);
+            AppLogger.Error($"[ReforgerResponseParser] Critical failure parsing Reforger bans: {ex.Message}", ex);
         }
 
         return bans;
@@ -191,6 +187,7 @@ public static partial class ReforgerResponseParser
         if (line.StartsWith("Processing Command", StringComparison.OrdinalIgnoreCase) ||
             line.StartsWith("Total bans:", StringComparison.OrdinalIgnoreCase) ||
             line.StartsWith("Help for ban command", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Server has no bans", StringComparison.OrdinalIgnoreCase) ||
             line.StartsWith("#ban", StringComparison.OrdinalIgnoreCase) ||
             line.StartsWith("- is in", StringComparison.OrdinalIgnoreCase) ||
             line.StartsWith("- is optional", StringComparison.OrdinalIgnoreCase) ||

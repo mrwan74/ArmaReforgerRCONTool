@@ -4,6 +4,7 @@
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:models="using:ReforgerRcon.Models"
+             xmlns:converters="using:ReforgerRcon.Converters"
              x:Class="ReforgerRcon.Views.Tabs.DatabaseTabView"
              x:DataType="vm:DatabaseViewModel"
              x:Name="RootDatabaseTab">
@@ -74,7 +75,10 @@
           <MenuItem Header="Quick Kick Active Session" Command="{Binding QuickKickCommand}" CommandParameter="{Binding SelectedPlayer}" />
           <Separator />
           <MenuItem Header="Set Comment..." Command="{Binding OpenSetCommentCommand}" CommandParameter="{Binding SelectedPlayer}" />
-          <MenuItem Header="Toggle Watchlist" Command="{Binding ToggleWatchlistCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <!-- Dynamic Context Menu Header based on Watchlist State -->
+          <MenuItem Header="{Binding SelectedPlayer.IsWatchlisted, Converter={x:Static converters:WatchlistTextConverter.Instance}}" 
+                    Command="{Binding ToggleWatchlistCommand}" 
+                    CommandParameter="{Binding SelectedPlayer}" />
           <Separator />
           <MenuItem Header="Copy Info" Command="{Binding CopyPlayerInfoCommand}" CommandParameter="{Binding SelectedPlayer}" />
         </ContextMenu>

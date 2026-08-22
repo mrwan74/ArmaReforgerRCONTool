@@ -12,6 +12,9 @@ public partial class DatabasePlayerDetailViewModel(DatabasePlayerModel player, D
 
     [ObservableProperty] public partial DatabasePlayerModel Player { get; set; } = player;
 
+    public bool IsReforgerProtocol => _parent.IsReforgerProtocol;
+    public bool IsBattlEyeProtocol => _parent.IsBattlEyeProtocol;
+
     [RelayCommand]
     private static async Task CopyFieldAsync(object? value)
     {

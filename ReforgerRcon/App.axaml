@@ -12,6 +12,17 @@
     <dataGrid:LuminaDataGridTheme />
     <icons:MaterialIconStyles />
 
+    <!-- Global ToolTip Text Wrapping & Sizing (Fixes ToolTip Cut-Off) -->
+    <Style Selector="ToolTip">
+      <Setter Property="MaxWidth" Value="360" />
+      <Setter Property="Padding" Value="10,6" />
+      <Setter Property="CornerRadius" Value="6" />
+    </Style>
+
+    <Style Selector="ToolTip TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
     <!-- Remove cell focus border / CurrencyVisual rectangle on cell click -->
     <Style Selector="DataGridCell">
       <Setter Property="FocusAdorner" Value="{x:Null}" />

@@ -12,12 +12,34 @@
 
       <StackPanel Spacing="4">
         <TextBlock Text="Reason" Classes="Label" />
-        <TextBox Text="{Binding Reason}" />
+        <TextBox Text="{Binding Reason}" IsEnabled="{Binding !IsExecuting}" />
       </StackPanel>
 
+      <!-- Sequential Progress Status Bar -->
+      <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" 
+              CornerRadius="6" 
+              Padding="10" 
+              IsVisible="{Binding IsExecuting}">
+        <TextBlock Text="{Binding ProgressStatus}" 
+                   FontWeight="SemiBold" 
+                   FontSize="12" 
+                   Foreground="{DynamicResource LuminaPrimaryBrush}" 
+                   HorizontalAlignment="Center" />
+      </Border>
+
       <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
-        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
-        <Button Grid.Column="2" Classes="Danger" Content="Confirm Kick" Command="{Binding ConfirmKickCommand}" />
+        <Button Grid.Column="1" 
+                Classes="Outline" 
+                Content="Cancel" 
+                Command="{Binding CloseCommand}" 
+                IsEnabled="{Binding !IsExecuting}" />
+
+        <Button Grid.Column="2" 
+                Classes="Danger" 
+                Content="Confirm Kick" 
+                Command="{Binding ConfirmKickCommand}" 
+                lumina:LuminaButton.IsLoading="{Binding IsExecuting}"
+                IsEnabled="{Binding !IsExecuting}" />
       </Grid>
     </StackPanel>
   </lumina:LuminaCard>

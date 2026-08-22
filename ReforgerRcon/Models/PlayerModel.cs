@@ -15,7 +15,11 @@ public partial class PlayerModel : ObservableObject
     [ObservableProperty] public partial int Port { get; set; } = 2304;
     [ObservableProperty] public partial int Ping { get; set; } = 25;
     [ObservableProperty] public partial string Comment { get; set; } = string.Empty;
-    [ObservableProperty] public partial bool IsWatchlisted { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WatchlistActionText))]
+    public partial bool IsWatchlisted { get; set; }
+
     [ObservableProperty] public partial bool HasAliases { get; set; }
     [ObservableProperty] public partial bool IsSelected { get; set; }
     [ObservableProperty] public partial CountryInfo Country { get; set; } = new() { Code = "us", Name = "United States" };
@@ -25,4 +29,5 @@ public partial class PlayerModel : ObservableObject
 
     public string FormattedEndpoint => $"{Ip}:{Port}";
     public string DisplayLocation => $"{LocationCity}, {LocationState}, {Country.Name}";
+    public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
 }

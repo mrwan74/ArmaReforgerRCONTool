@@ -17,6 +17,7 @@ public partial class BansTabView : UserControl
         {
             InitializeComponent();
             AddHandler(PointerPressedEvent, OnGridPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+            AddHandler(ContextRequestedEvent, OnGridContextRequested, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
             DataContextChanged += (_, _) =>
             {
@@ -98,11 +99,40 @@ public partial class BansTabView : UserControl
                 {
                     BansGrid.SelectedItem = ban;
                 }
+                else
+                {
+                    BansGrid.SelectedItem = null;
+                }
             }
         }
         catch (Exception ex)
         {
             AppLogger.Trace($"OnGridPointerPressed handled non-fatal visual lookup: {ex.Message}");
+        }
+    }
+
+    private void OnGridContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        try
+        {
+            if (e.Source is Visual visual)
+            {
+                var row = visual.FindAncestorOfType<DataGridRow>();
+                if (row?.DataContext is BanModel ban)
+                {
+                    BansGrid.SelectedItem = ban;
+                    return;
+                }
+            }
+
+            // Suppress context menu on empty area or headers
+            BansGrid.SelectedItem = null;
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"OnGridContextRequested handled non-fatal visual lookup: {ex.Message}");
+            e.Handled = true;
         }
     }
 }

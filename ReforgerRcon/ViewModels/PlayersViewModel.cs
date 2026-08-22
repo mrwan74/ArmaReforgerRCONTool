@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,7 +24,19 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [ObservableProperty] public partial PlayerModel? SelectedPlayer { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
     [ObservableProperty] public partial int SelectedCount { get; set; }
-    [ObservableProperty] public partial bool IsAllSelected { get; set; }
+
+    private bool _isAllSelected;
+    public bool IsAllSelected
+    {
+        get => _isAllSelected;
+        set
+        {
+            if (SetProperty(ref _isAllSelected, value))
+            {
+                ApplySelectAll(value);
+            }
+        }
+    }
 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
@@ -31,9 +44,45 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public Task<bool> RefreshPlayersAsync() => ExecuteSafeAsync(async () =>
     {
+        var sw = Stopwatch.StartNew();
+        AppLogger.Debug("[PlayersViewModel:Timing] Starting player refresh operation...");
+
         _allPlayers = await _rconService.GetPlayersAsync();
+        var networkTime = sw.ElapsedMilliseconds;
+
+        var filterSw = Stopwatch.StartNew();
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+        filterSw.Stop();
+        sw.Stop();
+
+        _dashboard.OnlinePlayersCount = Players.Count;
+        AppLogger.Info($"[PlayersViewModel:Timing] Players tab populated: {_allPlayers.Count} players loaded (Network/DB: {networkTime} ms, Filter: {filterSw.ElapsedMilliseconds} ms, Total: {sw.ElapsedMilliseconds} ms).");
     });
+
+    public void RemovePlayerFromList(PlayerModel player)
+    {
+        ExecuteSafe(() =>
+        {
+            _allPlayers.RemoveAll(p => p.Uid == player.Uid || (p.Id == player.Id && p.Id != 0));
+
+            var match = Players.FirstOrDefault(p => p.Uid == player.Uid || (p.Id == player.Id && p.Id != 0));
+            if (match is not null)
+            {
+                Players.Remove(match);
+            }
+
+            _dashboard.OnlinePlayersCount = Players.Count;
+            UpdateSelectedCount();
+            AppLogger.Debug($"[PlayersViewModel] Removed '{player.Name}' from live list immediately.");
+        });
+    }
+
+    public async Task TriggerPostBanRefreshAsync()
+    {
+        await RefreshPlayersAsync();
+        await _dashboard.BansTab.RefreshBansAsync();
+        _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count;
+    }
 
     public void ApplyFilter(string query, string searchType)
     {
@@ -111,7 +160,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public void ToggleSelectAll() => ExecuteSafe(() => IsAllSelected = !IsAllSelected);
 
-    partial void OnIsAllSelectedChanged(bool value)
+    private void ApplySelectAll(bool isSelected)
     {
         ExecuteSafe(() =>
         {
@@ -121,9 +170,9 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             {
                 foreach (var p in Players)
                 {
-                    p.IsSelected = value;
+                    p.IsSelected = isSelected;
                 }
-                SelectedCount = value ? Players.Count : 0;
+                SelectedCount = isSelected ? Players.Count : 0;
             }
             finally
             {
@@ -140,7 +189,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             if (_isUpdatingSelection) return;
             SelectedCount = Players.Count(p => p.IsSelected);
             bool allSelected = Players.Count > 0 && SelectedCount == Players.Count;
-            if (IsAllSelected != allSelected)
+            if (_isAllSelected != allSelected)
             {
                 _isUpdatingSelection = true;
                 try
@@ -197,17 +246,36 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             if (player == null) return;
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Quick Permanent Ban",
-                $"Are you sure you want to PERMANENTLY ban {player.Name} ({player.Uid})?",
+                $"Are you sure you want to PERMANENTLY ban {player.Name} (Player #{player.Id})?",
                 "Permanent Ban",
                 true,
                 async () =>
                 {
-                    await _rconService.BanPlayerAsync(player, 0, "Quick Permanent Ban by Administrator");
+                    bool isSuccess = await _rconService.BanPlayerAsync(player, 0, "Quick Permanent Ban by Administrator");
                     var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
-                        ? $"#ban create {player.Uid} 0 Quick Ban"
+                        ? $"#ban create {player.Id} 0 Quick Ban"
                         : $"addBan {player.Guid} 0 Quick Ban";
-                    ToastNotificationService.Instance.ShowToast("Permanent Ban", $"Banned {player.Name}", cmd);
-                    await RefreshPlayersAsync();
+
+                    if (isSuccess)
+                    {
+                        ToastNotificationService.Instance.ShowSuccess("Permanent Ban", $"Banned {player.Name}", cmd, async () =>
+                        {
+                            var allBans = await _rconService.GetBansAsync();
+                            var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid);
+                            if (ban != null)
+                            {
+                                await _rconService.RemoveBanAsync(ban);
+                                await TriggerPostBanRefreshAsync();
+                            }
+                        });
+
+                        RemovePlayerFromList(player);
+                        await TriggerPostBanRefreshAsync();
+                    }
+                    else
+                    {
+                        ToastNotificationService.Instance.ShowError("Permanent Ban Failed", $"Could not ban {player.Name} (Server timeout or invalid ID).", cmd);
+                    }
                 },
                 () => _dashboard.CloseDialog()
             ));
@@ -226,16 +294,21 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     }
 
     [RelayCommand]
-    public void ToggleWatchlist(PlayerModel? player)
+    public Task<bool> ToggleWatchlist(PlayerModel? player) => ExecuteSafeAsync(async () =>
     {
-        ExecuteSafe(() =>
+        player ??= SelectedPlayer;
+        if (player == null) return;
+        player.IsWatchlisted = !player.IsWatchlisted;
+
+        if (_dashboard.DatabaseTab.Players.FirstOrDefault(p => p.Uid == player.Uid) is { } dbPlayer)
         {
-            player ??= SelectedPlayer;
-            if (player == null) return;
-            player.IsWatchlisted = !player.IsWatchlisted;
-            ToastNotificationService.Instance.ShowToast("Watchlist", $"{player.Name} watchlist status: {player.IsWatchlisted}");
-        });
-    }
+            dbPlayer.IsWatchlisted = player.IsWatchlisted;
+        }
+
+        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(player.Uid, player.IsWatchlisted);
+        var feedbackMessage = player.IsWatchlisted ? $"Added {player.Name} to Watchlist" : $"Removed {player.Name} from Watchlist";
+        ToastNotificationService.Instance.ShowToast("Watchlist Updated", feedbackMessage);
+    });
 
     private string FormatPlayerInfo(PlayerModel p)
     {
@@ -318,7 +391,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     public Task<bool> RestartServerAsync() => ExecuteSafeAsync(async () =>
     {
         await _rconService.RestartServerAsync();
-        ToastNotificationService.Instance.ShowToast("Server Restart", "Restart command dispatched.", "#restart");
+        ToastNotificationService.Instance.ShowToast("Server Restart", "Restart command sent.", "#restart");
     });
 
     [RelayCommand]
@@ -331,11 +404,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 "Are you sure you want to trigger a server restart now?",
                 "Restart Server",
                 true,
-                async () =>
-                {
-                    await _rconService.RestartServerAsync();
-                    ToastNotificationService.Instance.ShowToast("Server Restart", "Restart command dispatched.", "#restart");
-                },
+                () => _rconService.RestartServerAsync(),
                 () => _dashboard.CloseDialog()
             ));
         });
@@ -345,7 +414,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     public Task<bool> ShutdownServerAsync() => ExecuteSafeAsync(async () =>
     {
         await _rconService.ShutdownServerAsync();
-        ToastNotificationService.Instance.ShowToast("Server Shutdown", "Shutdown command dispatched.", "#shutdown");
+        ToastNotificationService.Instance.ShowToast("Server Shutdown", "Shutdown command sent.", "#shutdown");
     });
 
     [RelayCommand]
@@ -358,11 +427,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 "Are you sure you want to trigger a server shutdown now?",
                 "Shutdown Server",
                 true,
-                async () =>
-                {
-                    await _rconService.ShutdownServerAsync();
-                    ToastNotificationService.Instance.ShowToast("Server Shutdown", "Shutdown command dispatched.", "#shutdown");
-                },
+                () => _rconService.ShutdownServerAsync(),
                 () => _dashboard.CloseDialog()
             ));
         });

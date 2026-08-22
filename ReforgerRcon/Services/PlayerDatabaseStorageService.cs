@@ -626,6 +626,37 @@ public static class PlayerDatabaseStorageService
         }
     }
 
+    public static async Task SetWatchlistStatusAsync(string identifier, bool isWatchlisted)
+    {
+        await InitializeAsync();
+        if (string.IsNullOrWhiteSpace(identifier)) return;
+
+        await DbLock.WaitAsync();
+        try
+        {
+            await using var connection = new SqliteConnection(ConnectionString);
+            await connection.OpenAsync();
+
+            const string updateSql = "UPDATE Players SET IsWatchlisted = @IsWatchlisted WHERE Uid = @Id OR Guid = @Id;";
+            await using var command = connection.CreateCommand();
+            command.CommandText = updateSql;
+            command.Parameters.AddWithValue("@IsWatchlisted", isWatchlisted ? 1 : 0);
+            command.Parameters.AddWithValue("@Id", identifier.Trim());
+            int affected = await command.ExecuteNonQueryAsync();
+
+            AppLogger.Info($"[PlayerDatabase] Set watchlist status to {isWatchlisted} for player '{identifier}' (Rows affected: {affected}).");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[PlayerDatabase] Failed setting watchlist status for player '{identifier}'.", ex);
+            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed updating watchlist status.", "SQLITE_WATCHLIST_ERR");
+        }
+        finally
+        {
+            DbLock.Release();
+        }
+    }
+
     public static async Task ToggleWatchlistAsync(string identifier)
     {
         await InitializeAsync();

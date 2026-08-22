@@ -1,0 +1,269 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:converters="using:ReforgerRcon.Converters"
+             x:Class="ReforgerRcon.Views.Dialogs.ProtocolHelpDialog"
+             x:DataType="vm:ProtocolHelpDialogViewModel">
+
+  <UserControl.Styles>
+    <Style Selector="Button.GuideTabBtn.Selected">
+      <Setter Property="Background" Value="{DynamicResource LuminaPrimaryBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LuminaPrimaryBrush}" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+  </UserControl.Styles>
+
+  <lumina:LuminaCard Padding="24" Width="780" MaxHeight="820" Classes="Elevated">
+    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="14">
+      
+      <!-- 1. Header Bar -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="{DynamicResource LuminaPrimaryBgBrush}" CornerRadius="8" Padding="8" VerticalAlignment="Center">
+            <icons:MaterialIcon Kind="BookOpenPageVariantOutline" Foreground="{DynamicResource LuminaPrimaryBrush}" Width="22" Height="22" />
+          </Border>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="ARMA Reforger RCON Protocols &amp; Configuration Guide" Classes="SectionTitle" FontSize="17" FontWeight="Bold" />
+            <TextBlock Text="Understanding BattlEye RCON vs. Reforger Built-in RCON and setting up your server" FontSize="12" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+          </StackPanel>
+        </StackPanel>
+
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close Guide" VerticalAlignment="Center" />
+      </Grid>
+
+      <!-- 2. Navigation Tabs Bar -->
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+        <Button Classes="Small Outline GuideTabBtn"
+                Classes.Selected="{Binding SelectedSection, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Comparison'}"
+                Content="Protocol Comparison"
+                Command="{Binding SetSectionCommand}"
+                CommandParameter="Comparison" />
+
+        <Button Classes="Small Outline GuideTabBtn"
+                Classes.Selected="{Binding SelectedSection, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='BattlEye'}"
+                Content="1. BattlEye Setup (BEServerx64.cfg)"
+                Command="{Binding SetSectionCommand}"
+                CommandParameter="BattlEye" />
+
+        <Button Classes="Small Outline GuideTabBtn"
+                Classes.Selected="{Binding SelectedSection, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Reforger'}"
+                Content="2. Reforger Built-in Setup (JSON)"
+                Command="{Binding SetSectionCommand}"
+                CommandParameter="Reforger" />
+      </StackPanel>
+
+      <!-- 3. Scrollable Content Area -->
+      <Border Grid.Row="2" 
+              Background="{DynamicResource LuminaNavigationPaneBrush}"
+              BorderBrush="{DynamicResource LuminaBorderSubtleBrush}"
+              BorderThickness="1"
+              CornerRadius="8"
+              Padding="16">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="16">
+            
+            <!-- VIEW A: COMPARISON OVERVIEW -->
+            <StackPanel Spacing="14" IsVisible="{Binding SelectedSection, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Comparison'}">
+              
+              <!-- Simultaneous Execution Banner (Grid ensures text wraps without cut-off) -->
+              <Border Background="{DynamicResource LuminaPrimaryBgBrush}" 
+                      BorderBrush="{DynamicResource LuminaPrimaryBrush}" 
+                      BorderThickness="1" 
+                      CornerRadius="6" 
+                      Padding="12">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12" VerticalAlignment="Center">
+                  <icons:MaterialIcon Grid.Column="0" Kind="LightningBolt" Foreground="{DynamicResource LuminaPrimaryBrush}" Width="20" Height="20" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="Simultaneous Execution Supported" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+                    <TextBlock Text="ARMA Reforger servers can run both BattlEye RCON and Reforger Built-in RCON Simultaneously on separate UDP ports." 
+                               FontSize="12" TextWrapping="Wrap" LineHeight="18" Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
+              <!-- Comparison Cards Grid -->
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                
+                <!-- BattlEye Card -->
+                <lumina:LuminaCard Grid.Column="0" Padding="14">
+                  <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                      <Border Background="#2010B981" CornerRadius="4" Padding="4">
+                        <icons:MaterialIcon Kind="ShieldCheck" Foreground="{DynamicResource LuminaSuccessBrush}" Width="16" Height="16" />
+                      </Border>
+                      <TextBlock Text="BattlEye RCON" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource LuminaSuccessBrush}" />
+                    </StackPanel>
+
+                    <TextBlock Text="Dedicated Anti-Cheat Protocol" Classes="Caption" FontSize="11" FontWeight="SemiBold" />
+                    
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="• Best for moderation and player administration." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      <TextBlock Text="• Provides 32-character BattlEye GUIDs which are harder to be spoofed by client-side modifications." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      <TextBlock Text="• Gives player IP addresses." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      
+                      <!-- Formatted Commands Block -->
+                      <StackPanel Spacing="3" Margin="0,4,0,0">
+                        <TextBlock Text="• Commands:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                        <Border Background="{DynamicResource LuminaSurfaceElevatedBrush}" BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="8,6">
+                          <SelectableTextBlock Text="commands, players, admins, kick, loadBans, writeBans, bans, ban, addBan, removeBan" 
+                                               FontFamily="Consolas, monospace" 
+                                               FontSize="11" 
+                                               TextWrapping="Wrap" 
+                                               LineHeight="16"
+                                               Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
+                        </Border>
+                      </StackPanel>
+                    </StackPanel>
+                  </StackPanel>
+                </lumina:LuminaCard>
+
+                <!-- Reforger Built-in Card -->
+                <lumina:LuminaCard Grid.Column="1" Padding="14">
+                  <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                      <Border Background="#203B82F6" CornerRadius="4" Padding="4">
+                        <icons:MaterialIcon Kind="ServerNetwork" Foreground="{DynamicResource LuminaPrimaryBrush}" Width="16" Height="16" />
+                      </Border>
+                      <TextBlock Text="Reforger Built-in RCON" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+                    </StackPanel>
+
+                    <TextBlock Text="Native Enfusion Engine Protocol" Classes="Caption" FontSize="11" FontWeight="SemiBold" />
+
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="• Best for server management such as restarts or shutdowns, and custom ingame commands" FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      <TextBlock Text="• Provides engine lifecycle commands (#restart, #shutdown) which are not available in BattlEye." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      <TextBlock Text="• It accepts custom commands (e.g. GM Tools mod)." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      
+                      <!-- Formatted Commands Block -->
+                      <StackPanel Spacing="3" Margin="0,4,0,0">
+                        <TextBlock Text="• Commands:" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                        <Border Background="{DynamicResource LuminaSurfaceElevatedBrush}" BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="8,6">
+                          <SelectableTextBlock Text="#login, #restart, #shutdown, #kick, #ban create, #ban remove, #ban list, #players, @logout" 
+                                               FontFamily="Consolas, monospace" 
+                                               FontSize="11" 
+                                               TextWrapping="Wrap" 
+                                               LineHeight="16"
+                                               Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
+                        </Border>
+                      </StackPanel>
+                    </StackPanel>
+                  </StackPanel>
+                </lumina:LuminaCard>
+              </Grid>
+
+              <!-- Decision Helper Box -->
+              <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="When should I use which protocol?" FontWeight="Bold" FontSize="12" />
+                  <TextBlock Text="• For banning Use BattlEye RCON." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                  <TextBlock Text="• For triggering server restarts, server shutdowns, or using custom ingame commands: Use Reforger Built-in RCON." FontSize="12" TextWrapping="Wrap" LineHeight="17" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <!-- VIEW B: BATTLEYE CONFIGURATION -->
+            <StackPanel Spacing="12" IsVisible="{Binding SelectedSection, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='BattlEye'}">
+              <TextBlock Text="1. BattlEye RCON Server Setup" FontWeight="Bold" FontSize="15" />
+              
+              <TextBlock Text="BattlEye RCON is configured through a configuration file located in the server's battleye subfolder." 
+                         FontSize="12" TextWrapping="Wrap" LineHeight="17" />
+
+              <Grid ColumnDefinitions="160,*" RowDefinitions="Auto,Auto" RowSpacing="6">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="File Location:" FontWeight="SemiBold" Classes="Caption" />
+                <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="&lt;ServerRoot&gt;/battleye/BEServer_x64.cfg" FontFamily="Consolas, monospace" FontSize="11" Foreground="{DynamicResource LuminaPrimaryBrush}" TextWrapping="Wrap" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Network Requirement:" FontWeight="SemiBold" Classes="Caption" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="Open your chosen RConPort (UDP) in your firewall" FontSize="12" TextWrapping="Wrap" />
+              </Grid>
+
+              <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                <TextBlock Text="Configuration Snippet (BEServer_x64.cfg)" Classes="Caption" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Classes="Small Ghost" Command="{Binding CopyBattlEyeConfigCommand}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="ContentCopy" Width="13" Height="13" />
+                    <TextBlock Text="Copy Snippet" />
+                  </StackPanel>
+                </Button>
+              </Grid>
+
+              <Border Background="{DynamicResource LuminaSurfaceElevatedBrush}" BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12">
+                <SelectableTextBlock Text="{Binding BattlEyeConfigSample}" FontFamily="Consolas, monospace" FontSize="12" Foreground="{DynamicResource LuminaTextPrimaryBrush}" TextWrapping="Wrap" />
+              </Border>
+
+              <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
+                <Button Classes="Small Outline" Command="{Binding OpenBattlEyeDocsCommand}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="OpenInNew" Width="13" Height="13" />
+                    <TextBlock Text="BattlEye Documentation" />
+                  </StackPanel>
+                </Button>
+
+                <Button Classes="Small Outline" Command="{Binding OpenBattlEyeWikiCommand}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="OpenInNew" Width="13" Height="13" />
+                    <TextBlock Text="Bohemia Hosting Wiki" />
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+            </StackPanel>
+
+            <!-- VIEW C: REFORGER BUILT-IN CONFIGURATION -->
+            <StackPanel Spacing="12" IsVisible="{Binding SelectedSection, Converter={x:Static converters:EqualityConverter.Instance}, ConverterParameter='Reforger'}">
+              <TextBlock Text="2. Reforger Built-in RCON Server Setup" FontWeight="Bold" FontSize="15" />
+              
+              <TextBlock Text="Reforger's built-in RCON is defined directly inside your server's JSON configuration file." 
+                         FontSize="12" TextWrapping="Wrap" LineHeight="17" />
+
+              <Grid ColumnDefinitions="160,*" RowDefinitions="Auto,Auto" RowSpacing="6">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="File Location:" FontWeight="SemiBold" Classes="Caption" />
+                <SelectableTextBlock Grid.Row="0" Grid.Column="1" Text="&lt;ServerRoot&gt;/config.json or server.json" FontFamily="Consolas, monospace" FontSize="11" Foreground="{DynamicResource LuminaPrimaryBrush}" TextWrapping="Wrap" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Network Requirement:" FontWeight="SemiBold" Classes="Caption" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="Open your chosen rcon port (UDP) in your firewall." FontSize="12" TextWrapping="Wrap" />
+              </Grid>
+
+              <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                <TextBlock Text="Configuration Snippet (config.json)" Classes="Caption" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Classes="Small Ghost" Command="{Binding CopyReforgerConfigCommand}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="ContentCopy" Width="13" Height="13" />
+                    <TextBlock Text="Copy Snippet" />
+                  </StackPanel>
+                </Button>
+              </Grid>
+
+              <Border Background="{DynamicResource LuminaSurfaceElevatedBrush}" BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12">
+                <SelectableTextBlock Text="{Binding ReforgerConfigSample}" FontFamily="Consolas, monospace" FontSize="12" Foreground="{DynamicResource LuminaTextPrimaryBrush}" TextWrapping="Wrap" />
+              </Border>
+
+              <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
+                <Button Classes="Small Outline" Command="{Binding OpenReforgerConfigWikiCommand}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="OpenInNew" Width="13" Height="13" />
+                    <TextBlock Text="Server Config Wiki" />
+                  </StackPanel>
+                </Button>
+
+                <Button Classes="Small Outline" Command="{Binding OpenReforgerManagementWikiCommand}">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="OpenInNew" Width="13" Height="13" />
+                    <TextBlock Text="Server Management Wiki" />
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+            </StackPanel>
+
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+      <!-- 4. Footer Dismiss Action -->
+      <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
+        <Button Grid.Column="1" Classes="Primary" Content="Got It" Command="{Binding CloseCommand}" MinWidth="100" HorizontalContentAlignment="Center"/>
+      </Grid>
+    </Grid>
+  </lumina:LuminaCard>
+</UserControl>

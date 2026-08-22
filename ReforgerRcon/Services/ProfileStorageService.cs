@@ -23,17 +23,20 @@ public static class ProfileStorageService
         {
             if (!File.Exists(FilePath))
             {
-                AppLogger.Info("No profile cache file found. Generating default connection profiles.");
-                return GetDefaultProfiles();
+                AppLogger.Info("[ProfileStorageService] No profile cache file found. Generating and persisting default connection profiles.");
+                var defaults = GetDefaultProfiles();
+                await SaveProfilesAsync(defaults);
+                return defaults;
             }
+
             var json = await File.ReadAllTextAsync(FilePath);
             var profiles = JsonSerializer.Deserialize<List<ServerProfile>>(json) ?? GetDefaultProfiles();
-            AppLogger.Info($"Loaded {profiles.Count} server profile(s) from {FilePath}.");
+            AppLogger.Info($"[ProfileStorageService] Loaded {profiles.Count} server profile(s) from {FilePath}.");
             return profiles;
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"Profile loading fallback triggered due to error reading {FilePath}", ex);
+            AppLogger.Error($"[ProfileStorageService] Profile loading fallback triggered due to error reading {FilePath}", ex);
             return GetDefaultProfiles();
         }
     }
@@ -63,18 +66,18 @@ public static class ProfileStorageService
                 SaveSemaphore.Release();
             }
 
-            AppLogger.Info($"Saved {profiles.Count} server profile(s) to {FilePath}.");
+            AppLogger.Debug($"[ProfileStorageService] Persisted {profiles.Count} server profile(s) to disk at {FilePath}.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"Failed saving server profiles to disk at {FilePath}", ex);
+            AppLogger.Error($"[ProfileStorageService] Failed saving server profiles to disk at {FilePath}", ex);
         }
     }
 
     [SuppressMessage("Security", "S1313:Hardcoded IP address", Justification = "Default localhost profile placeholders")]
     private static List<ServerProfile> GetDefaultProfiles() =>
     [
-        new() { Name = "Reforger Dedicated (Local)", ServerIp = "127.0.0.1", Port = 19999, Password = string.Empty, Protocol = RconProtocol.ReforgerBuiltIn, AutoConnect = false },
-        new() { Name = "BattlEye Server (Local)", ServerIp = "127.0.0.1", Port = 20007, Password = string.Empty, Protocol = RconProtocol.BattlEye, AutoConnect = false }
+        new() { Name = "Reforger Dedicated (Local)", ServerIp = "127.0.0.1", Port = 19999, Password = string.Empty, Protocol = RconProtocol.ReforgerBuiltIn, AutoConnect = false, IsLastSelected = true },
+        new() { Name = "BattlEye Server (Local)", ServerIp = "127.0.0.1", Port = 20007, Password = string.Empty, Protocol = RconProtocol.BattlEye, AutoConnect = false, IsLastSelected = false }
     ];
 }

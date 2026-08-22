@@ -17,7 +17,11 @@ public partial class DatabasePlayerModel : ObservableObject
     [ObservableProperty] public partial int Ping { get; set; } = 25;
     [ObservableProperty] public partial bool IsOnline { get; set; }
     [ObservableProperty] public partial string Comment { get; set; } = string.Empty;
-    [ObservableProperty] public partial bool IsWatchlisted { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WatchlistActionText))]
+    public partial bool IsWatchlisted { get; set; }
+
     [ObservableProperty] public partial bool HasAliases { get; set; }
     [ObservableProperty] public partial bool IsSelected { get; set; }
     [ObservableProperty] public partial DateTime LastSeen { get; set; } = DateTime.UtcNow;
@@ -27,4 +31,5 @@ public partial class DatabasePlayerModel : ObservableObject
 
     public string FormattedEndpoint => $"{LastIp}:{LastPort}";
     public string PingDisplay => IsOnline ? $"{Ping} ms" : "Offline";
+    public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
 }

@@ -148,6 +148,11 @@
             <TextBlock Text="Auto-refresh Interval (Seconds)" VerticalAlignment="Center" />
             <NumericUpDown Grid.Column="1" Minimum="1" Maximum="60" Value="{Binding Settings.RefreshIntervalSeconds}" />
           </Grid>
+          
+          <ToggleSwitch Content="Include Ban list query in scheduled Auto-refresh" 
+                        IsChecked="{Binding Settings.AutoRefreshBans}"
+                        ToolTip.Tip="When enabled, the server ban list is queried alongside players on every refresh tick. Disable to reduce server RCON command traffic." />
+
           <ToggleSwitch Content="Keep App Running in Background while connected" IsChecked="{Binding Settings.RunInBackground}" />
         </StackPanel>
       </lumina:LuminaCard>

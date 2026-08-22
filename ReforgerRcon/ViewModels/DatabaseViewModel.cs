@@ -45,6 +45,13 @@ public partial class DatabaseViewModel : ViewModelBase
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
     }, "Failed to retrieve player database records from SQLite.");
 
+    public async Task RefreshAfterOfflineBanAsync()
+    {
+        await _dashboard.BansTab.RefreshBansAsync();
+        _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count;
+        await LoadDbAsync();
+    }
+
     public void ApplyFilter(string query, string searchType)
     {
         ExecuteSafe(() =>
@@ -177,6 +184,8 @@ public partial class DatabaseViewModel : ViewModelBase
                     {
                         await _rconService.KickPlayerAsync(active, "Kicked from Historical Database");
                         ToastNotificationService.Instance.ShowToast("Kick Dispatched", $"Kicked {player.Name}", $"#kick {active.Id}");
+                        _dashboard.PlayersTab.RemovePlayerFromList(active);
+                        _ = _dashboard.PlayersTab.RefreshPlayersAsync();
                     }
                     else
                     {
@@ -205,8 +214,15 @@ public partial class DatabaseViewModel : ViewModelBase
         player ??= SelectedPlayer;
         if (player == null) return;
         player.IsWatchlisted = !player.IsWatchlisted;
-        await PlayerDatabaseStorageService.ToggleWatchlistAsync(player.Uid);
-        ToastNotificationService.Instance.ShowToast("Watchlist", $"{player.Name} watchlist status: {player.IsWatchlisted}");
+
+        if (_dashboard.PlayersTab.Players.FirstOrDefault(p => p.Uid == player.Uid) is { } livePlayer)
+        {
+            livePlayer.IsWatchlisted = player.IsWatchlisted;
+        }
+
+        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(player.Uid, player.IsWatchlisted);
+        var feedbackMessage = player.IsWatchlisted ? $"Added {player.Name} to Watchlist" : $"Removed {player.Name} from Watchlist";
+        ToastNotificationService.Instance.ShowToast("Watchlist Updated", feedbackMessage);
     });
 
     private string FormatDatabasePlayerInfo(DatabasePlayerModel p)

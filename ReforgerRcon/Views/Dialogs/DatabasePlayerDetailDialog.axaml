@@ -3,12 +3,14 @@
              xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:converters="using:ReforgerRcon.Converters"
              x:Class="ReforgerRcon.Views.Dialogs.DatabasePlayerDetailDialog"
              x:DataType="vm:DatabasePlayerDetailViewModel">
 
   <lumina:LuminaCard Padding="24" Width="490" MaxHeight="640" Classes="Elevated">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Spacing="16">
+        <!-- Dialog Header -->
         <Grid ColumnDefinitions="*,Auto">
           <StackPanel Spacing="2">
             <TextBlock Text="Database Player Entry" Classes="SectionTitle" FontSize="20" />
@@ -17,7 +19,87 @@
           <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" />
         </Grid>
 
-        <StackPanel Spacing="12">
+        <!-- Warning Banner if Name Changed / Aliases Exist -->
+        <Border Background="{DynamicResource LuminaWarningBgBrush}" 
+                BorderBrush="{DynamicResource LuminaWarningBrush}" 
+                BorderThickness="1" CornerRadius="6" Padding="10"
+                IsVisible="{Binding Player.HasAliases}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <icons:MaterialIcon Kind="Alert" Foreground="{DynamicResource LuminaWarningBrush}" Width="18" Height="18"/>
+            <TextBlock Text="Warning: Player has recorded aliases / previous names." Foreground="{DynamicResource LuminaWarningBrush}" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+
+        <!-- ========================================================================= -->
+        <!-- REFORGER PROTOCOL DATABASE DETAILS                                        -->
+        <!-- ========================================================================= -->
+        <StackPanel Spacing="12" IsVisible="{Binding IsReforgerProtocol}">
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Status:" Classes="Caption" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <Border Width="8" Height="8" CornerRadius="4" 
+                      Background="{DynamicResource LuminaSuccessBrush}" 
+                      IsVisible="{Binding Player.IsOnline}" />
+              <Border Width="8" Height="8" CornerRadius="4" 
+                      Background="{DynamicResource LuminaTextTertiaryBrush}" 
+                      Opacity="0.4" 
+                      IsVisible="{Binding !Player.IsOnline}" />
+              <TextBlock Text="Online" FontWeight="SemiBold" IsVisible="{Binding Player.IsOnline}" />
+              <TextBlock Text="Offline" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" IsVisible="{Binding !Player.IsOnline}" />
+              <TextBlock Text="(Watchlisted)" Foreground="{DynamicResource LuminaWarningBrush}" IsVisible="{Binding Player.IsWatchlisted}" Margin="4,0,0,0"/>
+            </StackPanel>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Player Name:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Name}" ToolTip.Tip="Copy Name">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Player UID:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Uid}" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Uid}" ToolTip.Tip="Copy UID">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Comment:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Comment}" VerticalAlignment="Center" TextWrapping="Wrap" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+              <Button Classes="Ghost Icon" Command="{Binding EditCommentCommand}" ToolTip.Tip="Edit Comment">
+                <icons:MaterialIcon Kind="PencilOutline" Width="14" Height="14" />
+              </Button>
+              <Button Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Comment}" ToolTip.Tip="Copy Comment">
+                <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+              </Button>
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+
+        <!-- ========================================================================= -->
+        <!-- BATTLEYE PROTOCOL DATABASE DETAILS                                        -->
+        <!-- ========================================================================= -->
+        <StackPanel Spacing="12" IsVisible="{Binding IsBattlEyeProtocol}">
+          <Grid ColumnDefinitions="130,*,Auto">
+            <TextBlock Text="Status:" Classes="Caption" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <Border Width="8" Height="8" CornerRadius="4" 
+                      Background="{DynamicResource LuminaSuccessBrush}" 
+                      IsVisible="{Binding Player.IsOnline}" />
+              <Border Width="8" Height="8" CornerRadius="4" 
+                      Background="{DynamicResource LuminaTextTertiaryBrush}" 
+                      Opacity="0.4" 
+                      IsVisible="{Binding !Player.IsOnline}" />
+              <TextBlock Text="Online" FontWeight="SemiBold" IsVisible="{Binding Player.IsOnline}" />
+              <TextBlock Text="Offline" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" IsVisible="{Binding !Player.IsOnline}" />
+              <TextBlock Text="(Watchlisted)" Foreground="{DynamicResource LuminaWarningBrush}" IsVisible="{Binding Player.IsWatchlisted}" Margin="4,0,0,0"/>
+            </StackPanel>
+          </Grid>
+
           <Grid ColumnDefinitions="130,*,Auto">
             <TextBlock Text="Name:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -27,15 +109,7 @@
           </Grid>
 
           <Grid ColumnDefinitions="130,*,Auto">
-            <TextBlock Text="UID:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Uid}" VerticalAlignment="Center" />
-            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Uid}">
-              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
-            </Button>
-          </Grid>
-
-          <Grid ColumnDefinitions="130,*,Auto">
-            <TextBlock Text="GUID:" Classes="Caption" VerticalAlignment="Center" />
+            <TextBlock Text="BattlEye GUID:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Guid}" VerticalAlignment="Center" />
             <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Guid}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
@@ -55,7 +129,6 @@
             <TextBlock Grid.Column="1" Text="{Binding Player.Location}" VerticalAlignment="Center" />
           </Grid>
 
-          <!-- Comment with Edit Button -->
           <Grid ColumnDefinitions="130,*,Auto">
             <TextBlock Text="Comment:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Comment}" VerticalAlignment="Center" TextWrapping="Wrap" />
@@ -70,6 +143,7 @@
           </Grid>
         </StackPanel>
 
+        <!-- Action Button -->
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,8,0,0">
           <Button Grid.Column="0" Classes="Danger Outline" Content="Offline Ban Target" Command="{Binding OfflineBanCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
           <Button Grid.Column="1" Classes="Outline" Content="Close" Command="{Binding CloseCommand}" />

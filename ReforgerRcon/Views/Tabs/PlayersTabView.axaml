@@ -4,6 +4,7 @@
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:models="using:ReforgerRcon.Models"
+             xmlns:converters="using:ReforgerRcon.Converters"
              x:Class="ReforgerRcon.Views.Tabs.PlayersTabView"
              x:DataType="vm:PlayersViewModel"
              x:Name="RootPlayersTab">
@@ -78,7 +79,9 @@
           <MenuItem Header="Quick Permanent Ban" Command="{Binding QuickPermanentBanCommand}" CommandParameter="{Binding SelectedPlayer}" />
           <Separator />
           <MenuItem Header="Set Comment..." Command="{Binding OpenSetCommentCommand}" CommandParameter="{Binding SelectedPlayer}" />
-          <MenuItem Header="Toggle Watchlist" Command="{Binding ToggleWatchlistCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          <MenuItem Header="{Binding SelectedPlayer.IsWatchlisted, Converter={x:Static converters:WatchlistTextConverter.Instance}}" 
+                    Command="{Binding ToggleWatchlistCommand}" 
+                    CommandParameter="{Binding SelectedPlayer}" />
           <Separator />
           <MenuItem Header="Copy All Info" Command="{Binding CopyPlayerInfoCommand}" CommandParameter="{Binding SelectedPlayer}" />
         </ContextMenu>
@@ -113,15 +116,17 @@
               <Border HorizontalAlignment="Center" VerticalAlignment="Center">
                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
                           HorizontalAlignment="Center" 
-                          VerticalAlignment="Center"
-                          Margin="0" Padding="0" 
-                          MinWidth="0" MinHeight="0" />
+                          VerticalAlignment="Center" 
+                          Margin="0" 
+                          Padding="0" 
+                          MinWidth="0" 
+                          MinHeight="0" />
               </Border>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="95" MinWidth="75">
+        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="114" MinWidth="75">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -134,7 +139,7 @@
 
         <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="110" MinWidth="95" />
 
-        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="220" MinWidth="130">
+        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="256" MinWidth="130">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <TextBlock Text="{Binding Name}" 
@@ -147,7 +152,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="260" MinWidth="150" />
+        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="396" MinWidth="150" />
 
         <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" />
 
@@ -186,7 +191,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="323" MinWidth="120" />
+        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="434" MinWidth="120" />
 
         <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180">
           <DataGridTemplateColumn.CellTemplate>

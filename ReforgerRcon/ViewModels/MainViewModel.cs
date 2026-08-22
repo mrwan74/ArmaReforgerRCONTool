@@ -14,7 +14,7 @@ public partial class MainViewModel : ViewModelBase
 
     public MainViewModel()
     {
-        CurrentView = new LoginViewModel(OnLoginSuccess);
+        CurrentView = new LoginViewModel(OnLoginSuccess, isStartup: true);
         CrashReportService.UnhandledErrorCaptured += OnUnhandledErrorCaptured;
     }
 
@@ -45,6 +45,6 @@ public partial class MainViewModel : ViewModelBase
 
     private void OnDisconnect()
     {
-        CurrentView = new LoginViewModel(OnLoginSuccess);
+        CurrentView = new LoginViewModel(OnLoginSuccess, isStartup: false);
     }
 }

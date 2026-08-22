@@ -17,6 +17,7 @@ public partial class DatabaseTabView : UserControl
         {
             InitializeComponent();
             AddHandler(PointerPressedEvent, OnGridPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+            AddHandler(ContextRequestedEvent, OnGridContextRequested, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
             DataContextChanged += (_, _) =>
             {
@@ -68,7 +69,7 @@ public partial class DatabaseTabView : UserControl
                         col.IsVisible = vm.IsMultiSelectMode;
                         break;
                     case "ColReforgerId":
-                        col.IsVisible = false; // Always hidden for Reforger database (dynamic session ID)
+                        col.IsVisible = false;
                         break;
                     case "ColReforgerName":
                     case "ColReforgerUid":
@@ -103,11 +104,40 @@ public partial class DatabaseTabView : UserControl
                 {
                     DatabaseGrid.SelectedItem = player;
                 }
+                else
+                {
+                    DatabaseGrid.SelectedItem = null;
+                }
             }
         }
         catch (Exception ex)
         {
             AppLogger.Trace($"OnGridPointerPressed handled non-fatal visual lookup: {ex.Message}");
+        }
+    }
+
+    private void OnGridContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        try
+        {
+            if (e.Source is Visual visual)
+            {
+                var row = visual.FindAncestorOfType<DataGridRow>();
+                if (row?.DataContext is DatabasePlayerModel player)
+                {
+                    DatabaseGrid.SelectedItem = player;
+                    return;
+                }
+            }
+
+            // Suppress context menu on empty area or headers
+            DatabaseGrid.SelectedItem = null;
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"OnGridContextRequested handled non-fatal visual lookup: {ex.Message}");
+            e.Handled = true;
         }
     }
 

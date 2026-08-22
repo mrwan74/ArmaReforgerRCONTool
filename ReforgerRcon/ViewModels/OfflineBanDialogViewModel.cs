@@ -1,5 +1,6 @@
 using System;
-using System.Diagnostics.CodeAnalysis;
+using System.Collections.ObjectModel;
+using System.Net;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -8,16 +9,16 @@ using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
-[SuppressMessage("Major Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Reads generated partial properties")]
-public partial class OfflineBanDialogViewModel(string uid, string ip, IRconService rconService, DatabaseViewModel parent) : ViewModelBase
+public partial class OfflineBanDialogViewModel : ViewModelBase
 {
-    private readonly string _uid = uid;
-    private readonly string _ip = ip;
-    private readonly IRconService _rconService = rconService;
-    private readonly DatabaseViewModel _parent = parent;
+    private readonly string _uid;
+    private readonly string _ip;
+    private readonly IRconService _rconService;
+    private readonly DatabaseViewModel _parent;
 
-    [ObservableProperty] public partial string TargetIdentifier { get; set; } = $"{uid} / {ip}";
-    [ObservableProperty] public partial string TargetType { get; set; } = "Both";
+    [ObservableProperty] public partial string TargetIdentifier { get; set; }
+    [ObservableProperty] public partial string TargetType { get; set; }
+    [ObservableProperty] public partial ObservableCollection<string> AvailableTargetTypes { get; set; }
     [ObservableProperty] public partial string SelectedPreset { get; set; } = "1 Month";
     [ObservableProperty] public partial int CustomYears { get; set; }
     [ObservableProperty] public partial int CustomMonths { get; set; }
@@ -29,8 +30,47 @@ public partial class OfflineBanDialogViewModel(string uid, string ip, IRconServi
     [ObservableProperty] public partial string Reason { get; set; } = "Offline Ban - Exploiting/Rule Violation";
     [ObservableProperty] public partial string TotalCalculatedTimeText { get; set; } = string.Empty;
     [ObservableProperty] public partial string ExpiryDateText { get; set; } = string.Empty;
+    [ObservableProperty] public partial bool IsExecuting { get; set; }
+    [ObservableProperty] public partial bool IsTargetTypeSelectionVisible { get; set; }
 
     public bool IsCustomSelected => SelectedPreset == "Custom Duration";
+    public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
+
+    public OfflineBanDialogViewModel(string uid, string ip, IRconService rconService, DatabaseViewModel parent)
+    {
+        _uid = uid?.Trim() ?? string.Empty;
+        _ip = ip?.Trim() ?? string.Empty;
+        _rconService = rconService;
+        _parent = parent;
+
+        bool hasValidIp = !string.IsNullOrWhiteSpace(_ip) &&
+                          !_ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) &&
+                          IPAddress.TryParse(_ip, out _);
+
+        if (IsReforgerProtocol)
+        {
+            TargetIdentifier = $"UID: {_uid}";
+            AvailableTargetTypes = ["Identity ID (UID)"];
+            TargetType = "Identity ID (UID)";
+            IsTargetTypeSelectionVisible = false;
+        }
+        else if (hasValidIp)
+        {
+            TargetIdentifier = $"GUID: {_uid} | IP: {_ip}";
+            AvailableTargetTypes = ["Both (GUID & IP)", "BattlEye GUID", "IP Address"];
+            TargetType = "Both (GUID & IP)";
+            IsTargetTypeSelectionVisible = true;
+        }
+        else
+        {
+            TargetIdentifier = $"GUID: {_uid}";
+            AvailableTargetTypes = ["BattlEye GUID"];
+            TargetType = "BattlEye GUID";
+            IsTargetTypeSelectionVisible = false;
+        }
+
+        UpdateCalculations();
+    }
 
     partial void OnSelectedPresetChanged(string value)
     {
@@ -47,7 +87,11 @@ public partial class OfflineBanDialogViewModel(string uid, string ip, IRconServi
     partial void OnCustomSecondsChanged(int value) => UpdateCalculations();
 
     [RelayCommand]
-    private void SetPreset(string preset) => SelectedPreset = preset;
+    private void SetPreset(string preset)
+    {
+        if (IsExecuting) return;
+        SelectedPreset = preset;
+    }
 
     private long CalculateTotalSeconds() => SelectedPreset switch
     {
@@ -86,19 +130,79 @@ public partial class OfflineBanDialogViewModel(string uid, string ip, IRconServi
     }
 
     [RelayCommand]
-    private async Task ConfirmAsync()
+    private Task<bool> ConfirmAsync() => ExecuteSafeAsync(async () =>
     {
-        var totalSec = CalculateTotalSeconds();
+        if (IsExecuting) return;
+        IsExecuting = true;
 
-        if (TargetType is "GUID/UID" or "Both")
-            await _rconService.OfflineBanAsync(_uid, totalSec, Reason, isIp: false);
-        if (TargetType is "IP" or "Both")
-            await _rconService.OfflineBanAsync(_ip, totalSec, Reason, isIp: true);
+        try
+        {
+            var totalSec = CalculateTotalSeconds();
+            bool banUid = IsReforgerProtocol || TargetType.Contains("GUID", StringComparison.OrdinalIgnoreCase) || TargetType.Contains("Both", StringComparison.OrdinalIgnoreCase);
+            bool banIp = !IsReforgerProtocol && (TargetType.Contains("IP", StringComparison.OrdinalIgnoreCase) || TargetType.Contains("Both", StringComparison.OrdinalIgnoreCase));
 
-        ToastNotificationService.Instance.ShowToast("Offline Ban", $"Offline ban dispatched for {_uid} / {_ip}", "ban");
-        _parent.CloseDialog();
-    }
+            bool allSucceeded = true;
+
+            if (banUid)
+            {
+                if (!string.IsNullOrWhiteSpace(_uid) && !_uid.Equals("N/A", StringComparison.OrdinalIgnoreCase))
+                {
+                    bool uidSuccess = await _rconService.OfflineBanAsync(_uid, totalSec, Reason, isIp: false);
+                    if (!uidSuccess)
+                    {
+                        allSucceeded = false;
+                        ToastNotificationService.Instance.ShowError("Offline Ban Failed", $"Server rejected ban for UID: {_uid}.");
+                    }
+                }
+                else
+                {
+                    allSucceeded = false;
+                    ToastNotificationService.Instance.ShowError("Invalid Target", "Cannot ban target: UID is missing or invalid.");
+                }
+            }
+
+            if (banIp && allSucceeded && !string.IsNullOrWhiteSpace(_ip) && !_ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) && IPAddress.TryParse(_ip, out _))
+            {
+                bool ipSuccess = await _rconService.OfflineBanAsync(_ip, totalSec, Reason, isIp: true);
+                if (!ipSuccess)
+                {
+                    allSucceeded = false;
+                    ToastNotificationService.Instance.ShowError("IP Ban Failed", $"Server rejected IP ban for {_ip}.");
+                }
+            }
+
+            if (allSucceeded)
+            {
+                ToastNotificationService.Instance.ShowSuccess(
+                    "Offline Ban Complete",
+                    $"Offline ban confirmed for {_uid}",
+                    IsReforgerProtocol ? $"#ban create {_uid} {totalSec}" : $"addBan {_uid}",
+                    async () =>
+                    {
+                        var allBans = await _rconService.GetBansAsync();
+                        var ban = allBans.Find(b => b.IdentityId == _uid || b.IdentityId == _ip);
+                        if (ban != null)
+                        {
+                            await _rconService.RemoveBanAsync(ban);
+                            await _parent.RefreshAfterOfflineBanAsync();
+                        }
+                    }
+                );
+
+                _parent.CloseDialog();
+                await _parent.RefreshAfterOfflineBanAsync();
+            }
+        }
+        finally
+        {
+            IsExecuting = false;
+        }
+    });
 
     [RelayCommand]
-    private void Close() => _parent.CloseDialog();
+    private void Close()
+    {
+        if (IsExecuting) return;
+        _parent.CloseDialog();
+    }
 }

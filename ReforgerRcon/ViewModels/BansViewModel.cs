@@ -12,9 +12,10 @@ using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
-public partial class BansViewModel(IRconService rconService) : ViewModelBase
+public partial class BansViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
     private readonly IRconService _rconService = rconService;
+    private readonly DashboardViewModel _dashboard = dashboard;
     private List<BanModel> _allBans = [];
     private bool _isUpdatingSelection;
 
@@ -30,8 +31,27 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
     public Task<bool> RefreshBansAsync() => ExecuteSafeAsync(async () =>
     {
         _allBans = await _rconService.GetBansAsync();
-        ApplyFilter(string.Empty, string.Empty);
+        _dashboard.ActiveBansCount = _allBans.Count;
+        ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
     });
+
+    public void RemoveBanFromList(BanModel ban)
+    {
+        ExecuteSafe(() =>
+        {
+            _allBans.RemoveAll(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
+
+            var match = Bans.FirstOrDefault(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
+            if (match != null)
+            {
+                Bans.Remove(match);
+            }
+
+            _dashboard.ActiveBansCount = _allBans.Count;
+            UpdateSelectedState();
+            AppLogger.Debug($"[BansViewModel] Removed ban for '{ban.BannedName}' from live list immediately.");
+        });
+    }
 
     public void ApplyFilter(string query, string searchType)
     {
@@ -65,6 +85,7 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
                 b.PropertyChanged += OnBanPropertyChanged;
             }
 
+            _dashboard.ActiveBansCount = _allBans.Count;
             UpdateSelectedState();
         });
     }
@@ -120,22 +141,106 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
     }
 
     [RelayCommand]
-    public Task<bool> RemoveBan(BanModel? ban) => ExecuteSafeAsync(async () =>
+    public void RemoveBan(BanModel? ban)
     {
-        ban ??= SelectedBan;
-        if (ban == null) return;
-        await _rconService.RemoveBanAsync(ban);
-        Bans.Remove(ban);
-        var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
-            ? $"#ban remove {ban.IdentityId}"
-            : $"removeBan {ban.BanNumber}";
-
-        ToastNotificationService.Instance.ShowToast("Ban Removed", $"Removed ban for {ban.BannedName}", cmd, async () =>
+        ExecuteSafe(() =>
         {
-            await _rconService.OfflineBanAsync(ban.IdentityId, ban.DurationSeconds, ban.Reason, false);
-            await RefreshBansAsync();
+            ban ??= SelectedBan;
+            if (ban == null) return;
+
+            var displayName = !string.IsNullOrWhiteSpace(ban.BannedName) && !ban.BannedName.Equals("Banned Target", StringComparison.OrdinalIgnoreCase)
+                ? ban.BannedName
+                : ban.IdentityId;
+
+            _dashboard.ShowDialog(new ConfirmDialogViewModel(
+                "Confirm Ban Removal",
+                $"Are you sure you want to remove the ban for:\n\n{displayName} ({ban.IdentityId})?",
+                "Remove Ban",
+                true,
+                () => ExecuteRemoveBanAsync(ban),
+                () => _dashboard.CloseDialog()
+            ));
         });
-    });
+    }
+
+    private async Task ExecuteRemoveBanAsync(BanModel ban)
+    {
+        bool isSuccess = await _rconService.RemoveBanAsync(ban);
+        if (isSuccess)
+        {
+            RemoveBanFromList(ban);
+
+            var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
+                ? $"#ban remove {ban.IdentityId}"
+                : $"removeBan {ban.BanNumber}";
+
+            ToastNotificationService.Instance.ShowSuccess("Ban Removed", $"Removed ban for {ban.BannedName}", cmd, async () =>
+            {
+                await _rconService.OfflineBanAsync(ban.IdentityId, ban.DurationSeconds, ban.Reason, false);
+                await RefreshBansAsync();
+            });
+        }
+        else
+        {
+            ToastNotificationService.Instance.ShowError("Ban Removal Failed", $"Server timed out or ban #{ban.BanNumber} not found.");
+        }
+    }
+
+    [RelayCommand]
+    public void RemoveSelectedBans()
+    {
+        ExecuteSafe(() =>
+        {
+            var selected = Bans.Where(b => b.IsSelected).ToList();
+            if (selected.Count == 0) return;
+
+            _dashboard.ShowDialog(new ConfirmDialogViewModel(
+                "Remove Selected Bans",
+                $"Are you sure you want to remove {selected.Count} selected ban(s) from the server?",
+                $"Remove {selected.Count} Ban(s)",
+                true,
+                () => ExecuteRemoveSelectedBansAsync(selected),
+                () => _dashboard.CloseDialog()
+            ));
+        });
+    }
+
+    private async Task ExecuteRemoveSelectedBansAsync(List<BanModel> selected)
+    {
+        int total = selected.Count;
+        int successCount = 0;
+        int failedCount = 0;
+
+        for (int i = 0; i < total; i++)
+        {
+            var b = selected[i];
+            AppLogger.Info($"[BansViewModel] Sequentially removing ban {i + 1}/{total}: {b.BannedName} ({b.IdentityId})...");
+
+            bool isSuccess = await _rconService.RemoveBanAsync(b);
+            if (isSuccess)
+            {
+                successCount++;
+                RemoveBanFromList(b);
+            }
+            else
+            {
+                failedCount++;
+                AppLogger.Warn($"[BansViewModel] Failed removing ban #{b.BanNumber} ({b.IdentityId}). Retaining in list.");
+            }
+        }
+
+        IsMultiSelectMode = false;
+        if (failedCount == 0)
+        {
+            ToastNotificationService.Instance.ShowSuccess("Batch Ban Removal", $"Successfully removed all {total} ban(s).");
+        }
+        else
+        {
+            ToastNotificationService.Instance.ShowWarning("Batch Ban Removal", $"Completed: {successCount} removed, {failedCount} failed.");
+        }
+
+        await RefreshBansAsync();
+    }
 
     private string FormatBanInfo(BanModel b)
     {
@@ -159,18 +264,6 @@ public partial class BansViewModel(IRconService rconService) : ViewModelBase
         var text = FormatBanInfo(ban);
         await ClipboardService.SetTextAsync(text);
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied ban info for {ban.BannedName}");
-    });
-
-    [RelayCommand]
-    private Task<bool> RemoveSelectedBans() => ExecuteSafeAsync(async () =>
-    {
-        var selected = Bans.Where(b => b.IsSelected).ToList();
-        foreach (var b in selected)
-        {
-            await _rconService.RemoveBanAsync(b);
-            Bans.Remove(b);
-        }
-        IsMultiSelectMode = false;
     });
 
     [RelayCommand]

@@ -13,6 +13,7 @@ public partial class ServerProfile : ObservableObject
     [ObservableProperty] public partial string Password { get; set; } = string.Empty;
     [ObservableProperty] public partial RconProtocol Protocol { get; set; } = RconProtocol.ReforgerBuiltIn;
     [ObservableProperty] public partial bool AutoConnect { get; set; }
+    [ObservableProperty] public partial bool IsLastSelected { get; set; }
 
     [JsonIgnore]
     [ObservableProperty] public partial bool IsEditing { get; set; }

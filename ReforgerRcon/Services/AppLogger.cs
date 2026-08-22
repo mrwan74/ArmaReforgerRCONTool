@@ -1,21 +1,22 @@
-﻿using Sentry;
-using Serilog;
-using Serilog.Context;
-using Serilog.Enrichers.WithCaller;
-using Serilog.Events;
-using Serilog.ExceptionalLogContext;
-using Serilog.Exceptions;
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Sentry;
+using Serilog;
+using Serilog.Context;
+using Serilog.Enrichers.WithCaller;
+using Serilog.Events;
+using Serilog.ExceptionalLogContext;
+using Serilog.Exceptions;
 
 namespace ReforgerRcon.Services;
 
@@ -34,21 +35,22 @@ public static class AppLogger
 {
     private static readonly string LogDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "logs");
     private static readonly ConcurrentQueue<string> Breadcrumbs = new();
-    private const int MaxBreadcrumbs = 150;
-    private static readonly ILogger Logger;
+    private const int MaxBreadcrumbs = 250;
+    private static readonly Serilog.ILogger Logger;
+
+    public static string SessionId { get; } = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+    public static string CurrentLogFilePath { get; }
 
     public static event Action<LogLevel, string, Exception?>? LogEmitted;
 
     public static string ResolveSentryDsn()
     {
-        // 1. Check environment variable
         var envDsn = Environment.GetEnvironmentVariable("SENTRY_DSN");
         if (!string.IsNullOrWhiteSpace(envDsn))
         {
             return envDsn.Trim();
         }
 
-        // 2. Check local gitignored file
         try
         {
             var localFile = Path.Combine(AppContext.BaseDirectory, "appdata", "sentry_dsn.txt");
@@ -61,9 +63,9 @@ public static class AppLogger
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore file read errors (permissions, file locks, etc.)
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Non-fatal Sentry DSN file inspection notice: {ex.Message}");
         }
 
         return string.Empty;
@@ -77,6 +79,8 @@ public static class AppLogger
             {
                 Directory.CreateDirectory(LogDirectory);
             }
+
+            CleanupOldSessionLogs();
         }
         catch (IOException ex)
         {
@@ -87,10 +91,10 @@ public static class AppLogger
             System.Diagnostics.Debug.WriteLine($"[AppLogger] Directory creation permission error: {ex.Message}");
         }
 
+        CurrentLogFilePath = Path.Combine(LogDirectory, $"reforger_rcon_session_{SessionId}.log");
+
         const string fileOutputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [T{ThreadId:D2}] [{Caller}] {Message:lj}{NewLine}{Exception}";
         const string debugOutputTemplate = "[{Timestamp:HH:mm:ss.fff}] [{Level:u3}] [T{ThreadId:D2}] [{Caller}] {Message:lj}{NewLine}{Exception}";
-
-        var logFilePath = Path.Combine(LogDirectory, "reforger_rcon_.log");
 
         try
         {
@@ -106,10 +110,8 @@ public static class AppLogger
                 .Enrich.WithExceptionDetails()
                 .Enrich.WithCaller()
                 .WriteTo.Async(a => a.File(
-                    logFilePath,
-                    rollingInterval: RollingInterval.Day,
+                    CurrentLogFilePath,
                     outputTemplate: fileOutputTemplate,
-                    retainedFileCountLimit: 14,
                     formatProvider: CultureInfo.InvariantCulture
                 ))
                 .WriteTo.Debug(
@@ -145,11 +147,48 @@ public static class AppLogger
         LogEnvironmentDiagnostics();
     }
 
+    private static void CleanupOldSessionLogs()
+    {
+        try
+        {
+            if (!Directory.Exists(LogDirectory)) return;
+
+            var logFiles = new DirectoryInfo(LogDirectory)
+                .GetFiles("reforger_rcon_session_*.log")
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .ToList();
+
+            const int maxRetainedSessions = 30;
+            var cutoffDate = DateTime.UtcNow.AddDays(-14);
+
+            for (int i = 0; i < logFiles.Count; i++)
+            {
+                var file = logFiles[i];
+                if (i >= maxRetainedSessions || file.LastWriteTimeUtc < cutoffDate)
+                {
+                    try
+                    {
+                        file.Delete();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[AppLogger] Could not delete old session log '{file.Name}': {ex.Message}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Session log cleanup encountered an error: {ex.Message}");
+        }
+    }
+
     private static void LogEnvironmentDiagnostics()
     {
         Info("================================================================================");
-        Info("APPLICATION INITIALIZATION: ARMA Reforger RCON Management Studio");
+        Info("APPLICATION INITIALIZATION: ARMA Reforger RCON Management Tool (ARRT)");
         Info(string.Create(CultureInfo.InvariantCulture, $"Timestamp (UTC):     {DateTime.UtcNow:O}"));
+        Info(string.Create(CultureInfo.InvariantCulture, $"Session Log File:    {CurrentLogFilePath}"));
         Info(string.Create(CultureInfo.InvariantCulture, $"OS Description:      {RuntimeInformation.OSDescription}"));
         Info(string.Create(CultureInfo.InvariantCulture, $"OS Architecture:     {RuntimeInformation.OSArchitecture}"));
         Info(string.Create(CultureInfo.InvariantCulture, $"Process Arch:        {RuntimeInformation.ProcessArchitecture}"));
@@ -299,9 +338,9 @@ public static class AppLogger
         {
             LogEmitted?.Invoke(level, crumb, demystifiedEx);
         }
-        catch
+        catch (Exception exHandler)
         {
-            // UI Hook protection
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] LogEmitted event subscriber error: {exHandler.Message}");
         }
     }
 

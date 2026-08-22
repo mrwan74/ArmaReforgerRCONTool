@@ -30,7 +30,7 @@
           <TextBlock Text="Ban Player(s)" Classes="SectionTitle" FontSize="20" />
           <TextBlock Text="{Binding TargetNames, StringFormat='Target: {0}'}" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
         </StackPanel>
-        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" />
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" IsEnabled="{Binding !IsExecuting}" />
       </Grid>
 
       <StackPanel Spacing="6">
@@ -41,6 +41,7 @@
                   Content="1 Hour" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Hour" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -48,6 +49,7 @@
                   Content="6 Hours" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="6 Hours" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -55,6 +57,7 @@
                   Content="1 Day" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Day" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -62,6 +65,7 @@
                   Content="3 Days" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="3 Days" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -69,6 +73,7 @@
                   Content="1 Week" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Week" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -76,6 +81,7 @@
                   Content="1 Month" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Month" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -83,6 +89,7 @@
                   Content="Custom Duration" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="Custom Duration" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Danger Outline PresetBtn Permanent" 
@@ -90,6 +97,7 @@
                   Content="Permanent" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="Permanent" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
         </WrapPanel>
       </StackPanel>
@@ -99,37 +107,37 @@
         <Grid ColumnDefinitions="*,*,*,*,*,*,*" ColumnSpacing="6">
           <StackPanel Grid.Column="0" Spacing="4">
             <TextBlock Text="Years" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomYears}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomYears}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="1" Spacing="4">
             <TextBlock Text="Months" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomMonths}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomMonths}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="2" Spacing="4">
             <TextBlock Text="Weeks" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomWeeks}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomWeeks}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="3" Spacing="4">
             <TextBlock Text="Days" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomDays}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomDays}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="4" Spacing="4">
             <TextBlock Text="Hours" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomHours}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomHours}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="5" Spacing="4">
             <TextBlock Text="Minutes" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomMinutes}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomMinutes}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="6" Spacing="4">
             <TextBlock Text="Seconds" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomSeconds}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomSeconds}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
         </Grid>
       </StackPanel>
@@ -143,7 +151,7 @@
 
       <StackPanel Spacing="4">
         <TextBlock Text="Reason for Ban" Classes="Label" />
-        <TextBox Text="{Binding Reason}" PlaceholderText="Enter reason..." />
+        <TextBox Text="{Binding Reason}" PlaceholderText="Enter reason..." IsEnabled="{Binding !IsExecuting}" />
       </StackPanel>
 
       <StackPanel Spacing="4">
@@ -156,9 +164,31 @@
         </Grid>
       </StackPanel>
 
+      <!-- Sequential Progress Status Bar -->
+      <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" 
+              CornerRadius="6" 
+              Padding="10" 
+              IsVisible="{Binding IsExecuting}">
+        <TextBlock Text="{Binding ProgressStatus}" 
+                   FontWeight="SemiBold" 
+                   FontSize="12" 
+                   Foreground="{DynamicResource LuminaDangerBrush}" 
+                   HorizontalAlignment="Center" />
+      </Border>
+
       <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
-        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
-        <Button Grid.Column="2" Classes="Danger" Content="Confirm and Ban" Command="{Binding ConfirmBanCommand}" />
+        <Button Grid.Column="1" 
+                Classes="Outline" 
+                Content="Cancel" 
+                Command="{Binding CloseCommand}" 
+                IsEnabled="{Binding !IsExecuting}" />
+
+        <Button Grid.Column="2" 
+                Classes="Danger" 
+                Content="Confirm and Ban" 
+                Command="{Binding ConfirmBanCommand}" 
+                lumina:LuminaButton.IsLoading="{Binding IsExecuting}"
+                IsEnabled="{Binding !IsExecuting}" />
       </Grid>
     </StackPanel>
   </lumina:LuminaCard>

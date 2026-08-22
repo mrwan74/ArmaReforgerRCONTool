@@ -1,23 +1,26 @@
 # ARMA REFORGER RCON TOOL (ARRT)
 
-[![AI Assisted](https://img.shields.io/badge/Development-AI--Assisted-8A2BE2?style=flat&logo=openai&logoColor=white)](#)
-[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat&logo=dotnet)](https://dotnet.microsoft.com/)
-[![Avalonia UI](https://img.shields.io/badge/UI-Avalonia_12-8A2BE2?style=flat&logo=avalonia)](https://avaloniaui.net/)
-[![Release](https://img.shields.io/badge/Version-v0.6.2-blue?style=flat)](https://github.com/)
-[![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat&logo=windows)](https://github.com/)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[](#)
+[](https://dotnet.microsoft.com/)
+[](https://avaloniaui.net/)
+[](https://github.com/)
+[](https://github.com/)
+[](LICENSE)
 
 > [!NOTE]
-> 🤖 **AI-Assisted Development Notice**  
+> 🤖 **AI-Assisted Development Notice**
 
 ---
 
-The Arma Reforger RCON Tool (ARRT) is a desktop administration tool for arma reforger developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
-<img width="1696" height="937" alt="ReforgerRcon_vS2DqXgTRv" src="https://github.com/user-attachments/assets/84a3deca-fd85-4175-8a37-0090701cf3ce" />
-<img width="1696" height="937" alt="ReforgerRcon_WIyVzBxVg5" src="https://github.com/user-attachments/assets/ec0c7836-29f2-44e4-808b-c1346483052b" />
-<img width="1696" height="937" alt="ReforgerRcon_FfKvJeitPZ" src="https://github.com/user-attachments/assets/e042d1ef-0e4f-4783-84c6-0f0e86104fdf" />
-<img width="1696" height="937" alt="ReforgerRcon_3Q42eui38q" src="https://github.com/user-attachments/assets/ba7cd4dc-2644-4788-8172-40ec33d80ca7" />
+> ### 📦 Latest Release: `v0.8.24-alpha`
+> 
+> **Released on:** Aug 22, 2026, 4:41 PM (UTC)
 
+The Arma Reforger RCON Tool (ARRT) is a desktop administration tool for arma reforger developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
+![ReforgerRconvS2DqXgTRv](https://github.com/user-attachments/assets/84a3deca-fd85-4175-8a37-0090701cf3ce)
+![ReforgerRconWIyVzBxVg5](https://github.com/user-attachments/assets/ec0c7836-29f2-44e4-808b-c1346483052b)
+![ReforgerRconFfKvJeitPZ](https://github.com/user-attachments/assets/e042d1ef-0e4f-4783-84c6-0f0e86104fdf)
+![ReforgerRcon3Q42eui38q](https://github.com/user-attachments/assets/ba7cd4dc-2644-4788-8172-40ec33d80ca7)
 
 This readme is a work in progress..
 
@@ -36,13 +39,16 @@ Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 3. Double-click **`ReforgerRcon.exe`** to start. You do not need to install anything or have administrator rights.
 
 > [!CAUTION]
+> 
 > ### ⚠️ SECURITY WARNING
-> **Log files (`appdata/logs/`) and crash reports/dumps (`appdata/crash_reports/`) contain runtime diagnostic traces and IP addresses.**  
-> * **NEVER** share raw log files, crash reports (`.txt`), or memory dumps (`.dmp`) publicly.
-> * **ONLY** share logs or crash dumps with a trusted person for debugging purposes.
-> * **ALWAYS CHANGE YOUR SERVER RCON PASSWORD FIRST** before sharing any log or crash dump file with anyone for support!
-> * **Credentials Stored in Plaintext:**
->    * `appdata/profiles.json` (RCON server passwords) and `appdata/settings.json` (MaxMind license keys) are saved as plain JSON files with no OS-level protection for now. Anyone with local file access to your computer or USB drive can read them directly.
+> 
+> **Log files (`appdata/logs/`) and crash reports/dumps (`appdata/crash_reports/`) contain runtime diagnostic traces and IP addresses.**
+> 
+> - **NEVER** share raw log files, crash reports (`.txt`), or memory dumps (`.dmp`) publicly.
+> - **ONLY** share logs or crash dumps with a trusted person for debugging purposes.
+> - **ALWAYS CHANGE YOUR SERVER RCON PASSWORD FIRST** before sharing any log or crash dump file with anyone for support!
+> - **Credentials Stored in Plaintext:**
+>   - `appdata/profiles.json` (RCON server passwords) and `appdata/settings.json` (MaxMind license keys) are saved as plain JSON files with no OS-level protection for now. Anyone with local file access to your computer or USB drive can read them directly.
 
 ---
 
@@ -63,14 +69,14 @@ Get the latest release of **ARMA Reforger RCON Tool (ARRT)**:
 
 ## 🖥️ Supported Protocols Comparison
 
-| Feature                 | Reforger Built-In RCON          | BattlEye RCON                     |
-| ----------------------- | ------------------------------- | --------------------------------- |
-| **Default Port**        | `19999` (UDP)                   | `20007` (UDP) (just an example)   |
-| **Identifier**          | Player UID                      | BattlEye GUID / IP Address        |
-| **Ban Duration Format** | Duration in **Seconds**         | Duration in **Minutes**           |
-| **Server Controls**     | `#restart`, `#shutdown`         | `loadBans`, `writeBans`, `admins` |
-| **Player List Query**   | `#players`                      | `players`                         |
-| **Ban List Query**      | `#ban list`                     | `bans`                            |
+| Feature                 | Reforger Built-In RCON  | BattlEye RCON                     |
+| ----------------------- | ----------------------- | --------------------------------- |
+| **Default Port**        | `19999` (UDP)           | `20007` (UDP) (just an example)   |
+| **Identifier**          | Player UID              | BattlEye GUID / IP Address        |
+| **Ban Duration Format** | Duration in **Seconds** | Duration in **Minutes**           |
+| **Server Controls**     | `#restart`, `#shutdown` | `loadBans`, `writeBans`, `admins` |
+| **Player List Query**   | `#players`              | `players`                         |
+| **Ban List Query**      | `#ban list`             | `bans`                            |
 
 Full list of Reforger commands:  
 https://community.bistudio.com/wiki/Arma_Reforger:Server_Management
@@ -98,6 +104,7 @@ https://www.battleye.com/support/documentation/
 ## 🌍 Optional: MaxMind GeoIP Configuration
 
 ARRT can function offline by using MaxMind databases that are bundled with it. If you want automatic weekly updates to the database directly from MaxMind:
+
 1. Get a free account at [MaxMind.com](https://www.maxmind.com).
 2. In ARRT, go to the **Settings** tab.
 3. Fill in your **Account ID** and **License Key**, then click **Update Databases**.
@@ -158,12 +165,13 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=
 
 Special thanks to the authors of the open-source projects and libraries used in this tool:
 
-* **[BattleNET](https://github.com/marceldev89/BattleNET)** by **[@marceldev89](https://github.com/marceldev89)** – C# BattlEye protocol client library powering the BattlEye RCON network implementation.
-* **[LuminaUI](https://github.com/j4587698/LuminaUI)** by **[@j4587698](https://github.com/j4587698)** – UI component and theming library for Avalonia.
-* **[Avalonia UI](https://github.com/AvaloniaUI/Avalonia)** by **[@AvaloniaUI](https://github.com/AvaloniaUI)** – Avalonia is a cross-platform UI framework for .NET providing a flexible styling system and supporting a wide range of operating systems.
-* **[MaxMind GeoIP2](https://github.com/maxmind/GeoIP2-dotnet)** by **[@maxmind](https://github.com/maxmind)** – IP Geolocation engine.
-* **[Serilog](https://github.com/serilog/serilog)** by **[@serilog](https://github.com/serilog)** – Structured logging framework.
-* **[Sentry .NET SDK](https://github.com/getsentry/sentry-dotnet)** by **[@getsentry](https://github.com/getsentry)** – Application diagnostics and crash analytics.
+- **[DaRT (DayZ / ArmA RCon Tool)](https://github.com/DomiStyle/DaRT)** by **[@DomiStyle](https://github.com/DomiStyle)** – The legendary DayZ and ARMA administration tool that served as the primary design and functional inspiration for ARRT.
+- **[BattleNET](https://github.com/marceldev89/BattleNET)** by **[@marceldev89](https://github.com/marceldev89)** – C# BattlEye protocol client library powering the BattlEye RCON network implementation.(refactored and modernized for .NET 10)
+- **[LuminaUI](https://github.com/j4587698/LuminaUI)** by **[@j4587698](https://github.com/j4587698)** – UI component and theming library for Avalonia.
+- **[Avalonia UI](https://github.com/AvaloniaUI/Avalonia)** by **[@AvaloniaUI](https://github.com/AvaloniaUI)** – Avalonia is a cross-platform UI framework for .NET providing a flexible styling system and supporting a wide range of operating systems.
+- **[MaxMind GeoIP2](https://github.com/maxmind/GeoIP2-dotnet)** by **[@maxmind](https://github.com/maxmind)** – IP Geolocation engine.
+- **[Serilog](https://github.com/serilog/serilog)** by **[@serilog](https://github.com/serilog)** – Structured logging framework.
+- **[Sentry .NET SDK](https://github.com/getsentry/sentry-dotnet)** by **[@getsentry](https://github.com/getsentry)** – Application diagnostics and crash analytics.
 
 ...among many others.
 
@@ -177,11 +185,6 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 
 ## ⚠️ Known Issues
 
-* **Comments Require Manual Refresh:** Notes or comments added to players are only displayed in the grid after manually clicking **Refresh**.
-* **Autoscroll on Console:** Autoscroll on the console is currently non-functional.
-* **Incorrect Placeholder Hint:** The console placeholder indicates `#say`, but this is not a valid command in Reforger RCON.
-* **Reforger Ban Syntax (v1.8+):** Since ARMA Reforger 1.8, `#ban create` requires the session **`Player#`** obtained from `#players` (e.g., `#ban create <playerId> <duration> <reason>`) rather than the long Reforger Identity ID. Note that `#ban remove <identityId>` still uses the Identity ID.
-
 ---
 
 ## 🗺️ Roadmap / TODO
@@ -192,9 +195,6 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 - [ ] **Global Player Database Synchronization:** A cloud syncing feature enabling administrators to synchronise the player database list with a master community database.
 - [ ] **Session and Playtime Tracking:** Record total play hours, session durations, and historical join/leave event tracking.
 
-
 ## SAST Tools
-
-
 
 [PVS-Studio](https://pvs-studio.com/en/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) - static code analyzer for Enterprise (C, C++, C#, Go, and Java) and Web (JS and TS) development.

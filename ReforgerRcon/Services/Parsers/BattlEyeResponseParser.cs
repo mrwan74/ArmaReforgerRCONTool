@@ -39,7 +39,7 @@ public static partial class BattlEyeResponseParser
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[BattlEyeResponseParser] Critical failure while parsing BattlEye player response: {ex.Message}", ex);
+            AppLogger.Error($"[BattlEyeResponseParser] Critical failure parsing BattlEye players: {ex.Message}", ex);
         }
 
         return players;
@@ -126,7 +126,7 @@ public static partial class BattlEyeResponseParser
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[BattlEyeResponseParser] Critical failure while parsing BattlEye ban response: {ex.Message}", ex);
+            AppLogger.Error($"[BattlEyeResponseParser] Critical failure parsing BattlEye bans: {ex.Message}", ex);
         }
 
         return bans;

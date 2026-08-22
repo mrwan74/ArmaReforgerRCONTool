@@ -18,7 +18,9 @@ public partial class PlayersTabView : UserControl
         try
         {
             InitializeComponent();
+
             AddHandler(PointerPressedEvent, OnGridPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+            AddHandler(ContextRequestedEvent, OnGridContextRequested, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
             if (this.FindControl<CheckBox>("SelectAllCheckBox") is { } selectAllBox)
             {
@@ -53,7 +55,7 @@ public partial class PlayersTabView : UserControl
                         var gridKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
                         ColumnLayoutStorageService.BindPersistence(PlayersGrid, gridKey);
 
-                        UpdateColumnVisibilities(vm);
+                        UpdateColumnVisibilities();
 
                         vm.PropertyChanged += (s, e) =>
                         {
@@ -76,7 +78,7 @@ public partial class PlayersTabView : UserControl
                                                      nameof(PlayersViewModel.IsReforgerProtocol) or
                                                      nameof(PlayersViewModel.IsBattlEyeProtocol))
                             {
-                                UpdateColumnVisibilities(vm);
+                                UpdateColumnVisibilities();
                             }
                         };
                     }
@@ -95,8 +97,10 @@ public partial class PlayersTabView : UserControl
         }
     }
 
-    private void UpdateColumnVisibilities(PlayersViewModel vm)
+    private void UpdateColumnVisibilities()
     {
+        if (DataContext is not PlayersViewModel vm) return;
+
         try
         {
             foreach (var col in PlayersGrid.Columns)
@@ -153,6 +157,30 @@ public partial class PlayersTabView : UserControl
         catch (Exception ex)
         {
             AppLogger.Trace($"OnGridPointerPressed handled non-fatal visual lookup: {ex.Message}");
+        }
+    }
+
+    private void OnGridContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        try
+        {
+            if (e.Source is Visual visual)
+            {
+                var row = visual.FindAncestorOfType<DataGridRow>();
+                if (row?.DataContext is PlayerModel player)
+                {
+                    PlayersGrid.SelectedItem = player;
+                    return;
+                }
+            }
+
+            PlayersGrid.SelectedItem = null;
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"OnGridContextRequested handled non-fatal visual lookup: {ex.Message}");
+            e.Handled = true;
         }
     }
 

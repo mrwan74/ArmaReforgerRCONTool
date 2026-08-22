@@ -4,199 +4,261 @@
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:models="using:ReforgerRcon.Models"
+             xmlns:dialogs="using:ReforgerRcon.Views.Dialogs"
              x:Class="ReforgerRcon.Views.LoginView"
              x:DataType="vm:LoginViewModel"
              x:Name="RootLoginView">
 
-  <Grid ColumnDefinitions="360,*" Margin="32">
-    <!-- Left Sidebar: Saved Profiles Management -->
-    <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16" x:CompileBindings="False">
-      <Grid RowDefinitions="Auto,*,Auto,Auto">
-        <!-- Section Header with Save Changes Button -->
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12" VerticalAlignment="Center">
-          <TextBlock Text="Saved Profiles" Classes="SectionTitle" VerticalAlignment="Center" />
-          <Button Grid.Column="1" Classes="Small Primary" 
-                  Command="{Binding SaveProfileChangesCommand}" 
-                  CommandParameter="{Binding SelectedProfile}"
-                  ToolTip.Tip="Save current form values to the selected profile">
-            <StackPanel Orientation="Horizontal" Spacing="4">
-              <icons:MaterialIcon Kind="ContentSaveOutline" Width="14" Height="14" />
-              <TextBlock Text="Save Changes" FontSize="11" />
-            </StackPanel>
-          </Button>
-        </Grid>
+  <Grid>
+    <!-- Main Content Container with Expanded Left Sidebar Width -->
+    <Grid ColumnDefinitions="410,*" Margin="32">
+      <!-- Left Sidebar: Saved Profiles Management -->
+      <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16" x:CompileBindings="False">
+        <Grid RowDefinitions="Auto,*,Auto,Auto">
+          <!-- Section Header with Save Changes Button -->
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12" VerticalAlignment="Center">
+            <TextBlock Text="Saved Profiles" Classes="SectionTitle" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="Small Primary" 
+                    Command="{Binding SaveProfileChangesCommand}" 
+                    CommandParameter="{Binding SelectedProfile}"
+                    ToolTip.Tip="Save current form values to the selected profile">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <icons:MaterialIcon Kind="ContentSaveOutline" Width="14" Height="14" />
+                <TextBlock Text="Save Changes" FontSize="11" />
+              </StackPanel>
+            </Button>
+          </Grid>
 
-        <!-- Profiles List with Edit/Save/Delete Icons -->
-        <ListBox Grid.Row="1" 
-                 ItemsSource="{Binding Profiles}" 
-                 SelectedItem="{Binding SelectedProfile}">
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="models:ServerProfile">
-              <Grid Margin="0,2">
-                <!-- 1. Normal View Mode -->
-                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding !IsEditing}">
-                  <StackPanel Spacing="2" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                      <TextBlock Text="{Binding FormattedEndpoint}" Classes="Caption" />
-                      <Border Padding="4,1" CornerRadius="3" Background="{DynamicResource LuminaPrimaryBgBrush}">
+          <!-- Profiles List with Compact Action Buttons & Full Text Breathing Room -->
+          <ListBox Grid.Row="1" 
+                   ItemsSource="{Binding Profiles}" 
+                   SelectedItem="{Binding SelectedProfile}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="models:ServerProfile">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="0,2">
+                  <!-- 1. Normal View Mode -->
+                  <Grid Grid.Column="0" RowDefinitions="Auto,Auto" RowSpacing="3" IsVisible="{Binding !IsEditing}" VerticalAlignment="Center">
+                    <!-- Row 0: Full Profile Name + AUTO Badge -->
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="6" VerticalAlignment="Center">
+                      <TextBlock Grid.Column="0" 
+                                 Text="{Binding Name}" 
+                                 FontWeight="SemiBold" 
+                                 TextTrimming="CharacterEllipsis" 
+                                 ToolTip.Tip="{Binding Name}"
+                                 VerticalAlignment="Center" />
+                      
+                      <Border Grid.Column="1" 
+                              Background="{DynamicResource LuminaSuccessBgBrush}" 
+                              BorderBrush="{DynamicResource LuminaSuccessBrush}" 
+                              BorderThickness="1" 
+                              CornerRadius="3" 
+                              Padding="3,1" 
+                              VerticalAlignment="Center"
+                              IsVisible="{Binding AutoConnect}"
+                              ToolTip.Tip="Auto-connect is enabled for this profile on startup">
+                        <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                          <icons:MaterialIcon Kind="LightningBolt" Width="10" Height="10" Foreground="{DynamicResource LuminaSuccessBrush}" VerticalAlignment="Center" />
+                          <TextBlock Text="AUTO" FontSize="8" FontWeight="Bold" Foreground="{DynamicResource LuminaSuccessBrush}" VerticalAlignment="Center" />
+                        </StackPanel>
+                      </Border>
+                    </Grid>
+
+                    <!-- Row 1: Endpoint & Protocol Badge -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding FormattedEndpoint}" Classes="Caption" VerticalAlignment="Center" />
+                      <Border Padding="4,1" CornerRadius="3" Background="{DynamicResource LuminaPrimaryBgBrush}" VerticalAlignment="Center">
                         <TextBlock Text="{Binding ProtocolShortName}" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" />
                       </Border>
                     </StackPanel>
-                  </StackPanel>
+                  </Grid>
 
-                  <!-- Item Actions: Edit Name | Save Details | Delete -->
+                  <!-- 2. Inline Edit Name Mode -->
+                  <Grid Grid.Column="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4" IsVisible="{Binding IsEditing}">
+                    <TextBox Text="{Binding EditNameBuffer}" 
+                             FontSize="12" 
+                             VerticalAlignment="Center">
+                      <TextBox.KeyBindings>
+                        <KeyBinding Gesture="Enter" 
+                                    Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
+                                    CommandParameter="{Binding}" />
+                        <KeyBinding Gesture="Escape" 
+                                    Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
+                                    CommandParameter="{Binding}" />
+                      </TextBox.KeyBindings>
+                    </TextBox>
+
+                    <Button Grid.Column="1" Classes="Small Primary Icon" 
+                            Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
+                            CommandParameter="{Binding}"
+                            Width="26" Height="26"
+                            ToolTip.Tip="Confirm rename">
+                      <icons:MaterialIcon Kind="Check" Width="13" Height="13" />
+                    </Button>
+
+                    <Button Grid.Column="2" Classes="Small Ghost Icon" 
+                            Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
+                            CommandParameter="{Binding}"
+                            Width="26" Height="26"
+                            ToolTip.Tip="Cancel rename">
+                      <icons:MaterialIcon Kind="Close" Width="13" Height="13" />
+                    </Button>
+                  </Grid>
+
+                  <!-- Column 1: Action Buttons Strip -->
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button Classes="Small Ghost Icon" 
                             Command="{Binding $parent[ListBox].DataContext.StartEditProfileNameCommand}" 
                             CommandParameter="{Binding}"
+                            Width="26" Height="26"
                             ToolTip.Tip="Rename profile">
-                      <icons:MaterialIcon Kind="PencilOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                      <icons:MaterialIcon Kind="PencilOutline" Width="13" Height="13" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
                     </Button>
 
                     <Button Classes="Small Ghost Icon" 
                             Command="{Binding $parent[ListBox].DataContext.SaveProfileChangesCommand}" 
                             CommandParameter="{Binding}"
+                            Width="26" Height="26"
                             ToolTip.Tip="Save current connection settings to this profile">
-                      <icons:MaterialIcon Kind="ContentSaveCheckOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaSuccessBrush}" />
+                      <icons:MaterialIcon Kind="ContentSaveCheckOutline" Width="13" Height="13" Foreground="{DynamicResource LuminaSuccessBrush}" />
                     </Button>
 
                     <Button Classes="Small Ghost Icon" 
                             Command="{Binding $parent[ListBox].DataContext.DeleteProfileCommand}" 
                             CommandParameter="{Binding}"
+                            Width="26" Height="26"
                             ToolTip.Tip="Delete profile">
-                      <icons:MaterialIcon Kind="TrashCanOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaDangerBrush}" />
+                      <icons:MaterialIcon Kind="TrashCanOutline" Width="13" Height="13" Foreground="{DynamicResource LuminaDangerBrush}" />
                     </Button>
                   </StackPanel>
                 </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
 
-                <!-- 2. Inline Edit Name Mode -->
-                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4" IsVisible="{Binding IsEditing}">
-                  <TextBox Text="{Binding EditNameBuffer}" 
-                           FontSize="12" 
-                           VerticalAlignment="Center">
-                    <TextBox.KeyBindings>
-                      <KeyBinding Gesture="Enter" 
-                                  Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
-                                  CommandParameter="{Binding}" />
-                      <KeyBinding Gesture="Escape" 
-                                  Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
-                                  CommandParameter="{Binding}" />
-                    </TextBox.KeyBindings>
-                  </TextBox>
-
-                  <Button Grid.Column="1" Classes="Small Primary Icon" 
-                          Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
-                          CommandParameter="{Binding}"
-                          ToolTip.Tip="Confirm rename">
-                    <icons:MaterialIcon Kind="Check" Width="14" Height="14" />
-                  </Button>
-
-                  <Button Grid.Column="2" Classes="Small Ghost Icon" 
-                          Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
-                          CommandParameter="{Binding}"
-                          ToolTip.Tip="Cancel rename">
-                    <icons:MaterialIcon Kind="Close" Width="14" Height="14" />
-                  </Button>
-                </Grid>
-              </Grid>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-
-        <!-- New Profile Creator Box -->
-        <StackPanel Grid.Row="2" Spacing="8" Margin="0,12,0,0">
-          <TextBox PlaceholderText="New Profile Name..." Text="{Binding NewProfileName}">
-            <TextBox.KeyBindings>
-              <KeyBinding Gesture="Enter" Command="{Binding SaveCurrentAsNewProfileCommand}" />
-            </TextBox.KeyBindings>
-          </TextBox>
-          <Button Classes="Outline" 
-                  Command="{Binding SaveCurrentAsNewProfileCommand}" 
-                  HorizontalAlignment="Stretch">
-            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-              <icons:MaterialIcon Kind="Plus" Width="14" Height="14" />
-              <TextBlock Text="Save as New Profile" />
-            </StackPanel>
-          </Button>
-        </StackPanel>
-
-        <Button Grid.Row="3" Classes="Danger Outline Small" 
-                Content="Test Crash Reporter" 
-                Command="{Binding TriggerTestCrashCommand}" 
-                HorizontalAlignment="Stretch" 
-                Margin="0,12,0,0"
-                ToolTip.Tip="Throws a test unhandled exception to verify the crash report window" />
-      </Grid>
-    </lumina:LuminaCard>
-
-    <!-- Right Area: Connection Parameters Form -->
-    <lumina:LuminaCard Grid.Column="1" Padding="32" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <StackPanel Spacing="18">
-        <StackPanel Spacing="4">
-          <TextBlock Text="Connect to Server" Classes="Display" FontSize="26" />
-          <TextBlock Text="Manage your ARMA Reforger server using Reforger's Built-In RCON or BattlEye RCON" Classes="Caption" />
-        </StackPanel>
-
-        <StackPanel Spacing="6">
-          <TextBlock Text="RCON Protocol" Classes="Label" />
-          <lumina:LuminaButtonGroup SelectedIndex="{Binding Protocol, Mode=TwoWay}">
-            <lumina:LuminaButtonGroupItem Content="Reforger Built-in RCON" />
-            <lumina:LuminaButtonGroupItem Content="BattlEye RCON" />
-          </lumina:LuminaButtonGroup>
-        </StackPanel>
-
-        <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
-          <StackPanel Spacing="4">
-            <TextBlock Text="Server IP / Hostname" Classes="Label" />
-            <TextBox Text="{Binding ServerIp}" PlaceholderText="127.0.0.1" />
+          <!-- New Profile Creator Box -->
+          <StackPanel Grid.Row="2" Spacing="8" Margin="0,12,0,0">
+            <TextBox PlaceholderText="New Profile Name..." Text="{Binding NewProfileName}">
+              <TextBox.KeyBindings>
+                <KeyBinding Gesture="Enter" Command="{Binding SaveCurrentAsNewProfileCommand}" />
+              </TextBox.KeyBindings>
+            </TextBox>
+            <Button Classes="Outline" 
+                    Command="{Binding SaveCurrentAsNewProfileCommand}" 
+                    HorizontalAlignment="Stretch">
+              <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                <icons:MaterialIcon Kind="Plus" Width="14" Height="14" />
+                <TextBlock Text="Save as New Profile" />
+              </StackPanel>
+            </Button>
           </StackPanel>
-          <StackPanel Grid.Column="1" Spacing="4">
-            <TextBlock Text="Port" Classes="Label" />
-            <TextBox Text="{Binding Port}" PlaceholderText="19999" />
-          </StackPanel>
+
+          <Button Grid.Row="3" Classes="Danger Outline Small" 
+                  Content="Test Crash Reporter" 
+                  Command="{Binding TriggerTestCrashCommand}" 
+                  HorizontalAlignment="Stretch" 
+                  Margin="0,12,0,0"
+                  ToolTip.Tip="Throws a test unhandled exception to verify the crash report window" />
         </Grid>
+      </lumina:LuminaCard>
 
-        <StackPanel Spacing="4">
-          <TextBlock Text="RCON Password" Classes="Label" />
-          <TextBox Text="{Binding Password}" 
-                   PasswordChar="{Binding PasswordMaskChar}" 
-                   PlaceholderText="Enter RCON password...">
-            <TextBox.InnerRightContent>
-              <Button Classes="Ghost Icon" 
-                      Command="{Binding TogglePasswordRevealCommand}" 
-                      Margin="0,0,4,0" 
-                      Width="30" Height="30"
-                      ToolTip.Tip="Show / Hide Password">
-                <icons:MaterialIcon Kind="{Binding PasswordIconKind}" Width="16" Height="16" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+      <!-- Right Area: Connection Parameters Form -->
+      <lumina:LuminaCard Grid.Column="1" Padding="32" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="18">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Connect to Server" Classes="Display" FontSize="26" />
+            <TextBlock Text="Manage your ARMA Reforger server using Reforger's Built-In RCON or BattlEye RCON" Classes="Caption" />
+          </StackPanel>
+
+          <!-- RCON Protocol Selection Header with Help Button & Wrapping ToolTip -->
+          <StackPanel Spacing="6">
+            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+              <TextBlock Text="RCON Protocol" Classes="Label" VerticalAlignment="Center" />
+              <Button Grid.Column="1" 
+                      Classes="Small Ghost Icon" 
+                      Command="{Binding OpenProtocolHelpCommand}"
+                      Width="26" Height="26">
+                <ToolTip.Tip>
+                  <TextBlock Text="Help: Learn about BattlEye RCON vs. Reforger Built-in RCON differences &amp; setup"
+                             TextWrapping="Wrap"
+                             MaxWidth="320" />
+                </ToolTip.Tip>
+                <icons:MaterialIcon Kind="HelpCircleOutline" Width="16" Height="16" Foreground="{DynamicResource LuminaPrimaryBrush}" />
               </Button>
-            </TextBox.InnerRightContent>
-          </TextBox>
+            </Grid>
+
+            <lumina:LuminaButtonGroup SelectedIndex="{Binding Protocol, Mode=TwoWay}">
+              <lumina:LuminaButtonGroupItem Content="Reforger Built-in RCON" />
+              <lumina:LuminaButtonGroupItem Content="BattlEye RCON" />
+            </lumina:LuminaButtonGroup>
+          </StackPanel>
+
+          <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="Server IP / Hostname" Classes="Label" />
+              <TextBox Text="{Binding ServerIp}" PlaceholderText="127.0.0.1" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="4">
+              <TextBlock Text="Port" Classes="Label" />
+              <TextBox Text="{Binding Port}" PlaceholderText="19999" />
+            </StackPanel>
+          </Grid>
+
+          <StackPanel Spacing="4">
+            <TextBlock Text="RCON Password" Classes="Label" />
+            <TextBox Text="{Binding Password}" 
+                     PasswordChar="{Binding PasswordMaskChar}" 
+                     PlaceholderText="Enter RCON password...">
+              <TextBox.InnerRightContent>
+                <Button Classes="Ghost Icon" 
+                        Command="{Binding TogglePasswordRevealCommand}" 
+                        Margin="0,0,4,0" 
+                        Width="30" Height="30"
+                        ToolTip.Tip="Show / Hide Password">
+                  <icons:MaterialIcon Kind="{Binding PasswordIconKind}" Width="16" Height="16" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                </Button>
+              </TextBox.InnerRightContent>
+            </TextBox>
+          </StackPanel>
+
+          <CheckBox IsChecked="{Binding AutoConnect}" Content="Auto-connect on startup" />
+
+          <Border Background="{DynamicResource LuminaDangerBgBrush}" 
+                  BorderBrush="{DynamicResource LuminaDangerBrush}" 
+                  BorderThickness="1" 
+                  CornerRadius="6" 
+                  Padding="12"
+                  IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource LuminaDangerBrush}" TextWrapping="Wrap" />
+          </Border>
+
+          <Button Content="Connect to Server"
+                  Classes="Primary Large"
+                  Command="{Binding ConnectCommand}"
+                  lumina:LuminaButton.IsLoading="{Binding IsConnecting}"
+                  HorizontalAlignment="Stretch" />
+
+          <Button Content="Launch Demo Mode (Simulated Server)"
+                  Classes="Outline"
+                  Command="{Binding LaunchDemoModeCommand}"
+                  HorizontalAlignment="Stretch"
+                  ToolTip.Tip="Launch full management suite with simulated players and data" />
         </StackPanel>
+      </lumina:LuminaCard>
+    </Grid>
 
-        <CheckBox IsChecked="{Binding AutoConnect}" Content="Auto-connect on startup" />
-
-        <Border Background="{DynamicResource LuminaDangerBgBrush}" 
-                BorderBrush="{DynamicResource LuminaDangerBrush}" 
-                BorderThickness="1" 
-                CornerRadius="6" 
-                Padding="12"
-                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-          <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource LuminaDangerBrush}" TextWrapping="Wrap" />
-        </Border>
-
-        <Button Content="Connect to Server"
-                Classes="Primary Large"
-                Command="{Binding ConnectCommand}"
-                lumina:LuminaButton.IsLoading="{Binding IsConnecting}"
-                HorizontalAlignment="Stretch" />
-
-        <Button Content="Launch Demo Mode (Simulated Server)"
-                Classes="Outline"
-                Command="{Binding LaunchDemoModeCommand}"
-                HorizontalAlignment="Stretch"
-                ToolTip.Tip="Launch full management suite with simulated players and data" />
-      </StackPanel>
-    </lumina:LuminaCard>
+    <!-- Modal Dialog Overlay for Login Screen -->
+    <Border Background="#90000000" 
+            IsVisible="{Binding IsDialogVisible}" 
+            ZIndex="9000"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch">
+      <ContentControl Content="{Binding ActiveDialog}" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <ContentControl.DataTemplates>
+          <DataTemplate DataType="{x:Type vm:ProtocolHelpDialogViewModel}">
+            <dialogs:ProtocolHelpDialog />
+          </DataTemplate>
+        </ContentControl.DataTemplates>
+      </ContentControl>
+    </Border>
   </Grid>
 </UserControl>

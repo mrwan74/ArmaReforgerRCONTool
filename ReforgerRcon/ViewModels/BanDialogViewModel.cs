@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -28,6 +29,8 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
     [ObservableProperty] public partial string CommandPreview { get; set; } = string.Empty;
     [ObservableProperty] public partial string TotalCalculatedTimeText { get; set; } = string.Empty;
     [ObservableProperty] public partial string ExpiryDateText { get; set; } = string.Empty;
+    [ObservableProperty] public partial bool IsExecuting { get; set; }
+    [ObservableProperty] public partial string ProgressStatus { get; set; } = string.Empty;
 
     public bool IsCustomSelected => SelectedPreset == "Custom Duration";
 
@@ -47,7 +50,11 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
     partial void OnReasonChanged(string value) => UpdateCalculations();
 
     [RelayCommand]
-    private void SetPreset(string preset) => SelectedPreset = preset;
+    private void SetPreset(string preset)
+    {
+        if (IsExecuting) return;
+        SelectedPreset = preset;
+    }
 
     [RelayCommand]
     private async Task CopyCommandPreviewAsync()
@@ -56,7 +63,6 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
         ToastNotificationService.Instance.ShowToast("Copied", "Copied ban command to clipboard.");
     }
 
-    // Converts any input breakdown into total seconds
     private long CalculateTotalSeconds() => SelectedPreset switch
     {
         "1 Hour" => 3600,
@@ -93,54 +99,103 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
         }
 
         var sampleTarget = _targets.FirstOrDefault();
-        string targetId;
-        if (sampleTarget == null)
-        {
-            targetId = "<UID>";
-        }
-        else if (_rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn)
-        {
-            targetId = sampleTarget.Uid;
-        }
-        else
-        {
-            targetId = sampleTarget.Guid;
-        }
 
-        // Reforger uses seconds; BattlEye uses minutes
         if (_rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn)
         {
-            CommandPreview = $"#ban create {targetId} {totalSec} {Reason}";
+            var targetPlayerId = sampleTarget != null ? sampleTarget.Id.ToString(CultureInfo.InvariantCulture) : "<Player#>";
+            CommandPreview = $"#ban create {targetPlayerId} {totalSec} {Reason}";
         }
         else
         {
+            var targetGuid = sampleTarget != null ? sampleTarget.Guid : "<GUID>";
             long beMinutes = totalSec <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(totalSec / 60.0));
-            CommandPreview = $"addBan {targetId} {beMinutes} {Reason}";
+            CommandPreview = $"addBan {targetGuid} {beMinutes} {Reason}";
         }
     }
 
     [RelayCommand]
-    private async Task ConfirmBanAsync()
+    private Task<bool> ConfirmBanAsync() => ExecuteSafeAsync(async () =>
     {
-        var totalSec = CalculateTotalSeconds();
-        foreach (var player in _targets)
+        if (IsExecuting) return;
+        IsExecuting = true;
+
+        int successCount = 0;
+        int failedCount = 0;
+
+        try
         {
-            await _rconService.BanPlayerAsync(player, totalSec, Reason);
-
-            long beMinutes = totalSec <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(totalSec / 60.0));
-            var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
-                ? $"#ban create {player.Uid} {totalSec} {Reason}"
-                : $"addBan {player.Guid} {beMinutes} {Reason}";
-
-            ToastNotificationService.Instance.ShowToast("Ban Executed", $"Banned {player.Name}", cmd, async () =>
+            var totalSec = CalculateTotalSeconds();
+            int total = _targets.Count;
+            for (int i = 0; i < total; i++)
             {
-                var ban = (await _rconService.GetBansAsync()).FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid);
-                if (ban != null) await _rconService.RemoveBanAsync(ban);
-            });
+                var player = _targets[i];
+                ProgressStatus = $"Banning {player.Name} ({i + 1}/{total})...";
+                AppLogger.Info($"[BanDialog] Sequentially banning target {i + 1}/{total}: {player.Name} (Duration: {totalSec}s)...");
+
+                bool isSuccess = await _rconService.BanPlayerAsync(player, totalSec, Reason);
+
+                long beMinutes = totalSec <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(totalSec / 60.0));
+                var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
+                    ? $"#ban create {player.Id} {totalSec} {Reason}"
+                    : $"addBan {player.Guid} {beMinutes} {Reason}";
+
+                if (isSuccess)
+                {
+                    successCount++;
+                    ToastNotificationService.Instance.ShowSuccess("Ban Executed", $"Banned {player.Name}", cmd, async () =>
+                    {
+                        var allBans = await _rconService.GetBansAsync();
+                        var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid);
+                        if (ban != null)
+                        {
+                            await _rconService.RemoveBanAsync(ban);
+                            await _parent.TriggerPostBanRefreshAsync();
+                        }
+                    });
+
+                    _parent.RemovePlayerFromList(player);
+                }
+                else
+                {
+                    failedCount++;
+                    AppLogger.Warn($"[BanDialog] Ban failed or timed out for {player.Name}. Retaining player in UI list.");
+                    ToastNotificationService.Instance.ShowError(
+                        "Ban Failed",
+                        $"Could not ban {player.Name}: Server rejected command or timed out.",
+                        cmd
+                    );
+                }
+            }
+
+            _parent.CloseDialog();
+            await _parent.TriggerPostBanRefreshAsync();
+
+            if (total > 1)
+            {
+                if (failedCount == 0)
+                {
+                    ToastNotificationService.Instance.ShowSuccess("Batch Ban Complete", $"Successfully banned all {total} player(s).");
+                }
+                else
+                {
+                    ToastNotificationService.Instance.ShowWarning(
+                        "Batch Ban Summary",
+                        $"Processed {total} target(s): {successCount} succeeded, {failedCount} failed."
+                    );
+                }
+            }
         }
+        finally
+        {
+            IsExecuting = false;
+            ProgressStatus = string.Empty;
+        }
+    });
+
+    [RelayCommand]
+    private void Close()
+    {
+        if (IsExecuting) return;
         _parent.CloseDialog();
     }
-
-    [RelayCommand]
-    private void Close() => _parent.CloseDialog();
 }

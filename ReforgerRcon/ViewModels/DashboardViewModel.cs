@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -24,11 +25,12 @@ public partial class DashboardViewModel : ViewModelBase
     [ObservableProperty] public partial ServerProfile Profile { get; set; }
     [ObservableProperty] public partial int OnlinePlayersCount { get; set; }
     [ObservableProperty] public partial int ActiveBansCount { get; set; }
-    [ObservableProperty] public partial int RefreshCountdown { get; set; } = 5;
+    [ObservableProperty] public partial int RefreshCountdown { get; set; }
     [ObservableProperty] public partial double RefreshProgress { get; set; } = 100;
     [ObservableProperty] public partial string LastPacketTimerText { get; set; } = "0s ago";
     [ObservableProperty] public partial int Ping { get; set; } = 25;
     [ObservableProperty] public partial bool IsHeartbeatVisible { get; set; } = true;
+    [ObservableProperty] public partial bool IsConnected { get; set; } = true;
     [ObservableProperty] public partial bool IsConsoleFullscreen { get; set; }
     [ObservableProperty] public partial bool IsConsoleDetached { get; set; }
 
@@ -42,7 +44,6 @@ public partial class DashboardViewModel : ViewModelBase
     [ObservableProperty] public partial string SearchQuery { get; set; } = string.Empty;
     [ObservableProperty] public partial string SearchType { get; set; } = "Name";
 
-    // Includes "Comment" for filtering
     public ObservableCollection<string> SearchTypes { get; } = ["Name", "UID", "Player #", "Comment"];
 
     public PlayersViewModel PlayersTab { get; }
@@ -63,16 +64,118 @@ public partial class DashboardViewModel : ViewModelBase
         AppLogger.Info($"[DashboardViewModel] Initializing for {Profile.ServerIp}:{Profile.Port} ({Profile.Protocol})");
 
         PlayersTab = new PlayersViewModel(_rconService, this);
-        BansTab = new BansViewModel(_rconService);
+        BansTab = new BansViewModel(_rconService, this);
         DatabaseTab = new DatabaseViewModel(_rconService, this);
         ConsoleTab = new ConsoleViewModel(_rconService, this);
         SettingsTab = new SettingsViewModel(this);
+
+        RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
+
+        _rconService.ConnectionLost += OnConnectionLost;
+        _rconService.PlayerJoined += OnPlayerJoined;
+        _rconService.PlayerLeft += OnPlayerLeft;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += OnTimerTick;
         _timer.Start();
 
-        _ = RefreshAllAsync();
+        _ = RefreshAllAsync(forceBans: true);
+    }
+
+    private void OnPlayerJoined(object? sender, PlayerModel player)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            ExecuteSafe(() =>
+            {
+                AppLogger.Info($"[DashboardViewModel] Player joined: {player.Name} (UID: {player.Uid}) [Watchlisted: {player.IsWatchlisted}]");
+
+                if (player.IsWatchlisted && SettingsTab.Settings.AlertOnWatchlistJoin)
+                {
+                    SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
+                    ToastNotificationService.Instance.ShowWarning(
+                        "Watchlist Alert",
+                        $"Watchlisted player '{player.Name}' has joined the server."
+                    );
+                }
+                else if (SettingsTab.Settings.AlertOnJoin)
+                {
+                    SoundNotificationService.PlayAlert(SoundAlertType.PlayerJoined);
+                    ToastNotificationService.Instance.ShowToast(
+                        "Player Connected",
+                        $"{player.Name} joined the server."
+                    );
+                }
+            });
+        });
+    }
+
+    private void OnPlayerLeft(object? sender, PlayerModel player)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            ExecuteSafe(() =>
+            {
+                AppLogger.Info($"[DashboardViewModel] Player left: {player.Name} (UID: {player.Uid}) [Watchlisted: {player.IsWatchlisted}]");
+
+                if (player.IsWatchlisted && SettingsTab.Settings.AlertOnWatchlistLeave)
+                {
+                    SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
+                    ToastNotificationService.Instance.ShowWarning(
+                        "Watchlist Alert",
+                        $"Watchlisted player '{player.Name}' has left the server."
+                    );
+                }
+                else if (SettingsTab.Settings.AlertOnLeave)
+                {
+                    SoundNotificationService.PlayAlert(SoundAlertType.PlayerLeft);
+                }
+            });
+        });
+    }
+
+    private void OnConnectionLost(object? sender, string reason)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            ExecuteSafe(() =>
+            {
+                AppLogger.Warn($"[DashboardViewModel] Connection lost ({reason}). Executing full offline session teardown and presenting recovery dialog.");
+
+                _timer.Stop();
+                IsConnected = false;
+                IsHeartbeatVisible = false;
+                OnlinePlayersCount = 0;
+
+                foreach (var player in PlayersTab.Players)
+                {
+                    player.Ping = 0;
+                }
+
+                SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+
+                ShowDialog(new ConnectionLostDialogViewModel(
+                    Profile,
+                    reason,
+                    _rconService,
+                    onReconnected: () =>
+                    {
+                        IsConnected = true;
+                        CloseDialog();
+                        _timer.Start();
+                        _ = RefreshAllAsync(forceBans: true);
+                    },
+                    onReturnToLogin: () =>
+                    {
+                        CloseDialog();
+                        _detachedConsoleWindow?.Close();
+                        _detachedConsoleWindow = null;
+                        _onDisconnectRequested();
+                    },
+                    onDismiss: () => CloseDialog()
+                ));
+            });
+        });
     }
 
     public void ShowDialog(ViewModelBase dialog)
@@ -100,11 +203,17 @@ public partial class DashboardViewModel : ViewModelBase
     {
         await ExecuteSafeAsync(async () =>
         {
+            if (!_rconService.IsConnected && IsConnected)
+            {
+                OnConnectionLost(this, "Connection timed out (No packets received)");
+                return;
+            }
+
             RefreshCountdown--;
             if (RefreshCountdown <= 0)
             {
                 RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
-                await RefreshAllAsync();
+                await RefreshAllAsync(forceBans: false);
             }
 
             RefreshProgress = (double)RefreshCountdown / Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds) * 100;
@@ -115,14 +224,26 @@ public partial class DashboardViewModel : ViewModelBase
         });
     }
 
-    public Task<bool> RefreshAllAsync()
+    public Task<bool> RefreshAllAsync(bool forceBans = false)
     {
         return ExecuteSafeAsync(async () =>
         {
+            if (!_rconService.IsConnected) return;
+
+            var sw = Stopwatch.StartNew();
+            AppLogger.Debug("[DashboardViewModel:Timing] Starting dashboard query refresh...");
+
             await PlayersTab.RefreshPlayersAsync();
-            await BansTab.RefreshBansAsync();
             OnlinePlayersCount = PlayersTab.Players.Count;
-            ActiveBansCount = BansTab.Bans.Count;
+
+            if (forceBans || SettingsTab.Settings.AutoRefreshBans)
+            {
+                await BansTab.RefreshBansAsync();
+                ActiveBansCount = BansTab.Bans.Count;
+            }
+
+            sw.Stop();
+            AppLogger.Info($"[DashboardViewModel:Timing] Dashboard refresh cycle completed in {sw.ElapsedMilliseconds} ms (Online Players: {OnlinePlayersCount}, Active Bans: {ActiveBansCount}).");
         });
     }
 
@@ -232,6 +353,9 @@ public partial class DashboardViewModel : ViewModelBase
         {
             AppLogger.Info("[DashboardViewModel] Operator initiated disconnect.");
             _timer.Stop();
+            _rconService.ConnectionLost -= OnConnectionLost;
+            _rconService.PlayerJoined -= OnPlayerJoined;
+            _rconService.PlayerLeft -= OnPlayerLeft;
             _detachedConsoleWindow?.Close();
             _detachedConsoleWindow = null;
             await _rconService.DisconnectAsync();

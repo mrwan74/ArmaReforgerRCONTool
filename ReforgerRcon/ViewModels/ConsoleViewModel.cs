@@ -32,8 +32,8 @@ public partial class ConsoleViewModel : ViewModelBase
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
 
     public string CommandPlaceholder => IsReforgerProtocol
-        ? "Enter Reforger command (e.g. #players, #ban list, #kick 1, #restart, #shutdown, #say -1 Hello)..."
-        : "Enter BattlEye command (e.g. players, bans, admins, kick [id], loadBans, writeBans)...";
+        ? "Enter Reforger command (e.g. #players, #kick 1, #ban create 1 0, #restart, #shutdown) or custom in-game @command..."
+        : "Enter BattlEye command (e.g. players, bans, admins, kick [id], addBan [guid] [minutes], loadBans)...";
 
     public ConsoleViewModel(IRconService rconService, DashboardViewModel? dashboard = null)
     {

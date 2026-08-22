@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ReforgerRcon.Models;
 
@@ -13,6 +14,7 @@ public class MockRconService : IRconService
     private ServerProfile? _currentProfile;
     private readonly List<PlayerModel> _players = [];
     private readonly List<BanModel> _bans = [];
+    private bool _isDisposed;
 
     public RconProtocol CurrentProtocol => _currentProfile?.Protocol ?? RconProtocol.ReforgerBuiltIn;
     public bool IsConnected { get; private set; }
@@ -22,6 +24,7 @@ public class MockRconService : IRconService
     public event EventHandler<PlayerModel>? PlayerJoined;
     public event EventHandler<PlayerModel>? PlayerLeft;
     public event EventHandler<string>? OutputReceived;
+    public event EventHandler<string>? ConnectionLost;
 
     private static readonly (int id, string name, string uid, string guid, string ip, int port, int ping, string cc, string cn, string city, string state, bool watch, bool warn, string comment, string[] aliases)[] MockPlayers =
     [
@@ -107,7 +110,7 @@ public class MockRconService : IRconService
     public async Task<bool> ConnectAsync(ServerProfile profile)
     {
         _currentProfile = profile;
-        await Task.Delay(400);
+        await Task.Delay(400, CancellationToken.None);
         IsConnected = true;
         LastPacketTime = DateTime.UtcNow;
 
@@ -126,39 +129,49 @@ public class MockRconService : IRconService
 
     public async Task DisconnectAsync()
     {
-        await Task.Delay(100);
+        await Task.Delay(100, CancellationToken.None);
         IsConnected = false;
         await PlayerDatabaseStorageService.SetAllOfflineAsync();
         OutputReceived?.Invoke(this, "[SYSTEM] Disconnected from server.");
     }
 
-    public async Task<List<PlayerModel>> GetPlayersAsync()
+    public void SimulateConnectionDrop()
     {
+        IsConnected = false;
+        ConnectionLost?.Invoke(this, "Connection timed out (No packets received)");
+    }
+
+    public async Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         LastPacketTime = DateTime.UtcNow;
         await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players);
         return [.. _players];
     }
 
-    public Task<List<BanModel>> GetBansAsync()
+    public Task<List<BanModel>> GetBansAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         LastPacketTime = DateTime.UtcNow;
         return Task.FromResult(_bans.ToList());
     }
 
-    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync() => PlayerDatabaseStorageService.GetAllAsync();
+    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync();
 
-    public Task KickPlayerAsync(PlayerModel player, string reason)
+    public Task<bool> KickPlayerAsync(PlayerModel player, string reason, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _players.Remove(player);
         var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#kick {player.Id} {reason}" : $"kick {player.Id} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
-        OutputReceived?.Invoke(this, $"[RCON IN] Player {player.Name} was kicked ({reason}).");
+        OutputReceived?.Invoke(this, $"[RCON IN] Player '{player.Name}' kicked!");
         PlayerLeft?.Invoke(this, player);
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task BanPlayerAsync(PlayerModel player, long durationSeconds, string reason)
+    public Task<bool> BanPlayerAsync(PlayerModel player, long durationSeconds, string reason, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _players.Remove(player);
         var ban = new BanModel
         {
@@ -171,15 +184,16 @@ public class MockRconService : IRconService
         };
         _bans.Add(ban);
 
-        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {player.Uid} {durationSeconds} {reason}" : $"addBan {player.Guid} {durationSeconds / 60} {reason}";
+        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {player.Id} {durationSeconds} {reason}" : $"addBan {player.Guid} {durationSeconds / 60} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         OutputReceived?.Invoke(this, $"[RCON IN] Ban added for {player.Name}.");
         PlayerLeft?.Invoke(this, player);
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task OfflineBanAsync(string identity, long durationSeconds, string reason, bool isIp)
+    public Task<bool> OfflineBanAsync(string identity, long durationSeconds, string reason, bool isIp, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var ban = new BanModel
         {
             BanNumber = _bans.Count + 1,
@@ -193,16 +207,17 @@ public class MockRconService : IRconService
 
         var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {identity} {durationSeconds} {reason}" : $"addBan {identity} {durationSeconds / 60} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task RemoveBanAsync(BanModel ban)
+    public Task<bool> RemoveBanAsync(BanModel ban, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _bans.Remove(ban);
         var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban remove {ban.IdentityId}" : $"removeBan {ban.BanNumber}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         OutputReceived?.Invoke(this, $"[RCON IN] Ban removed for {ban.IdentityId}.");
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
     public Task SendCommandAsync(string rawCommand)
@@ -212,10 +227,10 @@ public class MockRconService : IRconService
         return Task.CompletedTask;
     }
 
-    public Task RestartServerAsync() => SendCommandAsync("#restart");
-    public Task ShutdownServerAsync() => SendCommandAsync("#shutdown");
-    public Task SendGlobalMessageAsync(string message) => SendCommandAsync($"#say -1 {message}");
-    public Task SendAnnouncementAsync(string title, string message) => SendCommandAsync($"#say -1 [ANNOUNCEMENT: {title}] {message}");
+    public Task RestartServerAsync(CancellationToken cancellationToken = default) => SendCommandAsync("#restart");
+    public Task ShutdownServerAsync(CancellationToken cancellationToken = default) => SendCommandAsync("#shutdown");
+    public Task SendGlobalMessageAsync(string message, CancellationToken cancellationToken = default) => SendCommandAsync($"#say -1 {message}");
+    public Task SendAnnouncementAsync(string title, string message, CancellationToken cancellationToken = default) => SendCommandAsync($"#say -1 [ANNOUNCEMENT: {title}] {message}");
 
     public Task UpdatePlayerCommentAsync(string uid, string comment)
     {
@@ -224,4 +239,23 @@ public class MockRconService : IRconService
     }
 
     public Task ClearDatabaseAsync() => PlayerDatabaseStorageService.ClearAsync();
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!_isDisposed)
+        {
+            if (disposing)
+            {
+                _players.Clear();
+                _bans.Clear();
+            }
+            _isDisposed = true;
+        }
+    }
 }

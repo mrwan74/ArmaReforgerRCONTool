@@ -27,20 +27,18 @@
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Spacing="2">
           <TextBlock Text="Offline Ban" Classes="SectionTitle" FontSize="20" />
-          <TextBlock Text="{Binding TargetIdentifier, StringFormat='Target: {0}'}" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+          <TextBlock Text="{Binding TargetIdentifier}" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
         </StackPanel>
-        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" />
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" IsEnabled="{Binding !IsExecuting}" />
       </Grid>
 
-      <StackPanel Spacing="4">
+      <!-- Target Identifier Type Selector (Only shown if multiple target types are available) -->
+      <StackPanel Spacing="4" IsVisible="{Binding IsTargetTypeSelectionVisible}">
         <TextBlock Text="Target Identifier Type" Classes="Label" />
-        <ComboBox SelectedItem="{Binding TargetType}" HorizontalAlignment="Stretch">
-          <ComboBox.Items>
-            <x:String>Both</x:String>
-            <x:String>GUID/UID</x:String>
-            <x:String>IP</x:String>
-          </ComboBox.Items>
-        </ComboBox>
+        <ComboBox ItemsSource="{Binding AvailableTargetTypes}" 
+                  SelectedItem="{Binding TargetType}" 
+                  IsEnabled="{Binding !IsExecuting}"
+                  HorizontalAlignment="Stretch" />
       </StackPanel>
 
       <StackPanel Spacing="6">
@@ -51,6 +49,7 @@
                   Content="1 Hour" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Hour" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -58,6 +57,7 @@
                   Content="6 Hours" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="6 Hours" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -65,6 +65,7 @@
                   Content="1 Day" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Day" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -72,6 +73,7 @@
                   Content="3 Days" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="3 Days" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -79,6 +81,7 @@
                   Content="1 Week" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Week" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -86,6 +89,7 @@
                   Content="1 Month" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="1 Month" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Outline PresetBtn" 
@@ -93,6 +97,7 @@
                   Content="Custom Duration" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="Custom Duration" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
 
           <Button Classes="Small Danger Outline PresetBtn Permanent" 
@@ -100,6 +105,7 @@
                   Content="Permanent" 
                   Command="{Binding SetPresetCommand}" 
                   CommandParameter="Permanent" 
+                  IsEnabled="{Binding !IsExecuting}"
                   Margin="0,0,6,6"/>
         </WrapPanel>
       </StackPanel>
@@ -109,37 +115,37 @@
         <Grid ColumnDefinitions="*,*,*,*,*,*,*" ColumnSpacing="6">
           <StackPanel Grid.Column="0" Spacing="4">
             <TextBlock Text="Years" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomYears}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomYears}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="1" Spacing="4">
             <TextBlock Text="Months" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomMonths}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomMonths}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="2" Spacing="4">
             <TextBlock Text="Weeks" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomWeeks}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomWeeks}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="3" Spacing="4">
             <TextBlock Text="Days" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomDays}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomDays}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="4" Spacing="4">
             <TextBlock Text="Hours" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomHours}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomHours}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="5" Spacing="4">
             <TextBlock Text="Minutes" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomMinutes}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomMinutes}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
 
           <StackPanel Grid.Column="6" Spacing="4">
             <TextBlock Text="Seconds" Classes="Caption" HorizontalAlignment="Center" Foreground="{DynamicResource LuminaTextSecondaryBrush}" FontSize="11" />
-            <TextBox Text="{Binding CustomSeconds}" HorizontalContentAlignment="Center" PlaceholderText="0" />
+            <TextBox Text="{Binding CustomSeconds}" HorizontalContentAlignment="Center" PlaceholderText="0" IsEnabled="{Binding !IsExecuting}" />
           </StackPanel>
         </Grid>
       </StackPanel>
@@ -153,12 +159,22 @@
 
       <StackPanel Spacing="4">
         <TextBlock Text="Reason" Classes="Label" />
-        <TextBox Text="{Binding Reason}" />
+        <TextBox Text="{Binding Reason}" IsEnabled="{Binding !IsExecuting}" />
       </StackPanel>
 
       <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,8,0,0">
-        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" />
-        <Button Grid.Column="2" Classes="Danger" Content="Dispatch Offline Ban" Command="{Binding ConfirmCommand}" />
+        <Button Grid.Column="1" 
+                Classes="Outline" 
+                Content="Cancel" 
+                Command="{Binding CloseCommand}" 
+                IsEnabled="{Binding !IsExecuting}" />
+
+        <Button Grid.Column="2" 
+                Classes="Danger" 
+                Content="Offline Ban" 
+                Command="{Binding ConfirmCommand}" 
+                lumina:LuminaButton.IsLoading="{Binding IsExecuting}"
+                IsEnabled="{Binding !IsExecuting}" />
       </Grid>
     </StackPanel>
   </lumina:LuminaCard>

@@ -75,12 +75,18 @@ public static class ColumnLayoutStorageService
         },
         ["PlayersGrid_Reforger"] = new(StringComparer.OrdinalIgnoreCase)
         {
-            [ColStatusKey] = new() { Width = 95, DisplayIndex = 1 },
+            [ColStatusKey] = new() { Width = 114, DisplayIndex = 1 },
             [ColReforgerIdKey] = new() { Width = 110, DisplayIndex = 2 },
-            [ColReforgerNameKey] = new() { Width = 220, DisplayIndex = 3 },
-            [ColReforgerUidKey] = new() { Width = 220, DisplayIndex = 4 },
-            [ColCommentKey] = new() { Width = 323, DisplayIndex = 5 },
-            [ColActionsKey] = new() { Width = 195, DisplayIndex = 6 }
+            [ColReforgerNameKey] = new() { Width = 256, DisplayIndex = 3 },
+            [ColReforgerUidKey] = new() { Width = 396, DisplayIndex = 4 },
+            ["ColBeId"] = new() { Width = 72, DisplayIndex = 5 },
+            ["ColBeCountry"] = new() { Width = 107, DisplayIndex = 6 },
+            ["ColBeName"] = new() { Width = 220, DisplayIndex = 7 },
+            ["ColBeGuid"] = new() { Width = 343, DisplayIndex = 8 },
+            ["ColBeEndpoint"] = new() { Width = 217, DisplayIndex = 9 },
+            ["ColBePing"] = new() { Width = 90, DisplayIndex = 10 },
+            [ColCommentKey] = new() { Width = 434, DisplayIndex = 11 },
+            [ColActionsKey] = new() { Width = 195, DisplayIndex = 12 }
         },
         ["BansGrid_Reforger"] = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -108,7 +114,6 @@ public static class ColumnLayoutStorageService
             [ColCommentKey] = new() { Width = 323, DisplayIndex = 8 },
             [ColActionsKey] = new() { Width = 195, DisplayIndex = 9 }
         },
-        // Reforger historical database does not include dynamic ColReforgerId
         ["DatabaseGrid_Reforger"] = new(StringComparer.OrdinalIgnoreCase)
         {
             [ColStatusKey] = new() { Width = 95, DisplayIndex = 1 },

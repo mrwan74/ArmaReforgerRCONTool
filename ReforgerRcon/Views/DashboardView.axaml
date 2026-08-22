@@ -13,8 +13,14 @@
     <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1" Padding="18,12">
       <Grid ColumnDefinitions="Auto,*,Auto">
         <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-          <Border Width="12" Height="12" CornerRadius="6" Background="{DynamicResource LuminaSuccessBrush}"
+          <!-- Live / Disconnected Indicator -->
+          <Border Width="12" Height="12" CornerRadius="6"
+                  Background="{DynamicResource LuminaSuccessBrush}"
+                  IsVisible="{Binding IsConnected}"
                   Opacity="{Binding IsHeartbeatVisible, Converter={x:Static converters:BooleanToOpacityConverter.Instance}}" />
+          
+          <Border Width="12" Height="12" CornerRadius="6" Background="{DynamicResource LuminaDangerBrush}"
+                  IsVisible="{Binding !IsConnected}" />
 
           <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
             <TextBlock Text="{Binding Profile.ServerIp, StringFormat='{}{0}:'}" FontWeight="Bold" FontSize="16" Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
@@ -156,6 +162,12 @@
           </DataTemplate>
           <DataTemplate DataType="{x:Type vm:ErrorDetailsDialogViewModel}">
             <dialogs:ErrorDetailsDialog />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:ProtocolHelpDialogViewModel}">
+            <dialogs:ProtocolHelpDialog />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:ConnectionLostDialogViewModel}">
+            <dialogs:ConnectionLostDialog />
           </DataTemplate>
         </ContentControl.DataTemplates>
       </ContentControl>

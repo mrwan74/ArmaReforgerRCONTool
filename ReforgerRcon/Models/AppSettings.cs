@@ -11,7 +11,8 @@ public class AppSettings
     public bool AlertOnWatchlistJoin { get; set; } = false;
     public bool AlertOnWatchlistLeave { get; set; } = false;
 
-    public int RefreshIntervalSeconds { get; set; } = 5;
+    public int RefreshIntervalSeconds { get; set; } = 15;
+    public bool AutoRefreshBans { get; set; } = true;
     public bool RunInBackground { get; set; } = true;
 
     public string MaxMindAccountId { get; set; } = string.Empty;

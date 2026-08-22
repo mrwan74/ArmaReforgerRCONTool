@@ -1,0 +1,66 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.ConnectionLostDialog"
+             x:DataType="vm:ConnectionLostDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="480" Classes="Elevated">
+    <StackPanel Spacing="16">
+      <!-- Header Row with Warning Icon and 'X' Dismiss Button -->
+      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="#25EF4444" CornerRadius="8" Padding="8" VerticalAlignment="Center">
+            <icons:MaterialIcon Kind="ServerNetworkOff" Foreground="{DynamicResource LuminaDangerBrush}" Width="24" Height="24" />
+          </Border>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="Server Connection Lost" Classes="SectionTitle" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource LuminaDangerBrush}" />
+            <TextBlock Text="The remote RCON socket was disconnected or timed out" FontSize="12" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+          </StackPanel>
+        </StackPanel>
+
+        <!-- Top-Right 'X' Close Button -->
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding DismissCommand}" ToolTip.Tip="Close notification" VerticalAlignment="Center" />
+      </Grid>
+
+      <!-- Connection Details Banner -->
+      <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+        <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="120,*" RowSpacing="6">
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="Server Endpoint:" Classes="Caption" FontWeight="SemiBold" />
+          <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+            <TextBlock Text="{Binding ServerEndpoint}" FontWeight="Bold" Foreground="{DynamicResource LuminaTextPrimaryBrush}" />
+            <Border Padding="4,1" CornerRadius="3" Background="{DynamicResource LuminaPrimaryBgBrush}">
+              <TextBlock Text="{Binding ProtocolText}" FontSize="9" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+            </Border>
+          </StackPanel>
+
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="Disconnection:" Classes="Caption" FontWeight="SemiBold" />
+          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ReasonMessage}" FontSize="12" Foreground="{DynamicResource LuminaDangerBrush}" TextWrapping="Wrap" />
+        </Grid>
+      </Border>
+
+      <!-- Reconnect Error Feedback Box -->
+      <Border Background="{DynamicResource LuminaDangerBgBrush}" 
+              BorderBrush="{DynamicResource LuminaDangerBrush}" 
+              BorderThickness="1" 
+              CornerRadius="6" 
+              Padding="10"
+              IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+        <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource LuminaDangerBrush}" FontSize="12" TextWrapping="Wrap" />
+      </Border>
+
+      <!-- Action Buttons -->
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,4,0,0">
+        <Button Grid.Column="1" Classes="Outline" Content="Return to Login" Command="{Binding ReturnToLoginCommand}" />
+        <Button Grid.Column="2" 
+                Classes="Danger" 
+                Content="Reconnect" 
+                Command="{Binding ReconnectCommand}" 
+                lumina:LuminaButton.IsLoading="{Binding IsReconnecting}"
+                MinWidth="110" 
+                HorizontalContentAlignment="Center"/>
+      </Grid>
+    </StackPanel>
+  </lumina:LuminaCard>
+</UserControl>
