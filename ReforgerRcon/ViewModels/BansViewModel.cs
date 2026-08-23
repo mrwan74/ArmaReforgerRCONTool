@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -14,6 +14,8 @@ namespace ReforgerRcon.ViewModels;
 
 public partial class BansViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
+    public const string DefaultSortKey = "Default";
+
     private readonly IRconService _rconService = rconService;
     private readonly DashboardViewModel _dashboard = dashboard;
     private List<BanModel> _allBans = [];
@@ -27,19 +29,74 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
 
+    public string CurrentSortField => _dashboard.SettingsTab.Settings.BansSortBy;
+    public bool CurrentSortAscending => _dashboard.SettingsTab.Settings.BansSortAscending;
+
     [RelayCommand]
     public Task<bool> RefreshBansAsync() => ExecuteSafeAsync(async () =>
     {
+        using var timing = AppLogger.Measure("BansViewModel.RefreshBansAsync");
+        AppLogger.Debug("[BansViewModel] Fetching active ban records from server...");
+
         _allBans = await _rconService.GetBansAsync();
-        _dashboard.ActiveBansCount = _allBans.Count;
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+
+        _dashboard.ActiveBansCount = _allBans.Count;
+        AppLogger.Info($"[BansViewModel] Loaded {_allBans.Count} ban records ({Bans.Count} visible after filter).");
     });
+
+    public static string MapColumnTagToSortField(string? tag)
+    {
+        return tag switch
+        {
+            "ColReforgerIdentity" or "ColBeIdentity" => "GUID / IP Address",
+            "ColBeMinutes" => "Minutes Left",
+            "ColBeReason" => "Reason",
+            "ColBeBanNo" or "ColReforgerBannedName" => DefaultSortKey,
+            _ => string.Empty
+        };
+    }
+
+    public void CycleColumnSort(string columnTag)
+    {
+        ExecuteSafe(() =>
+        {
+            var mappedField = MapColumnTagToSortField(columnTag);
+            if (string.IsNullOrEmpty(mappedField)) return;
+
+            var currentField = _dashboard.SettingsTab.Settings.BansSortBy;
+            var currentAsc = _dashboard.SettingsTab.Settings.BansSortAscending;
+
+            if (string.Equals(currentField, mappedField, StringComparison.OrdinalIgnoreCase))
+            {
+                if (currentAsc)
+                {
+                    _dashboard.SettingsTab.Settings.BansSortAscending = false;
+                    AppLogger.Info($"[BansViewModel] Cycled sort for '{mappedField}' -> Descending.");
+                }
+                else
+                {
+                    _dashboard.SettingsTab.Settings.BansSortBy = DefaultSortKey;
+                    _dashboard.SettingsTab.Settings.BansSortAscending = true;
+                    AppLogger.Info($"[BansViewModel] Cycled sort for '{mappedField}' -> Default (raw server order).");
+                }
+            }
+            else
+            {
+                _dashboard.SettingsTab.Settings.BansSortBy = mappedField;
+                _dashboard.SettingsTab.Settings.BansSortAscending = true;
+                AppLogger.Info($"[BansViewModel] Cycled sort column -> '{mappedField}' (Ascending).");
+            }
+
+            ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+        });
+    }
 
     public void RemoveBanFromList(BanModel ban)
     {
         ExecuteSafe(() =>
         {
-            _allBans.RemoveAll(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
+            int removed = _allBans.RemoveAll(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
 
             var match = Bans.FirstOrDefault(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
             if (match != null)
@@ -49,7 +106,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
             _dashboard.ActiveBansCount = _allBans.Count;
             UpdateSelectedState();
-            AppLogger.Debug($"[BansViewModel] Removed ban for '{ban.BannedName}' from live list immediately.");
+            AppLogger.Debug($"[BansViewModel] Removed ban #{ban.BanNumber} ({ban.IdentityId}) from live list. Purged: {removed}");
         });
     }
 
@@ -57,18 +114,18 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     {
         ExecuteSafe(() =>
         {
+            using var timing = AppLogger.Measure($"BansViewModel.ApplyFilter('{query}', '{searchType}')");
+
             foreach (var b in Bans)
             {
                 b.PropertyChanged -= OnBanPropertyChanged;
             }
 
-            if (string.IsNullOrWhiteSpace(query))
+            IEnumerable<BanModel> filtered = _allBans;
+
+            if (!string.IsNullOrWhiteSpace(query))
             {
-                Bans = new ObservableCollection<BanModel>(_allBans);
-            }
-            else
-            {
-                IEnumerable<BanModel> filtered = searchType switch
+                filtered = searchType switch
                 {
                     "Name" => _allBans.Where(b => b.BannedName.Contains(query, StringComparison.OrdinalIgnoreCase)),
                     "UID" => _allBans.Where(b => b.IdentityId.Contains(query, StringComparison.OrdinalIgnoreCase)),
@@ -76,9 +133,29 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
                         b.BannedName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                         b.IdentityId.Contains(query, StringComparison.OrdinalIgnoreCase))
                 };
-
-                Bans = new ObservableCollection<BanModel>(filtered);
             }
+
+            var sortField = _dashboard.SettingsTab.Settings.BansSortBy;
+            var isAscending = _dashboard.SettingsTab.Settings.BansSortAscending;
+
+            if (!string.Equals(sortField, DefaultSortKey, StringComparison.OrdinalIgnoreCase))
+            {
+                filtered = sortField switch
+                {
+                    "GUID / IP Address" => isAscending
+                        ? filtered.OrderBy(b => b.IdentityId)
+                        : filtered.OrderByDescending(b => b.IdentityId),
+                    "Minutes Left" => isAscending
+                        ? filtered.OrderBy(b => b.DurationSeconds)
+                        : filtered.OrderByDescending(b => b.DurationSeconds),
+                    "Reason" => isAscending
+                        ? filtered.OrderBy(b => b.Reason)
+                        : filtered.OrderByDescending(b => b.Reason),
+                    _ => filtered
+                };
+            }
+
+            Bans = new ObservableCollection<BanModel>(filtered);
 
             foreach (var b in Bans)
             {
@@ -87,6 +164,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
             _dashboard.ActiveBansCount = _allBans.Count;
             UpdateSelectedState();
+            AppLogger.Trace($"[BansViewModel] Filtered {Bans.Count}/{_allBans.Count} bans using query '{query}' (Sort: {sortField}, Asc: {isAscending}).");
         });
     }
 
@@ -111,6 +189,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
                 {
                     b.IsSelected = value;
                 }
+                AppLogger.Debug($"[BansViewModel] Toggled IsAllSelected to {value} across {Bans.Count} entries.");
             }
             finally
             {
@@ -146,11 +225,17 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         ExecuteSafe(() =>
         {
             ban ??= SelectedBan;
-            if (ban == null) return;
+            if (ban == null)
+            {
+                AppLogger.Warn("[BansViewModel] RemoveBan invoked with null target.");
+                return;
+            }
 
             var displayName = !string.IsNullOrWhiteSpace(ban.BannedName) && !ban.BannedName.Equals("Banned Target", StringComparison.OrdinalIgnoreCase)
                 ? ban.BannedName
                 : ban.IdentityId;
+
+            AppLogger.Info($"[BansViewModel] Prompting confirmation for ban removal: '{displayName}' (#{ban.BanNumber}, {ban.IdentityId})");
 
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Confirm Ban Removal",
@@ -165,10 +250,15 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
     private async Task ExecuteRemoveBanAsync(BanModel ban)
     {
+        using var timing = AppLogger.Measure($"BansViewModel.ExecuteRemoveBanAsync(#{ban.BanNumber})");
+        AppLogger.Info($"[BansViewModel] Dispatching remove ban command for #{ban.BanNumber} ({ban.IdentityId})...");
+
         bool isSuccess = await _rconService.RemoveBanAsync(ban);
+
         if (isSuccess)
         {
             RemoveBanFromList(ban);
+            AppLogger.Info($"[BansViewModel] Ban #{ban.BanNumber} ({ban.IdentityId}) successfully removed.");
 
             var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? $"#ban remove {ban.IdentityId}"
@@ -176,12 +266,14 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
             ToastNotificationService.Instance.ShowSuccess("Ban Removed", $"Removed ban for {ban.BannedName}", cmd, async () =>
             {
+                AppLogger.Info($"[BansViewModel] Undo triggered for ban removal: {ban.IdentityId}. Reinstating...");
                 await _rconService.OfflineBanAsync(ban.IdentityId, ban.DurationSeconds, ban.Reason, false);
                 await RefreshBansAsync();
             });
         }
         else
         {
+            AppLogger.Warn($"[BansViewModel] Server rejected ban removal for #{ban.BanNumber} ({ban.IdentityId}).");
             ToastNotificationService.Instance.ShowError("Ban Removal Failed", $"Server timed out or ban #{ban.BanNumber} not found.");
         }
     }
@@ -192,7 +284,13 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         ExecuteSafe(() =>
         {
             var selected = Bans.Where(b => b.IsSelected).ToList();
-            if (selected.Count == 0) return;
+            if (selected.Count == 0)
+            {
+                AppLogger.Warn("[BansViewModel] RemoveSelectedBans called with 0 items selected.");
+                return;
+            }
+
+            AppLogger.Info($"[BansViewModel] Prompting batch removal dialog for {selected.Count} ban(s)...");
 
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Remove Selected Bans",
@@ -207,6 +305,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
     private async Task ExecuteRemoveSelectedBansAsync(List<BanModel> selected)
     {
+        using var timing = AppLogger.Measure($"BansViewModel.ExecuteRemoveSelectedBansAsync({selected.Count} bans)");
         int total = selected.Count;
         int successCount = 0;
         int failedCount = 0;
@@ -214,7 +313,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         for (int i = 0; i < total; i++)
         {
             var b = selected[i];
-            AppLogger.Info($"[BansViewModel] Sequentially removing ban {i + 1}/{total}: {b.BannedName} ({b.IdentityId})...");
+            AppLogger.Info($"[BansViewModel] Processing batch removal {i + 1}/{total}: {b.BannedName} (#{b.BanNumber}, {b.IdentityId})...");
 
             bool isSuccess = await _rconService.RemoveBanAsync(b);
             if (isSuccess)
@@ -225,11 +324,13 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             else
             {
                 failedCount++;
-                AppLogger.Warn($"[BansViewModel] Failed removing ban #{b.BanNumber} ({b.IdentityId}). Retaining in list.");
+                AppLogger.Warn($"[BansViewModel] Failed removing ban #{b.BanNumber} ({b.IdentityId}).");
             }
         }
 
         IsMultiSelectMode = false;
+        AppLogger.Info($"[BansViewModel] Batch ban removal completed (Success: {successCount}, Failed: {failedCount}).");
+
         if (failedCount == 0)
         {
             ToastNotificationService.Instance.ShowSuccess("Batch Ban Removal", $"Successfully removed all {total} ban(s).");
@@ -263,6 +364,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         if (ban == null) return;
         var text = FormatBanInfo(ban);
         await ClipboardService.SetTextAsync(text);
+        AppLogger.Debug($"[BansViewModel] Copied ban info for '{ban.BannedName}' ({ban.IdentityId}) to clipboard.");
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied ban info for {ban.BannedName}");
     });
 
@@ -276,12 +378,14 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         var text = string.Join("\n\n", formattedEntries);
 
         await ClipboardService.SetTextAsync(text);
-        ToastNotificationService.Instance.ShowToast("Clipboard", "Copied bans list to clipboard.");
+        AppLogger.Info($"[BansViewModel] Copied {selected.Count} ban entries to clipboard.");
+        ToastNotificationService.Instance.ShowToast("Clipboard", "Copied ban list to clipboard.");
     });
 
     [RelayCommand]
     private Task<bool> LoadBans() => ExecuteSafeAsync(async () =>
     {
+        AppLogger.Info("[BansViewModel] Dispatching 'loadBans' command to reload bans.txt...");
         await _rconService.SendCommandAsync("loadBans");
         ToastNotificationService.Instance.ShowToast("Load Bans", "Reloaded bans from bans.txt", "loadBans");
     });
@@ -289,6 +393,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     [RelayCommand]
     private Task<bool> WriteBans() => ExecuteSafeAsync(async () =>
     {
+        AppLogger.Info("[BansViewModel] Dispatching 'writeBans' command to persist bans.txt...");
         await _rconService.SendCommandAsync("writeBans");
         ToastNotificationService.Instance.ShowToast("Write Bans", "Saved bans to bans.txt", "writeBans");
     });

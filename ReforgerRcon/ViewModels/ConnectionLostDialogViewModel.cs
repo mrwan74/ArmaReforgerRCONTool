@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -34,19 +35,22 @@ public partial class ConnectionLostDialogViewModel(
         {
             IsReconnecting = true;
             ErrorMessage = string.Empty;
-            AppLogger.Info($"[ConnectionLostDialog] Reconnection attempt initiated to {_profile.ServerIp}:{_profile.Port}...");
+            var sw = Stopwatch.StartNew();
+            AppLogger.Info($"[ConnectionLostDialog] Reconnection attempt initiated to {_profile.ServerIp}:{_profile.Port} ({_profile.Protocol})...");
 
             var success = await _rconService.ConnectAsync(_profile);
+            sw.Stop();
+
             if (success)
             {
-                AppLogger.Info("[ConnectionLostDialog] Reconnected successfully to server.");
+                AppLogger.Info($"[ConnectionLostDialog] Reconnected successfully to server in {sw.ElapsedMilliseconds} ms.");
                 ToastNotificationService.Instance.ShowToast("Reconnected", $"Re-established connection to {_profile.ServerIp}:{_profile.Port}");
                 _onReconnected();
             }
             else
             {
                 ErrorMessage = "Failed to reconnect. The game server is still offline or unreachable.";
-                AppLogger.Warn($"[ConnectionLostDialog] Reconnection to {_profile.ServerIp}:{_profile.Port} failed.");
+                AppLogger.Warn($"[ConnectionLostDialog] Reconnection to {_profile.ServerIp}:{_profile.Port} failed after {sw.ElapsedMilliseconds} ms.");
             }
         });
         IsReconnecting = false;

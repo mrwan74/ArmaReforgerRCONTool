@@ -5,6 +5,7 @@ using ReforgerRcon.Services;
 using Sentry;
 using Sentry.Profiling;
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -84,7 +85,7 @@ internal static partial class Program
                     options.AttachStacktrace = true;
                     options.SendDefaultPii = false;
                     options.Environment = "production";
-                    options.Release = "ReforgerRcon@0.7.2";
+                    options.Release = "ReforgerRcon@0.8.2";
                 });
             }
 
@@ -93,7 +94,7 @@ internal static partial class Program
                 using (sentrySdk)
                 {
                     CrashReportService.Initialize();
-                    AppLogger.Info(string.Create(CultureInfo.InvariantCulture, $"Process started on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture}) with {args.Length} arguments. Directory lock active."));
+                    AppLogger.Info(string.Create(CultureInfo.InvariantCulture, $"Process started on {RuntimeInformation.OSDescription} ({RuntimeInformation.ProcessArchitecture}) with {args.Length} argument(s). Directory lock active."));
 
                     BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
 
@@ -195,7 +196,7 @@ internal static partial class Program
             }
             catch (Exception diskEx)
             {
-                System.Diagnostics.Debug.WriteLine($"[Program] Failed writing emergency crash to disk: {diskEx.Message}");
+                Debug.WriteLine($"[Program] Failed writing emergency crash to disk: {diskEx.Message}");
             }
         }
     }
@@ -215,9 +216,9 @@ internal static partial class Program
             {
                 _lockStream.Dispose();
             }
-            catch
+            catch (IOException ioEx)
             {
-                // Ignored during shutdown
+                Debug.WriteLine($"[Program] Lock file stream disposal notice: {ioEx.Message}");
             }
 
             try
@@ -225,9 +226,13 @@ internal static partial class Program
                 _mutex.ReleaseMutex();
                 _mutex.Dispose();
             }
-            catch
+            catch (ApplicationException appEx)
             {
-                // Ignored during shutdown
+                Debug.WriteLine($"[Program] Mutex release notice: {appEx.Message}");
+            }
+            catch (ObjectDisposedException dispEx)
+            {
+                Debug.WriteLine($"[Program] Mutex already disposed: {dispEx.Message}");
             }
         }
     }

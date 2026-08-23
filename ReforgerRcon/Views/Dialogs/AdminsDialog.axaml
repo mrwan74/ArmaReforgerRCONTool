@@ -1,0 +1,74 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:models="using:ReforgerRcon.Models"
+             x:Class="ReforgerRcon.Views.Dialogs.AdminsDialog"
+             x:DataType="vm:AdminsDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="520" MaxHeight="600" Classes="Elevated">
+    <Grid RowDefinitions="Auto,*,Auto" RowSpacing="14">
+      <!-- Header -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <icons:MaterialIcon Kind="AccountSupervisor" Width="22" Height="22" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+          <TextBlock Text="Connected RCon Admins" Classes="SectionTitle" FontSize="18" FontWeight="Bold" />
+        </StackPanel>
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" />
+      </Grid>
+
+      <!-- Admins List -->
+      <Border Grid.Row="1" Background="{DynamicResource LuminaNavigationPaneBrush}" CornerRadius="6" Padding="8">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding Admins}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="models:AdminModel">
+                <Border Background="{DynamicResource LuminaSurfaceBrush}" 
+                        BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" 
+                        BorderThickness="1" 
+                        CornerRadius="6" 
+                        Padding="12,10" 
+                        Margin="0,0,0,6">
+                  <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource LuminaPrimaryBgBrush}" Padding="6,2" CornerRadius="4">
+                      <TextBlock Text="{Binding Id, StringFormat='#{0}'}" FontWeight="Bold" FontSize="12" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+                    </Border>
+
+                    <StackPanel Grid.Column="1" Spacing="2">
+                      <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Border CornerRadius="2" ClipToBounds="True">
+                          <Image Source="{Binding Country.FlagImage}" Width="32" Height="22" Stretch="Uniform" />
+                        </Border>
+                        <TextBlock Text="{Binding FormattedEndpoint}" FontWeight="SemiBold" FontSize="13" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding Location}" Classes="Caption" FontSize="11" />
+                    </StackPanel>
+
+                    <Button Grid.Column="2" Classes="Small Ghost Icon" 
+                            Command="{Binding $parent[ItemsControl].DataContext.CopyAdminInfoCommand}" 
+                            CommandParameter="{Binding}"
+                            ToolTip.Tip="Copy Admin Details">
+                      <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+                    </Button>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+
+      <!-- Footer Buttons -->
+      <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto">
+        <Button Grid.Column="0" Classes="Outline Small" Command="{Binding LoadAdminsCommand}" lumina:LuminaButton.IsLoading="{Binding IsLoading}">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <icons:MaterialIcon Kind="Refresh" Width="13" Height="13" />
+            <TextBlock Text="Refresh Admins" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="2" Classes="Primary Small" Content="Close" Command="{Binding CloseCommand}" MinWidth="80" />
+      </Grid>
+    </Grid>
+  </lumina:LuminaCard>
+</UserControl>

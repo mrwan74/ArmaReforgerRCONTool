@@ -8,7 +8,7 @@ using ReforgerRcon.Models;
 
 namespace ReforgerRcon.Services;
 
-[SuppressMessage("Security", "S1313:IP address should not be hardcoded", Justification = "Realistic documentation/mock demonstration dataset based on actual server responses")]
+[SuppressMessage("Security", "S1313:IP address should not be hardcoded", Justification = "RFC 5737 documentation placeholder subnets for demo simulation")]
 public class MockRconService : IRconService
 {
     private ServerProfile? _currentProfile;
@@ -23,45 +23,37 @@ public class MockRconService : IRconService
 
     public event EventHandler<PlayerModel>? PlayerJoined;
     public event EventHandler<PlayerModel>? PlayerLeft;
+    public event EventHandler<(string Name, int Id, string Reason)>? PlayerKickedStream;
+    public event EventHandler<(string Name, int Id, string Guid, string Reason)>? PlayerBannedStream;
+    public event EventHandler<(int AdminId, string Endpoint)>? AdminConnectedStream;
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<string>? ConnectionLost;
 
     private static readonly (int id, string name, string uid, string guid, string ip, int port, int ping, string cc, string cn, string city, string state, bool watch, bool warn, string comment, string[] aliases)[] MockPlayers =
     [
-        (1, "Fisk", "ee6c0f99-2026-477a-84db-bad8c5f617fa", "ee6c0f992026477a84dbbad8c5f617fa", "185.150.189.205", 19999, 18, "de", "Germany", "Frankfurt", "Hesse", false, false, "Server Admin / Testing Operator", ["Fisk"]),
-        (2, "GhostNomad", "00000000-0000-4000-8000-000000000002", "00000000000040008000000000000002", "192.0.2.25", 2305, 34, "gb", "United Kingdom", "London", "Greater London", true, false, "VIP Squad Member", ["GhostNomad"]),
-        (3, "SierraMarksman", "00000000-0000-4000-8000-000000000003", "00000000000040008000000000000003", "198.51.100.33", 2304, 42, "fr", "France", "Paris", "Ile-de-France", false, false, "", ["SierraMarksman"]),
-        (4, "DeltaAviator", "00000000-0000-4000-8000-000000000004", "00000000000040008000000000000004", "198.51.100.37", 2306, 68, "ca", "Canada", "Montreal", "Quebec", false, false, "Dedicated Transport Pilot", ["DeltaAviator"]),
-        (5, "EchoOperator", "00000000-0000-4000-8000-000000000005", "00000000000040008000000000000005", "203.0.113.38", 2304, 115, "au", "Australia", "Sydney", "NSW", true, true, "Watchlisted: Frequent team-damage alerts", ["EchoOperator", "Echo_OldCallsign"]),
-        (6, "SGT. Goof (Romeo 1-6)", "53aefc9c-112d-433c-a735-1f0a182a6497", "53aefc9c112d433ca7351f0a182a6497", "192.0.2.48", 2307, 45, "us", "United States", "Dallas", "Texas", false, false, "Clan Officer", ["SGT. Goof (Romeo 1-6)"]),
-        (7, "KiloTactical", "00000000-0000-4000-8000-000000000007", "00000000000040008000000000000007", "198.51.100.22", 2304, 22, "jp", "Japan", "Tokyo", "Tokyo", true, false, "Verified Clan Member", ["KiloTactical", "Kilo_Alt"]),
-        (8, "TangoGunner", "00000000-0000-4000-8000-000000000008", "00000000000040008000000000000008", "203.0.113.50", 60464, 25, "us", "United States", "Chicago", "Illinois", false, false, "Regular Infantry", ["TangoGunner"])
+        (1, "VanguardLead", "00000000-0000-4000-8000-000000000001", "00000000000040008000000000000001", "192.0.2.10", 2304, 18, "de", "Germany", "Frankfurt", "Hesse", false, false, "Server Administrator / Test Operator", ["VanguardLead"]),
+        (2, "ShadowRecon", "00000000-0000-4000-8000-000000000002", "00000000000040008000000000000002", "192.0.2.25", 2305, 34, "gb", "United Kingdom", "London", "Greater London", true, false, "Squad Leader", ["ShadowRecon", "Shadow_Old"]),
+        (3, "SierraMarksman", "00000000-0000-4000-8000-000000000003", "00000000000040008000000000000003", "198.51.100.33", 2304, 42, "fr", "France", "Paris", "Ile-de-France", false, false, "Dedicated Sniper", ["SierraMarksman"]),
+        (4, "DeltaAviator", "00000000-0000-4000-8000-000000000004", "00000000000040008000000000000004", "198.51.100.37", 2306, 68, "ca", "Canada", "Montreal", "Quebec", false, false, "Rotary Wing Transport Pilot", ["DeltaAviator"]),
+        (5, "EchoOperator", "00000000-0000-4000-8000-000000000005", "00000000000040008000000000000005", "203.0.113.38", 2304, 115, "au", "Australia", "Sydney", "NSW", true, true, "Watchlisted: Frequent team-damage alerts", ["EchoOperator", "Echo_Alt"]),
+        (6, "ApexGunner", "00000000-0000-4000-8000-000000000006", "00000000000040008000000000000006", "192.0.2.48", 2307, 45, "us", "United States", "Dallas", "Texas", false, false, "Regular Infantry", ["ApexGunner"]),
+        (7, "KiloTactical", "00000000-0000-4000-8000-000000000007", "00000000000040008000000000000007", "198.51.100.22", 2304, 22, "jp", "Japan", "Tokyo", "Tokyo", true, false, "Verified Clan Member", ["KiloTactical"]),
+        (8, "Ironclad_99", "00000000-0000-4000-8000-000000000008", "00000000000040008000000000000008", "203.0.113.50", 60464, 25, "us", "United States", "Chicago", "Illinois", false, false, "Heavy Armor Operator", ["Ironclad_99"])
     ];
 
     private static readonly (string identity, string name, string reason, long durationSeconds)[] MockServerBans =
     [
-        ("6f656069-2df8-4d5b-972e-03d1a572433d", "Q8K0", "Griefing friendly base structures", 0),
-        ("5c64d8fc-8137-4eeb-9a1d-3eb09f48b94a", "WoollenFlame386", "Terrain collision clipping / Map exploit", 604800),
-        ("f022535d-79bf-4953-bc3b-c9321bc4b8d7", "doucey", "Third-party memory modification", 0),
-        ("5a7d8533-1ba2-4c75-91f8-86e95da4bc74", "smlynch01", "Severe toxicity in side voice channel", 86400),
-        ("4f57acec-cd9a-43f3-9adc-c8ea4d337b8d", "Th3_Dr_Lovee", "Automated chat advertisement spam", 0),
-        ("ac1f506e-4475-4a43-99dd-60b873220b28", "Superbad3995", "Intentional spawn teamkilling", 259200),
-        ("c52b0e19-d51b-484c-85f4-c541b3266fcf", "TheEl Mayo87", "Asset duplication exploit", 2592000),
-        ("f73a4891-c27d-4791-b1be-384d713d16d6", "ATL02Batch", "Targeted stream sniping", 604800),
-        ("1cb6c796-05be-4b73-9716-ec9048badd0c", "DL40", "Destroying friendly logistics trucks", 86400),
-        ("0e0b14ae-73b5-4b49-91c6-ff43865019b5", "Kilodub9", "Server rule #3 violation", 0),
-        ("52f6e089-df67-4fe4-8c58-aa1a04375f36", "жопа", "Toxic name & chat abuse", 0),
-        ("60afdb01-fca6-4c85-b7e4-c2ea3879a547", "The Prophet", "Continuous audio spam in radio", 21600),
-        ("6939078b-eb67-434e-bf18-75cdd6b2875c", "DoubleTT", "Ban evasion attempt", 0),
-        ("fe8ed53b-94a5-4152-8805-2764b325cea2", "Rae Lil Black", "Inappropriate behavior", 0),
-        ("a3a5e205-c051-46f9-a39b-65eb380aa54e", "red_rav3n", "Rule #4 violation", 0),
-        ("35d3ca07-763b-491d-a5d2-ec8f9746882c", "SAFE T GUY", "Asset griefing", 0),
-        ("8811d91d-63f4-400f-b3e8-b3554f744bde", "guljian", "Teamkill exploit", 0),
-        ("de5ba0e4-5c47-433b-80f2-60fb708155af", "ChaseAlottatail", "Excessive verbal harassment", 0),
-        ("3f3c6905-f79b-424b-b3ec-a386f487c3c8", "Blue CrawDaddy", "Trolling main spawns", 0),
-        ("188e7996-b8e3-4dcc-9075-5cfeec82ac49", "CURRY306441", "Rule violation", 0),
-        ("b1c55f85-8e13-4b40-a66b-4c42057f4edf", "Josh", "Disruptive gameplay", 0),
-        ("764f2227-640b-48cf-93b5-d53ec9e7b60b", "Gooberman", "Intentional server crash attempt", 0)
+        ("a0000001-0000-4000-8000-000000000001", "GriefingTarget_1", "Intentional friendly base structure destruction", 0),
+        ("a0000002-0000-4000-8000-000000000002", "ExploitUser_2", "Terrain collision clipping / Map geometry exploit", 604800),
+        ("a0000003-0000-4000-8000-000000000003", "MemoryMod_3", "Third-party memory modification / Unofficial DLL injection", 0),
+        ("a0000004-0000-4000-8000-000000000004", "ToxicityTarget_4", "Excessive verbal toxicity in side radio channel", 86400),
+        ("a0000005-0000-4000-8000-000000000005", "SpamBot_5", "Automated chat advertisement spamming", 0),
+        ("a0000006-0000-4000-8000-000000000006", "SpawnKiller_6", "Intentional main base spawn teamkilling", 259200),
+        ("a0000007-0000-4000-8000-000000000007", "AssetDupe_7", "Logistics asset duplication glitching", 2592000),
+        ("a0000008-0000-4000-8000-000000000008", "StreamSniper_8", "Targeted stream sniping / Disruptive gameplay", 604800),
+        ("a0000009-0000-4000-8000-000000000009", "VehicleTheft_9", "Stealing friendly transport trucks from main spawn", 86400),
+        ("a0000010-0000-4000-8000-000000000010", "AudioSpam_10", "Continuous mic audio spamming over global channel", 21600),
+        ("a0000011-0000-4000-8000-000000000011", "BanEvader_11", "Ban evasion attempt / Alternate account", 0)
     ];
 
     public MockRconService()
@@ -119,9 +111,9 @@ public class MockRconService : IRconService
 
         await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players);
 
-        if (_players.Count > 0)
+        if (profile.Protocol == RconProtocol.BattlEye)
         {
-            PlayerJoined?.Invoke(this, _players[0]);
+            AdminConnectedStream?.Invoke(this, (0, "127.0.0.1:5353"));
         }
 
         return true;
@@ -141,6 +133,18 @@ public class MockRconService : IRconService
         ConnectionLost?.Invoke(this, "Connection timed out (No packets received)");
     }
 
+    public void SimulatePlayerJoin(PlayerModel player)
+    {
+        _players.Add(player);
+        PlayerJoined?.Invoke(this, player);
+    }
+
+    public void SimulatePlayerLeave(PlayerModel player)
+    {
+        _players.Remove(player);
+        PlayerLeft?.Invoke(this, player);
+    }
+
     public async Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -156,6 +160,16 @@ public class MockRconService : IRconService
         return Task.FromResult(_bans.ToList());
     }
 
+    public Task<List<AdminModel>> GetAdminsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new List<AdminModel>
+        {
+            new() { Id = 0, Ip = "127.0.0.1", Port = 5353, Country = new CountryInfo { Code = "us", Name = "United States" }, Location = "Localhost Admin" },
+            new() { Id = 1, Ip = "192.0.2.55", Port = 6124, Country = new CountryInfo { Code = "de", Name = "Germany" }, Location = "Frankfurt, Germany" }
+        });
+    }
+
     public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync();
 
     public Task<bool> KickPlayerAsync(PlayerModel player, string reason, CancellationToken cancellationToken = default)
@@ -166,10 +180,16 @@ public class MockRconService : IRconService
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         OutputReceived?.Invoke(this, $"[RCON IN] Player '{player.Name}' kicked!");
         PlayerLeft?.Invoke(this, player);
+        PlayerKickedStream?.Invoke(this, (player.Name, player.Id, reason));
         return Task.FromResult(true);
     }
 
     public Task<bool> BanPlayerAsync(PlayerModel player, long durationSeconds, string reason, CancellationToken cancellationToken = default)
+    {
+        return BanPlayerWithOptionalIpAsync(player, durationSeconds, reason, banIp: true, cancellationToken);
+    }
+
+    public Task<bool> BanPlayerWithOptionalIpAsync(PlayerModel player, long durationSeconds, string reason, bool banIp, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _players.Remove(player);
@@ -184,10 +204,11 @@ public class MockRconService : IRconService
         };
         _bans.Add(ban);
 
-        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {player.Id} {durationSeconds} {reason}" : $"addBan {player.Guid} {durationSeconds / 60} {reason}";
+        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {player.Id} {durationSeconds} {reason}" : $"ban {player.Id} {durationSeconds / 60} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         OutputReceived?.Invoke(this, $"[RCON IN] Ban added for {player.Name}.");
         PlayerLeft?.Invoke(this, player);
+        PlayerBannedStream?.Invoke(this, (player.Name, player.Id, player.Guid, reason));
         return Task.FromResult(true);
     }
 

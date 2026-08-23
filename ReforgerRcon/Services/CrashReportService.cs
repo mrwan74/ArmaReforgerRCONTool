@@ -229,10 +229,11 @@ public static partial class CrashReportService
                     try
                     {
                         UnhandledErrorCaptured?.Invoke(report);
-                        ToastNotificationService.Instance.ShowToast(
-                            $"System Alert [{crashId}]",
+                        SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+                        ToastNotificationService.Instance.ShowError(
+                            $"System Fault [{crashId}]",
                             $"{demystifiedEx.GetType().Name}: {demystifiedEx.Message}",
-                            "CRASH_DUMP"
+                            "CRASH_DIAGNOSTIC"
                         );
                     }
                     catch (Exception dispatchEx)

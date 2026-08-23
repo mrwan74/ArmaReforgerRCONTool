@@ -30,7 +30,6 @@ public static class PlayerDatabaseStorageService
 
     private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
     private static readonly string DatabaseFile = Path.Combine(StorageDirectory, "player_database.db");
-    private static readonly string LegacyJsonFile = Path.Combine(StorageDirectory, "player_database.json");
     private static readonly string ConnectionString = $"Data Source={DatabaseFile};Cache=Shared;Mode=ReadWriteCreate;";
 
     private static readonly SemaphoreSlim DbLock = new(1, 1);
@@ -45,24 +44,26 @@ public static class PlayerDatabaseStorageService
         {
             if (_isInitialized) return;
 
-            using var op = Operation.Begin("Initialize SQLite Database Schema at {DatabaseFile}", DatabaseFile);
+            using var timing = AppLogger.Measure("PlayerDatabaseStorageService.InitializeAsync");
+            using var op = Operation.Begin("Initialize SQLite Database Engine at {DatabaseFile}", DatabaseFile);
             AppLogger.Info($"[PlayerDatabase] Initializing SQLite database engine at '{DatabaseFile}'...");
 
             if (!Directory.Exists(StorageDirectory))
             {
                 Directory.CreateDirectory(StorageDirectory);
+                AppLogger.Debug($"[PlayerDatabase] Created storage directory: {StorageDirectory}");
             }
 
             await using var connection = new SqliteConnection(ConnectionString);
             await connection.OpenAsync();
+            AppLogger.Debug($"[PlayerDatabase] Connection opened successfully. Server version: {connection.ServerVersion}");
 
             await ExecutePragmasAsync(connection);
             await CreateSchemaAsync(connection);
 
             _isInitialized = true;
             op.Complete();
-
-            await CheckAndMigrateLegacyJsonAsync(connection);
+            AppLogger.Info("[PlayerDatabase] SQLite engine initialization completed.");
         }
         catch (SqliteException sqlEx)
         {
@@ -92,18 +93,20 @@ public static class PlayerDatabaseStorageService
             PRAGMA temp_store = MEMORY;
         ";
 
+        using var timing = AppLogger.Measure("PlayerDatabaseStorageService.ExecutePragmas");
         await using var command = connection.CreateCommand();
         command.CommandText = pragmaSql;
         await command.ExecuteNonQueryAsync();
-        AppLogger.Debug("[PlayerDatabase] Applied WAL mode and performance PRAGMAs to SQLite connection.");
+        AppLogger.Debug("[PlayerDatabase] Applied WAL mode and performance PRAGMAs.");
     }
 
     private static async Task CreateSchemaAsync(SqliteConnection connection)
     {
         const string schemaSql = @"
             CREATE TABLE IF NOT EXISTS Players (
-                Uid TEXT PRIMARY KEY NOT NULL,
-                Guid TEXT NOT NULL DEFAULT '',
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ReforgerUid TEXT NOT NULL DEFAULT '',
+                BattlEyeGuid TEXT NOT NULL DEFAULT '',
                 Name TEXT NOT NULL,
                 LastIp TEXT NOT NULL DEFAULT '127.0.0.1',
                 LastPort INTEGER NOT NULL DEFAULT 2304,
@@ -112,166 +115,52 @@ public static class PlayerDatabaseStorageService
                 Comment TEXT NOT NULL DEFAULT '',
                 IsWatchlisted INTEGER NOT NULL DEFAULT 0,
                 HasAliases INTEGER NOT NULL DEFAULT 0,
-                CountryCode TEXT NOT NULL DEFAULT 'un',
+                CountryCode TEXT NOT NULL DEFAULT 'xx',
                 CountryName TEXT NOT NULL DEFAULT 'Unknown Region',
                 Location TEXT NOT NULL DEFAULT '',
+                TimeZone TEXT NOT NULL DEFAULT '',
                 FirstSeenUtc TEXT NOT NULL,
                 LastSeenUtc TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS PlayerAliases (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                PlayerUid TEXT NOT NULL,
+                PlayerId INTEGER NOT NULL,
                 AliasName TEXT NOT NULL,
                 FirstSeenUtc TEXT NOT NULL,
                 LastSeenUtc TEXT NOT NULL,
-                FOREIGN KEY (PlayerUid) REFERENCES Players(Uid) ON DELETE CASCADE,
-                UNIQUE(PlayerUid, AliasName)
+                FOREIGN KEY (PlayerId) REFERENCES Players(Id) ON DELETE CASCADE,
+                UNIQUE(PlayerId, AliasName)
             );
 
             CREATE INDEX IF NOT EXISTS IX_Players_Name ON Players(Name COLLATE NOCASE);
-            CREATE INDEX IF NOT EXISTS IX_Players_Guid ON Players(Guid);
+            CREATE INDEX IF NOT EXISTS IX_Players_ReforgerUid ON Players(ReforgerUid);
+            CREATE INDEX IF NOT EXISTS IX_Players_BattlEyeGuid ON Players(BattlEyeGuid);
             CREATE INDEX IF NOT EXISTS IX_Players_LastSeenUtc ON Players(LastSeenUtc);
             CREATE INDEX IF NOT EXISTS IX_Players_IsWatchlisted ON Players(IsWatchlisted);
             CREATE INDEX IF NOT EXISTS IX_Players_IsOnline ON Players(IsOnline);
-            CREATE INDEX IF NOT EXISTS IX_PlayerAliases_PlayerUid ON PlayerAliases(PlayerUid);
+            CREATE INDEX IF NOT EXISTS IX_PlayerAliases_PlayerId ON PlayerAliases(PlayerId);
             CREATE INDEX IF NOT EXISTS IX_PlayerAliases_AliasName ON PlayerAliases(AliasName COLLATE NOCASE);
         ";
 
+        using var timing = AppLogger.Measure("PlayerDatabaseStorageService.CreateSchema");
         await using var command = connection.CreateCommand();
         command.CommandText = schemaSql;
         await command.ExecuteNonQueryAsync();
-        AppLogger.Info("[PlayerDatabase] SQLite tables, relational foreign keys, and indexes verified.");
-    }
-
-    private static async Task CheckAndMigrateLegacyJsonAsync(SqliteConnection connection)
-    {
-        if (!File.Exists(LegacyJsonFile)) return;
-
-        var transaction = SentrySdk.StartTransaction("MigrateLegacyJsonToSqlite", "db.migration");
-        using var op = Operation.Begin("Migrate legacy JSON player records to SQLite database");
-
-        try
-        {
-            AppLogger.Info($"[PlayerDatabase] Legacy database file detected at '{LegacyJsonFile}'. Starting automated data migration...");
-            var json = await File.ReadAllTextAsync(LegacyJsonFile);
-            var legacyList = JsonSerializer.Deserialize<List<DatabasePlayerModel>>(json) ?? [];
-
-            if (legacyList.Count > 0)
-            {
-                await using var dbTransaction = await connection.BeginTransactionAsync();
-                try
-                {
-                    int importedCount = 0;
-                    foreach (var player in legacyList)
-                    {
-                        var uid = !string.IsNullOrWhiteSpace(player.Uid)
-                            ? player.Uid.Trim()
-                            : (player.Guid?.Trim() ?? string.Empty);
-
-                        if (string.IsNullOrWhiteSpace(uid)) continue;
-
-                        const string upsertSql = @"
-                            INSERT INTO Players (
-                                Uid, Guid, Name, LastIp, LastPort, Ping, IsOnline, Comment,
-                                IsWatchlisted, HasAliases, CountryCode, CountryName, Location,
-                                FirstSeenUtc, LastSeenUtc
-                            ) VALUES (
-                                @Uid, @Guid, @Name, @LastIp, @LastPort, @Ping, @IsOnline, @Comment,
-                                @IsWatchlisted, @HasAliases, @CountryCode, @CountryName, @Location,
-                                @FirstSeenUtc, @LastSeenUtc
-                            )
-                            ON CONFLICT(Uid) DO UPDATE SET
-                                Name = excluded.Name,
-                                Comment = CASE WHEN excluded.Comment <> '' THEN excluded.Comment ELSE Players.Comment END,
-                                IsWatchlisted = excluded.IsWatchlisted,
-                                HasAliases = excluded.HasAliases,
-                                CountryCode = excluded.CountryCode,
-                                CountryName = excluded.CountryName,
-                                Location = excluded.Location,
-                                LastSeenUtc = excluded.LastSeenUtc;
-                        ";
-
-                        await using (var cmd = connection.CreateCommand())
-                        {
-                            cmd.Transaction = (SqliteTransaction)dbTransaction;
-                            cmd.CommandText = upsertSql;
-                            cmd.Parameters.AddWithValue("@Uid", uid);
-                            cmd.Parameters.AddWithValue("@Guid", player.Guid ?? string.Empty);
-                            cmd.Parameters.AddWithValue("@Name", player.Name ?? "Unknown Player");
-                            cmd.Parameters.AddWithValue("@LastIp", player.LastIp ?? "127.0.0.1");
-                            cmd.Parameters.AddWithValue("@LastPort", player.LastPort);
-                            cmd.Parameters.AddWithValue("@Ping", player.Ping);
-                            cmd.Parameters.AddWithValue("@IsOnline", player.IsOnline ? 1 : 0);
-                            cmd.Parameters.AddWithValue("@Comment", player.Comment ?? string.Empty);
-                            cmd.Parameters.AddWithValue("@IsWatchlisted", player.IsWatchlisted ? 1 : 0);
-                            cmd.Parameters.AddWithValue("@HasAliases", player.Aliases is { Count: > 0 } ? 1 : 0);
-                            cmd.Parameters.AddWithValue("@CountryCode", player.Country?.Code ?? "un");
-                            cmd.Parameters.AddWithValue("@CountryName", player.Country?.Name ?? "Unknown Region");
-                            cmd.Parameters.AddWithValue("@Location", player.Location ?? string.Empty);
-                            cmd.Parameters.AddWithValue("@FirstSeenUtc", player.LastSeen.ToString("o", CultureInfo.InvariantCulture));
-                            cmd.Parameters.AddWithValue("@LastSeenUtc", player.LastSeen.ToString("o", CultureInfo.InvariantCulture));
-                            await cmd.ExecuteNonQueryAsync();
-                        }
-
-                        if (player.Aliases is { Count: > 0 })
-                        {
-                            foreach (var alias in player.Aliases.Where(a => !string.IsNullOrWhiteSpace(a)))
-                            {
-                                const string aliasSql = @"
-                                    INSERT OR IGNORE INTO PlayerAliases (PlayerUid, AliasName, FirstSeenUtc, LastSeenUtc)
-                                    VALUES (@PlayerUid, @AliasName, @FirstSeenUtc, @LastSeenUtc);
-                                ";
-                                await using var aliasCmd = connection.CreateCommand();
-                                aliasCmd.Transaction = (SqliteTransaction)dbTransaction;
-                                aliasCmd.CommandText = aliasSql;
-                                aliasCmd.Parameters.AddWithValue("@PlayerUid", uid);
-                                aliasCmd.Parameters.AddWithValue("@AliasName", alias.Trim());
-                                aliasCmd.Parameters.AddWithValue("@FirstSeenUtc", player.LastSeen.ToString("o", CultureInfo.InvariantCulture));
-                                aliasCmd.Parameters.AddWithValue("@LastSeenUtc", player.LastSeen.ToString("o", CultureInfo.InvariantCulture));
-                                await aliasCmd.ExecuteNonQueryAsync();
-                            }
-                        }
-
-                        importedCount++;
-                    }
-
-                    await dbTransaction.CommitAsync();
-                    AppLogger.Info($"[PlayerDatabase] Successfully migrated {importedCount} historical records from JSON into SQLite.");
-                }
-                catch (Exception txEx)
-                {
-                    await dbTransaction.RollbackAsync();
-                    AppLogger.Error("[PlayerDatabase] Rollback during legacy JSON migration due to transaction fault.", txEx);
-                    throw;
-                }
-            }
-
-            var backupFile = $"{LegacyJsonFile}.bak";
-            if (File.Exists(backupFile))
-            {
-                File.Delete(backupFile);
-            }
-            File.Move(LegacyJsonFile, backupFile);
-            AppLogger.Info($"[PlayerDatabase] Renamed legacy '{LegacyJsonFile}' to '{backupFile}'.");
-
-            op.Complete("MigratedCount", legacyList.Count);
-            transaction.Finish(SpanStatus.Ok);
-        }
-        catch (Exception ex)
-        {
-            transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase] Failed migrating legacy JSON file '{LegacyJsonFile}' to SQLite database.", ex);
-        }
+        AppLogger.Info("[PlayerDatabase] Unified SQLite schema verified and indexed.");
     }
 
     public static async Task RecordSeenPlayersAsync(IEnumerable<PlayerModel> activePlayers)
     {
         await InitializeAsync();
         var playersList = activePlayers.ToList();
-        if (playersList.Count == 0) return;
+        if (playersList.Count == 0)
+        {
+            AppLogger.Trace("[PlayerDatabase] RecordSeenPlayersAsync called with 0 players. Skipped.");
+            return;
+        }
 
-        var sw = Stopwatch.StartNew();
+        using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.RecordSeenPlayersAsync({playersList.Count} players)");
         await DbLock.WaitAsync();
 
         try
@@ -280,82 +169,131 @@ public static class PlayerDatabaseStorageService
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
+            int insertedCount = 0;
+            int updatedCount = 0;
+            int aliasCount = 0;
+
             try
             {
                 var nowUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 
                 foreach (var player in playersList)
                 {
-                    var uid = !string.IsNullOrWhiteSpace(player.Uid)
-                        ? player.Uid.Trim()
-                        : (player.Guid?.Trim() ?? string.Empty);
+                    string reforgerUid = player.ReforgerUid;
+                    string beGuid = player.BattlEyeGuid;
 
-                    if (string.IsNullOrWhiteSpace(uid)) continue;
+                    if (string.IsNullOrWhiteSpace(reforgerUid) && !string.IsNullOrWhiteSpace(player.Uid) && player.Uid.Length == 36 && player.Uid.Contains('-'))
+                    {
+                        reforgerUid = player.Uid.Trim();
+                    }
 
-                    string? existingName = null;
-                    string? existingComment = null;
+                    if (string.IsNullOrWhiteSpace(beGuid) && !string.IsNullOrWhiteSpace(player.Guid) && player.Guid.Length == 32 && !player.Guid.Contains('-'))
+                    {
+                        beGuid = player.Guid.Trim();
+                    }
+                    else if (string.IsNullOrWhiteSpace(beGuid) && !string.IsNullOrWhiteSpace(player.Uid) && player.Uid.Length == 32 && !player.Uid.Contains('-'))
+                    {
+                        beGuid = player.Uid.Trim();
+                    }
+
+                    if (string.IsNullOrWhiteSpace(reforgerUid) && string.IsNullOrWhiteSpace(beGuid) && string.IsNullOrWhiteSpace(player.Name))
+                    {
+                        AppLogger.Warn($"[PlayerDatabase] Skipping unidentifiable player row (ID: #{player.Id}).");
+                        continue;
+                    }
+
+                    int existingDbId = 0;
+                    string existingName = string.Empty;
+                    string existingComment = string.Empty;
                     bool existingWatchlisted = false;
+                    string existingReforgerUid = string.Empty;
+                    string existingBeGuid = string.Empty;
 
-                    const string queryExistingSql = "SELECT Name, Comment, IsWatchlisted FROM Players WHERE Uid = @Uid LIMIT 1;";
+                    const string findExistingSql = @"
+                        SELECT Id, Name, Comment, IsWatchlisted, ReforgerUid, BattlEyeGuid 
+                        FROM Players 
+                        WHERE (@ReforgerUid <> '' AND ReforgerUid = @ReforgerUid)
+                           OR (@BattlEyeGuid <> '' AND BattlEyeGuid = @BattlEyeGuid)
+                           OR (Name = @Name AND @Name <> '')
+                        ORDER BY 
+                           CASE WHEN (@ReforgerUid <> '' AND ReforgerUid = @ReforgerUid) THEN 1
+                                WHEN (@BattlEyeGuid <> '' AND BattlEyeGuid = @BattlEyeGuid) THEN 2
+                                ELSE 3 END
+                        LIMIT 1;
+                    ";
+
                     await using (var checkCmd = connection.CreateCommand())
                     {
                         checkCmd.Transaction = (SqliteTransaction)transaction;
-                        checkCmd.CommandText = queryExistingSql;
-                        checkCmd.Parameters.AddWithValue("@Uid", uid);
+                        checkCmd.CommandText = findExistingSql;
+                        checkCmd.Parameters.AddWithValue("@ReforgerUid", reforgerUid);
+                        checkCmd.Parameters.AddWithValue("@BattlEyeGuid", beGuid);
+                        checkCmd.Parameters.AddWithValue("@Name", player.Name);
+
                         await using var reader = await checkCmd.ExecuteReaderAsync();
                         if (await reader.ReadAsync())
                         {
-                            existingName = reader.IsDBNull(0) ? null : reader.GetString(0);
-                            existingComment = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
-                            existingWatchlisted = !reader.IsDBNull(2) && reader.GetInt32(2) == 1;
+                            existingDbId = reader.GetInt32(0);
+                            existingName = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                            existingComment = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                            existingWatchlisted = !reader.IsDBNull(3) && reader.GetInt32(3) == 1;
+                            existingReforgerUid = reader.IsDBNull(4) ? string.Empty : reader.GetString(4);
+                            existingBeGuid = reader.IsDBNull(5) ? string.Empty : reader.GetString(5);
                         }
                     }
 
-                    if (existingName != null)
+                    if (existingDbId > 0)
                     {
                         bool nameChanged = !string.IsNullOrWhiteSpace(player.Name) && !string.Equals(existingName, player.Name, StringComparison.Ordinal);
 
-                        if (nameChanged)
+                        if (nameChanged && !string.IsNullOrWhiteSpace(existingName))
                         {
                             const string insertAliasSql = @"
-                                INSERT INTO PlayerAliases (PlayerUid, AliasName, FirstSeenUtc, LastSeenUtc)
-                                VALUES (@PlayerUid, @AliasName, @NowUtc, @NowUtc)
-                                ON CONFLICT(PlayerUid, AliasName) DO UPDATE SET LastSeenUtc = excluded.LastSeenUtc;
+                                INSERT INTO PlayerAliases (PlayerId, AliasName, FirstSeenUtc, LastSeenUtc)
+                                VALUES (@PlayerId, @AliasName, @NowUtc, @NowUtc)
+                                ON CONFLICT(PlayerId, AliasName) DO UPDATE SET LastSeenUtc = excluded.LastSeenUtc;
                             ";
 
                             await using var aliasCmd = connection.CreateCommand();
                             aliasCmd.Transaction = (SqliteTransaction)transaction;
                             aliasCmd.CommandText = insertAliasSql;
-                            aliasCmd.Parameters.AddWithValue("@PlayerUid", uid);
+                            aliasCmd.Parameters.AddWithValue("@PlayerId", existingDbId);
                             aliasCmd.Parameters.AddWithValue("@AliasName", existingName);
                             aliasCmd.Parameters.AddWithValue("@NowUtc", nowUtc);
                             await aliasCmd.ExecuteNonQueryAsync();
 
-                            AppLogger.Info($"[PlayerDatabase] Name change detected for player {uid}: '{existingName}' -> '{player.Name}'. Recorded in aliases.");
+                            aliasCount++;
+                            AppLogger.Info($"[PlayerDatabase] Name change detected for DB ID #{existingDbId}: '{existingName}' -> '{player.Name}'. Alias recorded.");
                         }
+
+                        var mergedReforgerUid = !string.IsNullOrWhiteSpace(reforgerUid) ? reforgerUid : existingReforgerUid;
+                        var mergedBeGuid = !string.IsNullOrWhiteSpace(beGuid) ? beGuid : existingBeGuid;
 
                         const string updateSql = @"
                             UPDATE Players SET
-                                Guid = CASE WHEN @Guid <> '' THEN @Guid ELSE Guid END,
+                                ReforgerUid = @ReforgerUid,
+                                BattlEyeGuid = @BattlEyeGuid,
                                 Name = @Name,
-                                LastIp = @LastIp,
-                                LastPort = @LastPort,
-                                Ping = @Ping,
+                                LastIp = CASE WHEN @LastIp <> '127.0.0.1' AND @LastIp <> 'N/A' THEN @LastIp ELSE LastIp END,
+                                LastPort = CASE WHEN @LastPort > 0 THEN @LastPort ELSE LastPort END,
+                                Ping = CASE WHEN @Ping > 0 THEN @Ping ELSE Ping END,
                                 IsOnline = 1,
-                                CountryCode = @CountryCode,
-                                CountryName = @CountryName,
-                                Location = @Location,
+                                CountryCode = CASE WHEN @CountryCode <> 'xx' THEN @CountryCode ELSE CountryCode END,
+                                CountryName = CASE WHEN @CountryName <> 'Unknown Region' THEN @CountryName ELSE CountryName END,
+                                Location = CASE WHEN @Location <> '' AND @Location <> 'Unknown Region' THEN @Location ELSE Location END,
+                                TimeZone = CASE WHEN @TimeZone <> '' THEN @TimeZone ELSE TimeZone END,
                                 HasAliases = CASE WHEN @NameChanged = 1 THEN 1 ELSE HasAliases END,
                                 LastSeenUtc = @LastSeenUtc
-                            WHERE Uid = @Uid;
+                            WHERE Id = @Id;
                         ";
 
                         await using (var updateCmd = connection.CreateCommand())
                         {
                             updateCmd.Transaction = (SqliteTransaction)transaction;
                             updateCmd.CommandText = updateSql;
-                            updateCmd.Parameters.AddWithValue("@Uid", uid);
-                            updateCmd.Parameters.AddWithValue("@Guid", player.Guid ?? string.Empty);
+                            updateCmd.Parameters.AddWithValue("@Id", existingDbId);
+                            updateCmd.Parameters.AddWithValue("@ReforgerUid", mergedReforgerUid);
+                            updateCmd.Parameters.AddWithValue("@BattlEyeGuid", mergedBeGuid);
                             updateCmd.Parameters.AddWithValue("@Name", player.Name);
                             updateCmd.Parameters.AddWithValue("@LastIp", player.Ip);
                             updateCmd.Parameters.AddWithValue("@LastPort", player.Port);
@@ -363,28 +301,32 @@ public static class PlayerDatabaseStorageService
                             updateCmd.Parameters.AddWithValue("@CountryCode", player.Country.Code);
                             updateCmd.Parameters.AddWithValue("@CountryName", player.Country.Name);
                             updateCmd.Parameters.AddWithValue("@Location", player.DisplayLocation);
+                            updateCmd.Parameters.AddWithValue("@TimeZone", player.TimeZone);
                             updateCmd.Parameters.AddWithValue("@NameChanged", nameChanged ? 1 : 0);
                             updateCmd.Parameters.AddWithValue("@LastSeenUtc", nowUtc);
                             await updateCmd.ExecuteNonQueryAsync();
                         }
 
-                        player.Comment = existingComment ?? string.Empty;
+                        player.ReforgerUid = mergedReforgerUid;
+                        player.BattlEyeGuid = mergedBeGuid;
+                        player.Comment = existingComment;
                         player.IsWatchlisted = existingWatchlisted;
 
-                        var aliases = await GetAliasesForPlayerInternalAsync(connection, (SqliteTransaction)transaction, uid);
+                        var aliases = await GetAliasesForPlayerIdInternalAsync(connection, (SqliteTransaction)transaction, existingDbId);
                         player.Aliases = aliases;
                         player.HasAliases = aliases.Count > 0;
+                        updatedCount++;
                     }
                     else
                     {
                         const string insertSql = @"
                             INSERT INTO Players (
-                                Uid, Guid, Name, LastIp, LastPort, Ping, IsOnline, Comment,
-                                IsWatchlisted, HasAliases, CountryCode, CountryName, Location,
+                                ReforgerUid, BattlEyeGuid, Name, LastIp, LastPort, Ping, IsOnline, Comment,
+                                IsWatchlisted, HasAliases, CountryCode, CountryName, Location, TimeZone,
                                 FirstSeenUtc, LastSeenUtc
                             ) VALUES (
-                                @Uid, @Guid, @Name, @LastIp, @LastPort, @Ping, 1, @Comment,
-                                @IsWatchlisted, 0, @CountryCode, @CountryName, @Location,
+                                @ReforgerUid, @BattlEyeGuid, @Name, @LastIp, @LastPort, @Ping, 1, @Comment,
+                                @IsWatchlisted, 0, @CountryCode, @CountryName, @Location, @TimeZone,
                                 @NowUtc, @NowUtc
                             );
                         ";
@@ -392,8 +334,8 @@ public static class PlayerDatabaseStorageService
                         await using var insertCmd = connection.CreateCommand();
                         insertCmd.Transaction = (SqliteTransaction)transaction;
                         insertCmd.CommandText = insertSql;
-                        insertCmd.Parameters.AddWithValue("@Uid", uid);
-                        insertCmd.Parameters.AddWithValue("@Guid", player.Guid ?? string.Empty);
+                        insertCmd.Parameters.AddWithValue("@ReforgerUid", reforgerUid);
+                        insertCmd.Parameters.AddWithValue("@BattlEyeGuid", beGuid);
                         insertCmd.Parameters.AddWithValue("@Name", player.Name);
                         insertCmd.Parameters.AddWithValue("@LastIp", player.Ip);
                         insertCmd.Parameters.AddWithValue("@LastPort", player.Port);
@@ -403,16 +345,17 @@ public static class PlayerDatabaseStorageService
                         insertCmd.Parameters.AddWithValue("@CountryCode", player.Country.Code);
                         insertCmd.Parameters.AddWithValue("@CountryName", player.Country.Name);
                         insertCmd.Parameters.AddWithValue("@Location", player.DisplayLocation);
+                        insertCmd.Parameters.AddWithValue("@TimeZone", player.TimeZone);
                         insertCmd.Parameters.AddWithValue("@NowUtc", nowUtc);
                         await insertCmd.ExecuteNonQueryAsync();
 
-                        AppLogger.Info($"[PlayerDatabase] Inserted new player record into SQLite: {player.Name} (UID: {uid})");
+                        insertedCount++;
+                        AppLogger.Info($"[PlayerDatabase] Inserted new unified player record: '{player.Name}' (ReforgerUID: '{reforgerUid}', BE-GUID: '{beGuid}')");
                     }
                 }
 
                 await transaction.CommitAsync();
-                sw.Stop();
-                AppLogger.Debug($"[PlayerDatabase] Batch recorded {playersList.Count} active players in {sw.ElapsedMilliseconds} ms.");
+                AppLogger.Debug($"[PlayerDatabase] Batch recorded {playersList.Count} active players (Inserted: {insertedCount}, Updated: {updatedCount}, New Aliases: {aliasCount}).");
             }
             catch (Exception txEx)
             {
@@ -423,7 +366,7 @@ public static class PlayerDatabaseStorageService
         }
         catch (SqliteException sqlEx)
         {
-            AppLogger.Error($"[PlayerDatabase] SQLite error in RecordSeenPlayersAsync: {sqlEx.Message} (Error code: {sqlEx.SqliteErrorCode})", sqlEx);
+            AppLogger.Error($"[PlayerDatabase] SQLite error in RecordSeenPlayersAsync: {sqlEx.Message} (Code: {sqlEx.SqliteErrorCode})", sqlEx);
             ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed updating SQLite player records.", "SQLITE_ERR");
         }
         catch (Exception ex)
@@ -436,14 +379,14 @@ public static class PlayerDatabaseStorageService
         }
     }
 
-    private static async Task<List<string>> GetAliasesForPlayerInternalAsync(SqliteConnection connection, SqliteTransaction transaction, string uid)
+    private static async Task<List<string>> GetAliasesForPlayerIdInternalAsync(SqliteConnection connection, SqliteTransaction transaction, int playerId)
     {
         var aliases = new List<string>();
-        const string querySql = "SELECT AliasName FROM PlayerAliases WHERE PlayerUid = @PlayerUid ORDER BY LastSeenUtc DESC;";
+        const string querySql = "SELECT AliasName FROM PlayerAliases WHERE PlayerId = @PlayerId ORDER BY LastSeenUtc DESC;";
         await using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
         cmd.CommandText = querySql;
-        cmd.Parameters.AddWithValue("@PlayerUid", uid);
+        cmd.Parameters.AddWithValue("@PlayerId", playerId);
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
@@ -458,6 +401,7 @@ public static class PlayerDatabaseStorageService
     public static async Task SetAllOfflineAsync()
     {
         await InitializeAsync();
+        using var timing = AppLogger.Measure("PlayerDatabaseStorageService.SetAllOfflineAsync");
         await DbLock.WaitAsync();
 
         try
@@ -469,7 +413,7 @@ public static class PlayerDatabaseStorageService
             await using var command = connection.CreateCommand();
             command.CommandText = updateSql;
             int affected = await command.ExecuteNonQueryAsync();
-            AppLogger.Info($"[PlayerDatabase] Set {affected} player record(s) to offline status in SQLite database.");
+            AppLogger.Info($"[PlayerDatabase] Set {affected} player record(s) to offline status.");
         }
         catch (Exception ex)
         {
@@ -484,6 +428,7 @@ public static class PlayerDatabaseStorageService
     public static async Task<List<DatabasePlayerModel>> GetAllAsync()
     {
         await InitializeAsync();
+        using var timing = AppLogger.Measure("PlayerDatabaseStorageService.GetAllAsync");
         await DbLock.WaitAsync();
 
         var result = new List<DatabasePlayerModel>();
@@ -493,10 +438,30 @@ public static class PlayerDatabaseStorageService
             await using var connection = new SqliteConnection(ConnectionString);
             await connection.OpenAsync();
 
+            const string queryAllAliasesSql = "SELECT PlayerId, AliasName FROM PlayerAliases ORDER BY LastSeenUtc DESC;";
+            var aliasesMap = new Dictionary<int, List<string>>();
+
+            await using (var aliasCmd = connection.CreateCommand())
+            {
+                aliasCmd.CommandText = queryAllAliasesSql;
+                await using var aliasReader = await aliasCmd.ExecuteReaderAsync();
+                while (await aliasReader.ReadAsync())
+                {
+                    var pId = aliasReader.GetInt32(0);
+                    var alias = aliasReader.GetString(1);
+                    if (!aliasesMap.TryGetValue(pId, out var list))
+                    {
+                        list = [];
+                        aliasesMap[pId] = list;
+                    }
+                    list.Add(alias);
+                }
+            }
+
             const string queryPlayersSql = @"
                 SELECT 
-                    Uid, Guid, Name, LastIp, LastPort, Ping, IsOnline, Comment,
-                    IsWatchlisted, HasAliases, CountryCode, CountryName, Location, LastSeenUtc
+                    Id, ReforgerUid, BattlEyeGuid, Name, LastIp, LastPort, Ping, IsOnline, Comment,
+                    IsWatchlisted, HasAliases, CountryCode, CountryName, Location, TimeZone, LastSeenUtc
                 FROM Players
                 ORDER BY LastSeenUtc DESC;
             ";
@@ -505,32 +470,39 @@ public static class PlayerDatabaseStorageService
             {
                 cmd.CommandText = queryPlayersSql;
                 await using var reader = await cmd.ExecuteReaderAsync();
-                int index = 1;
+                int rowNumber = 1;
 
                 while (await reader.ReadAsync())
                 {
-                    var uid = reader.GetString(0);
-                    var guid = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
-                    var name = reader.GetString(2);
-                    var ip = reader.IsDBNull(3) ? "127.0.0.1" : reader.GetString(3);
-                    var port = reader.IsDBNull(4) ? 2304 : reader.GetInt32(4);
-                    var ping = reader.IsDBNull(5) ? 0 : reader.GetInt32(5);
-                    var isOnline = !reader.IsDBNull(6) && reader.GetInt32(6) == 1;
-                    var comment = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
-                    var isWatchlisted = !reader.IsDBNull(8) && reader.GetInt32(8) == 1;
-                    var hasAliases = !reader.IsDBNull(9) && reader.GetInt32(9) == 1;
-                    var countryCode = reader.IsDBNull(10) ? "un" : reader.GetString(10);
-                    var countryName = reader.IsDBNull(11) ? "Unknown Region" : reader.GetString(11);
-                    var location = reader.IsDBNull(12) ? string.Empty : reader.GetString(12);
-                    var lastSeenStr = reader.GetString(13);
+                    var dbId = reader.GetInt32(0);
+                    var reforgerUid = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                    var beGuid = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                    var name = reader.GetString(3);
+                    var ip = reader.IsDBNull(4) ? "127.0.0.1" : reader.GetString(4);
+                    var port = reader.IsDBNull(5) ? 2304 : reader.GetInt32(5);
+                    var ping = reader.IsDBNull(6) ? 0 : reader.GetInt32(6);
+                    var isOnline = !reader.IsDBNull(7) && reader.GetInt32(7) == 1;
+                    var comment = reader.IsDBNull(8) ? string.Empty : reader.GetString(8);
+                    var isWatchlisted = !reader.IsDBNull(9) && reader.GetInt32(9) == 1;
+                    var hasAliases = !reader.IsDBNull(10) && reader.GetInt32(10) == 1;
+                    var countryCode = reader.IsDBNull(11) ? "xx" : reader.GetString(11);
+                    var countryName = reader.IsDBNull(12) ? "Unknown Region" : reader.GetString(12);
+                    var location = reader.IsDBNull(13) ? string.Empty : reader.GetString(13);
+                    var timeZone = reader.IsDBNull(14) ? string.Empty : reader.GetString(14);
+                    var lastSeenStr = reader.GetString(15);
 
                     DateTime.TryParse(lastSeenStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastSeen);
 
-                    result.Add(new DatabasePlayerModel
+                    var effectiveUid = !string.IsNullOrEmpty(reforgerUid) ? reforgerUid : beGuid;
+                    var effectiveGuid = !string.IsNullOrEmpty(beGuid) ? beGuid : reforgerUid;
+
+                    var playerModel = new DatabasePlayerModel
                     {
-                        Id = index++,
-                        Uid = uid,
-                        Guid = guid,
+                        Id = rowNumber++,
+                        Uid = effectiveUid,
+                        Guid = effectiveGuid,
+                        ReforgerUid = reforgerUid,
+                        BattlEyeGuid = beGuid,
                         Name = name,
                         LastIp = ip,
                         LastPort = port,
@@ -541,41 +513,21 @@ public static class PlayerDatabaseStorageService
                         HasAliases = hasAliases,
                         Country = new CountryInfo { Code = countryCode, Name = countryName },
                         Location = location,
+                        TimeZone = timeZone,
                         LastSeen = lastSeen
-                    });
-                }
-            }
+                    };
 
-            const string queryAllAliasesSql = "SELECT PlayerUid, AliasName FROM PlayerAliases ORDER BY LastSeenUtc DESC;";
-            var aliasesMap = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-            await using (var aliasCmd = connection.CreateCommand())
-            {
-                aliasCmd.CommandText = queryAllAliasesSql;
-                await using var aliasReader = await aliasCmd.ExecuteReaderAsync();
-                while (await aliasReader.ReadAsync())
-                {
-                    var pUid = aliasReader.GetString(0);
-                    var alias = aliasReader.GetString(1);
-                    if (!aliasesMap.TryGetValue(pUid, out var list))
+                    if (aliasesMap.TryGetValue(dbId, out var aliasesList))
                     {
-                        list = [];
-                        aliasesMap[pUid] = list;
+                        playerModel.Aliases = aliasesList;
+                        playerModel.HasAliases = aliasesList.Count > 0;
                     }
-                    list.Add(alias);
+
+                    result.Add(playerModel);
                 }
             }
 
-            foreach (var player in result)
-            {
-                if (aliasesMap.TryGetValue(player.Uid, out var aliases))
-                {
-                    player.Aliases = aliases;
-                    player.HasAliases = aliases.Count > 0;
-                }
-            }
-
-            AppLogger.Debug($"[PlayerDatabase] Retrieved {result.Count} player records from SQLite.");
+            AppLogger.Debug($"[PlayerDatabase] Retrieved {result.Count} unified player records from SQLite with alias history attached.");
             return result;
         }
         catch (SqliteException sqlEx)
@@ -598,22 +550,35 @@ public static class PlayerDatabaseStorageService
     public static async Task UpdateCommentAsync(string identifier, string comment)
     {
         await InitializeAsync();
-        if (string.IsNullOrWhiteSpace(identifier)) return;
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            AppLogger.Warn("[PlayerDatabase] UpdateCommentAsync called with empty identifier.");
+            return;
+        }
 
+        using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.UpdateCommentAsync('{identifier}')");
         await DbLock.WaitAsync();
+
         try
         {
             await using var connection = new SqliteConnection(ConnectionString);
             await connection.OpenAsync();
 
-            const string updateSql = "UPDATE Players SET Comment = @Comment WHERE Uid = @Id OR Guid = @Id;";
+            const string updateSql = @"
+                UPDATE Players 
+                SET Comment = @Comment 
+                WHERE ReforgerUid = @Id 
+                   OR BattlEyeGuid = @Id 
+                   OR Name = @Id;
+            ";
+
             await using var command = connection.CreateCommand();
             command.CommandText = updateSql;
             command.Parameters.AddWithValue("@Comment", comment ?? string.Empty);
             command.Parameters.AddWithValue("@Id", identifier.Trim());
             int affected = await command.ExecuteNonQueryAsync();
 
-            AppLogger.Info($"[PlayerDatabase] Updated comment for player '{identifier}' (Rows affected: {affected}).");
+            AppLogger.Info($"[PlayerDatabase] Updated comment for player '{identifier}' (Rows affected: {affected}, Comment: '{comment}').");
         }
         catch (Exception ex)
         {
@@ -629,15 +594,28 @@ public static class PlayerDatabaseStorageService
     public static async Task SetWatchlistStatusAsync(string identifier, bool isWatchlisted)
     {
         await InitializeAsync();
-        if (string.IsNullOrWhiteSpace(identifier)) return;
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            AppLogger.Warn("[PlayerDatabase] SetWatchlistStatusAsync called with empty identifier.");
+            return;
+        }
 
+        using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.SetWatchlistStatusAsync('{identifier}', {isWatchlisted})");
         await DbLock.WaitAsync();
+
         try
         {
             await using var connection = new SqliteConnection(ConnectionString);
             await connection.OpenAsync();
 
-            const string updateSql = "UPDATE Players SET IsWatchlisted = @IsWatchlisted WHERE Uid = @Id OR Guid = @Id;";
+            const string updateSql = @"
+                UPDATE Players 
+                SET IsWatchlisted = @IsWatchlisted 
+                WHERE ReforgerUid = @Id 
+                   OR BattlEyeGuid = @Id 
+                   OR Name = @Id;
+            ";
+
             await using var command = connection.CreateCommand();
             command.CommandText = updateSql;
             command.Parameters.AddWithValue("@IsWatchlisted", isWatchlisted ? 1 : 0);
@@ -657,44 +635,10 @@ public static class PlayerDatabaseStorageService
         }
     }
 
-    public static async Task ToggleWatchlistAsync(string identifier)
-    {
-        await InitializeAsync();
-        if (string.IsNullOrWhiteSpace(identifier)) return;
-
-        await DbLock.WaitAsync();
-        try
-        {
-            await using var connection = new SqliteConnection(ConnectionString);
-            await connection.OpenAsync();
-
-            const string toggleSql = @"
-                UPDATE Players 
-                SET IsWatchlisted = CASE WHEN IsWatchlisted = 1 THEN 0 ELSE 1 END 
-                WHERE Uid = @Id OR Guid = @Id;
-            ";
-
-            await using var command = connection.CreateCommand();
-            command.CommandText = toggleSql;
-            command.Parameters.AddWithValue("@Id", identifier.Trim());
-            int affected = await command.ExecuteNonQueryAsync();
-
-            AppLogger.Info($"[PlayerDatabase] Toggled watchlist status for player '{identifier}' (Rows affected: {affected}).");
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"[PlayerDatabase] Failed toggling watchlist status for player '{identifier}'.", ex);
-            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed toggling watchlist status.", "SQLITE_WATCHLIST_ERR");
-        }
-        finally
-        {
-            DbLock.Release();
-        }
-    }
-
     public static async Task ClearAsync()
     {
         await InitializeAsync();
+        using var timing = AppLogger.Measure("PlayerDatabaseStorageService.ClearAsync");
         await DbLock.WaitAsync();
 
         try
@@ -709,21 +653,24 @@ public static class PlayerDatabaseStorageService
                 {
                     delAliases.Transaction = (SqliteTransaction)transaction;
                     delAliases.CommandText = "DELETE FROM PlayerAliases;";
-                    await delAliases.ExecuteNonQueryAsync();
+                    int aliasesDeleted = await delAliases.ExecuteNonQueryAsync();
+                    AppLogger.Debug($"[PlayerDatabase] Deleted {aliasesDeleted} rows from PlayerAliases.");
                 }
 
                 await using (var delPlayers = connection.CreateCommand())
                 {
                     delPlayers.Transaction = (SqliteTransaction)transaction;
                     delPlayers.CommandText = "DELETE FROM Players;";
-                    await delPlayers.ExecuteNonQueryAsync();
+                    int playersDeleted = await delPlayers.ExecuteNonQueryAsync();
+                    AppLogger.Debug($"[PlayerDatabase] Deleted {playersDeleted} rows from Players.");
                 }
 
                 await transaction.CommitAsync();
             }
-            catch
+            catch (Exception txEx)
             {
                 await transaction.RollbackAsync();
+                AppLogger.Error("[PlayerDatabase] Rollback during database purge.", txEx);
                 throw;
             }
 
@@ -731,9 +678,10 @@ public static class PlayerDatabaseStorageService
             {
                 vacuumCmd.CommandText = "VACUUM;";
                 await vacuumCmd.ExecuteNonQueryAsync();
+                AppLogger.Debug("[PlayerDatabase] Executed VACUUM maintenance on SQLite database.");
             }
 
-            AppLogger.Info("[PlayerDatabase] Purged entire player database and executed VACUUM in SQLite.");
+            AppLogger.Info("[PlayerDatabase] Purged entire player database.");
         }
         catch (Exception ex)
         {
@@ -749,6 +697,7 @@ public static class PlayerDatabaseStorageService
     public static async Task<DatabaseStatistics> GetDatabaseStatisticsAsync()
     {
         await InitializeAsync();
+        using var timing = AppLogger.Measure("PlayerDatabaseStorageService.GetDatabaseStatisticsAsync");
         await DbLock.WaitAsync();
 
         int totalPlayers = 0;
@@ -784,6 +733,7 @@ public static class PlayerDatabaseStorageService
             var walFile = $"{DatabaseFile}-wal";
             long walSize = File.Exists(walFile) ? new FileInfo(walFile).Length : 0;
 
+            AppLogger.Debug($"[PlayerDatabase] Queried database stats: Players={totalPlayers}, Aliases={totalAliases}, Size={dbSize / 1024.0:F1} KB.");
             return new DatabaseStatistics(totalPlayers, totalAliases, onlinePlayers, watchlistedPlayers, dbSize, walSize, DatabaseFile);
         }
         catch (Exception ex)

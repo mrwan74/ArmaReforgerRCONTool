@@ -149,6 +149,13 @@
         </StackPanel>
       </Border>
 
+      <!-- BattlEye IP Ban Option Checkbox -->
+      <CheckBox IsChecked="{Binding AlsoBanIpAddress}" 
+                Content="{Binding BanIpCheckboxLabel}" 
+                IsVisible="{Binding IsBanIpVisible}" 
+                IsEnabled="{Binding !IsExecuting}"
+                ToolTip.Tip="Issues an additional 'addBan' command targeting the player's IP address and runs 'loadBans' immediately." />
+
       <StackPanel Spacing="4">
         <TextBlock Text="Reason for Ban" Classes="Label" />
         <TextBox Text="{Binding Reason}" PlaceholderText="Enter reason..." IsEnabled="{Binding !IsExecuting}" />

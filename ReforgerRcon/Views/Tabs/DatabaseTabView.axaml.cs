@@ -19,6 +19,15 @@ public partial class DatabaseTabView : UserControl
             AddHandler(PointerPressedEvent, OnGridPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
             AddHandler(ContextRequestedEvent, OnGridContextRequested, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
+            Loaded += async (_, _) =>
+            {
+                if (DataContext is DatabaseViewModel vm)
+                {
+                    AppLogger.Debug("[DatabaseTabView] Tab Loaded event triggered: refreshing SQLite database records...");
+                    await vm.LoadDbAsync();
+                }
+            };
+
             DataContextChanged += (_, _) =>
             {
                 if (DataContext is DatabaseViewModel vm)
@@ -28,14 +37,17 @@ public partial class DatabaseTabView : UserControl
                         var gridKey = vm.IsBattlEyeProtocol ? "DatabaseGrid_BattlEye" : "DatabaseGrid_Reforger";
                         ColumnLayoutStorageService.BindPersistence(DatabaseGrid, gridKey);
 
-                        UpdateColumnVisibilities(vm);
+                        UpdateColumnVisibilities();
+                        UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+
                         vm.PropertyChanged += (s, e) =>
                         {
                             if (e.PropertyName is nameof(DatabaseViewModel.IsMultiSelectMode) or
                                                  nameof(DatabaseViewModel.IsReforgerProtocol) or
                                                  nameof(DatabaseViewModel.IsBattlEyeProtocol))
                             {
-                                UpdateColumnVisibilities(vm);
+                                UpdateColumnVisibilities();
+                                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
                             }
                         };
                     }
@@ -54,8 +66,57 @@ public partial class DatabaseTabView : UserControl
         }
     }
 
-    private void UpdateColumnVisibilities(DatabaseViewModel vm)
+    private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
     {
+        e.Handled = true;
+        var tag = e.Column.Tag?.ToString() ?? "";
+        if (DataContext is DatabaseViewModel vm)
+        {
+            vm.CycleColumnSort(tag);
+            UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+        }
+    }
+
+    private static string GetCleanHeader(DataGridColumn col)
+    {
+        var headerText = col.Header?.ToString() ?? string.Empty;
+        return headerText.TrimEnd(' ', '▲', '▼');
+    }
+
+    private void UpdateColumnSortGlyphs(string sortField, bool isAscending)
+    {
+        try
+        {
+            foreach (var col in DatabaseGrid.Columns)
+            {
+                var tag = col.Tag?.ToString() ?? "";
+                var field = DatabaseViewModel.MapColumnTagToSortField(tag);
+                var cleanHeader = GetCleanHeader(col);
+
+                if (string.IsNullOrEmpty(cleanHeader)) continue;
+
+                if (!string.IsNullOrEmpty(field) &&
+                    string.Equals(field, sortField, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(sortField, "Default", StringComparison.OrdinalIgnoreCase))
+                {
+                    col.Header = isAscending ? $"{cleanHeader} ▲" : $"{cleanHeader} ▼";
+                }
+                else
+                {
+                    col.Header = cleanHeader;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"[DatabaseTabView] Sort glyph update notice: {ex.Message}");
+        }
+    }
+
+    private void UpdateColumnVisibilities()
+    {
+        if (DataContext is not DatabaseViewModel vm) return;
+
         try
         {
             foreach (var col in DatabaseGrid.Columns)
@@ -130,7 +191,6 @@ public partial class DatabaseTabView : UserControl
                 }
             }
 
-            // Suppress context menu on empty area or headers
             DatabaseGrid.SelectedItem = null;
             e.Handled = true;
         }

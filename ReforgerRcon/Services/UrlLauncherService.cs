@@ -13,12 +13,12 @@ public static class UrlLauncherService
     {
         if (string.IsNullOrWhiteSpace(url))
         {
-            AppLogger.Warn("[UrlLauncherService] Attempted to open an empty or null URL string.");
+            AppLogger.Warn("[UrlLauncherService] Attempted to launch an empty or null URL string.");
             return false;
         }
 
         var trimmedUrl = url.Trim();
-        AppLogger.Info($"[UrlLauncherService] Requesting external web browser dispatch for target: {trimmedUrl}");
+        AppLogger.Info($"[UrlLauncherService] Dispatching external browser request for target: {trimmedUrl}");
 
         try
         {
@@ -42,7 +42,7 @@ public static class UrlLauncherService
                     Arguments = $"\"{trimmedUrl}\"",
                     UseShellExecute = false
                 });
-                AppLogger.Debug($"[UrlLauncherService] MacOS open process dispatched for: {trimmedUrl}");
+                AppLogger.Debug($"[UrlLauncherService] macOS open process dispatched for: {trimmedUrl} via {macOpenPath}");
                 return true;
             }
 
@@ -53,7 +53,7 @@ public static class UrlLauncherService
                 Arguments = $"\"{trimmedUrl}\"",
                 UseShellExecute = false
             });
-            AppLogger.Debug($"[UrlLauncherService] Linux xdg-open process dispatched for: {trimmedUrl}");
+            AppLogger.Debug($"[UrlLauncherService] Linux xdg-open process dispatched for: {trimmedUrl} via {xdgOpenPath}");
             return true;
         }
         catch (Exception ex)

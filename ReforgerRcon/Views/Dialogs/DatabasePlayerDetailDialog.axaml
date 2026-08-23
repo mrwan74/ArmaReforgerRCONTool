@@ -3,11 +3,10 @@
              xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
-             xmlns:converters="using:ReforgerRcon.Converters"
              x:Class="ReforgerRcon.Views.Dialogs.DatabasePlayerDetailDialog"
              x:DataType="vm:DatabasePlayerDetailViewModel">
 
-  <lumina:LuminaCard Padding="24" Width="490" MaxHeight="640" Classes="Elevated">
+  <lumina:LuminaCard Padding="24" Width="540" MaxHeight="680" Classes="Elevated">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Spacing="16">
         <!-- Dialog Header -->
@@ -30,11 +29,9 @@
           </StackPanel>
         </Border>
 
-        <!-- ========================================================================= -->
-        <!-- REFORGER PROTOCOL DATABASE DETAILS                                        -->
-        <!-- ========================================================================= -->
+        <!-- Reforger Protocol Database Details -->
         <StackPanel Spacing="12" IsVisible="{Binding IsReforgerProtocol}">
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Status:" Classes="Caption" VerticalAlignment="Center" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
               <Border Width="8" Height="8" CornerRadius="4" 
@@ -50,23 +47,23 @@
             </StackPanel>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Player Name:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
             <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Name}" ToolTip.Tip="Copy Name">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Player UID:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Uid}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Uid}" VerticalAlignment="Center" TextWrapping="Wrap" FontFamily="Consolas, monospace" FontSize="12" />
             <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Uid}" ToolTip.Tip="Copy UID">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Comment:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Comment}" VerticalAlignment="Center" TextWrapping="Wrap" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
@@ -80,11 +77,9 @@
           </Grid>
         </StackPanel>
 
-        <!-- ========================================================================= -->
-        <!-- BATTLEYE PROTOCOL DATABASE DETAILS                                        -->
-        <!-- ========================================================================= -->
+        <!-- BattlEye Protocol Database Details -->
         <StackPanel Spacing="12" IsVisible="{Binding IsBattlEyeProtocol}">
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Status:" Classes="Caption" VerticalAlignment="Center" />
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
               <Border Width="8" Height="8" CornerRadius="4" 
@@ -100,36 +95,75 @@
             </StackPanel>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
+          <!-- Country with SVG Flag & Natural Location (Zero-Overlap Grid Layout) -->
+          <Grid ColumnDefinitions="110,Auto,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
+            <TextBlock Grid.Column="0" Text="Location:" Classes="Caption" VerticalAlignment="Center" />
+            
+            <Border Grid.Column="1" CornerRadius="3" ClipToBounds="True" BoxShadow="0 1 3 #30000000" VerticalAlignment="Center">
+              <Image Source="{Binding Player.Country.FlagImage}" Width="36" Height="25" Stretch="Uniform" />
+            </Border>
+            
+            <TextBlock Grid.Column="2" 
+                       Text="{Binding Player.Location}" 
+                       VerticalAlignment="Center" 
+                       TextWrapping="Wrap"
+                       Margin="2,0,4,0" />
+                       
+            <Button Grid.Column="3" Classes="Ghost Icon" 
+                    Command="{Binding CopyFieldCommand}" 
+                    CommandParameter="{Binding Player.Location}" 
+                    ToolTip.Tip="Copy Location"
+                    VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <!-- Current Local Time with Clock Icon -->
+          <Grid ColumnDefinitions="110,Auto,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
+            <TextBlock Grid.Column="0" Text="Local Time:" Classes="Caption" VerticalAlignment="Center" />
+            
+            <icons:MaterialIcon Grid.Column="1" Kind="ClockOutline" Width="15" Height="15" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+            
+            <TextBlock Grid.Column="2" 
+                       Text="{Binding Player.FormattedLocalTime}" 
+                       FontWeight="SemiBold" 
+                       VerticalAlignment="Center" 
+                       TextWrapping="Wrap" />
+                       
+            <Button Grid.Column="3" Classes="Ghost Icon" 
+                    Command="{Binding CopyFieldCommand}" 
+                    CommandParameter="{Binding Player.FormattedLocalTime}" 
+                    ToolTip.Tip="Copy Local Time"
+                    VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+            </Button>
+          </Grid>
+
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Name:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
             <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Name}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="BattlEye GUID:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Guid}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.Guid}" VerticalAlignment="Center" TextWrapping="Wrap" FontFamily="Consolas, monospace" FontSize="12" />
             <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Guid}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Last Endpoint:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.LastIp}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.LastIp}" VerticalAlignment="Center" FontFamily="Consolas, monospace" FontSize="12" />
             <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.LastIp}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
 
-          <Grid ColumnDefinitions="130,*,Auto">
-            <TextBlock Text="Last Location:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Location}" VerticalAlignment="Center" />
-          </Grid>
-
-          <Grid ColumnDefinitions="130,*,Auto">
+          <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Comment:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Comment}" VerticalAlignment="Center" TextWrapping="Wrap" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
@@ -143,7 +177,7 @@
           </Grid>
         </StackPanel>
 
-        <!-- Action Button -->
+        <!-- Action Buttons -->
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,8,0,0">
           <Button Grid.Column="0" Classes="Danger Outline" Content="Offline Ban Target" Command="{Binding OfflineBanCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"/>
           <Button Grid.Column="1" Classes="Outline" Content="Close" Command="{Binding CloseCommand}" />

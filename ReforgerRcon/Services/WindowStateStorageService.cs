@@ -1,6 +1,6 @@
-﻿// FILE: ReforgerRcon/Services/WindowStateStorageService.cs
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using Avalonia;
@@ -27,10 +27,12 @@ public static class WindowStateStorageService
     {
         window.Opened += (_, _) => RestoreWindowState(window, windowKey);
         window.Closing += (_, _) => SaveWindowState(window, windowKey);
+        AppLogger.Debug($"[WindowStateStorage] Attached window persistence hooks for '{windowKey}'.");
     }
 
     private static void RestoreWindowState(Window window, string windowKey)
     {
+        var sw = Stopwatch.StartNew();
         try
         {
             if (!File.Exists(StorageFile)) return;
@@ -39,12 +41,14 @@ public static class WindowStateStorageService
             if (dict != null && dict.TryGetValue(windowKey, out var state))
             {
                 ApplyStateToWindow(window, state);
-                AppLogger.Info($"Restored window geometry for '{windowKey}': {state.Width}x{state.Height} at ({state.X},{state.Y}) [Maximized: {state.IsMaximized}]");
+                sw.Stop();
+                AppLogger.Info($"[WindowStateStorage] Restored window geometry for '{windowKey}' in {sw.ElapsedMilliseconds} ms: {state.Width}x{state.Height} at ({state.X},{state.Y}) [Maximized: {state.IsMaximized}]");
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"Failed to restore window state for {windowKey}", ex);
+            sw.Stop();
+            AppLogger.Error($"[WindowStateStorage] Failed to restore window state for {windowKey}", ex);
         }
     }
 
@@ -66,6 +70,7 @@ public static class WindowStateStorageService
 
     private static void SaveWindowState(Window window, string windowKey)
     {
+        var sw = Stopwatch.StartNew();
         try
         {
             if (!Directory.Exists(StorageDirectory))
@@ -77,11 +82,13 @@ public static class WindowStateStorageService
             dict[windowKey] = CreateStateFromWindow(window);
 
             File.WriteAllText(StorageFile, JsonSerializer.Serialize(dict, JsonOptions));
-            AppLogger.Debug($"Saved window geometry state for '{windowKey}'.");
+            sw.Stop();
+            AppLogger.Debug($"[WindowStateStorage] Saved window geometry state for '{windowKey}' in {sw.ElapsedMilliseconds} ms: {window.Width}x{window.Height} at ({window.Position.X},{window.Position.Y}) [WindowState: {window.WindowState}].");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"Failed to persist window state for {windowKey}", ex);
+            sw.Stop();
+            AppLogger.Error($"[WindowStateStorage] Failed to persist window state for {windowKey}", ex);
         }
     }
 
@@ -95,7 +102,7 @@ public static class WindowStateStorageService
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"Failed reading existing window state dictionary: {ex.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Failed reading existing window state dictionary: {ex.Message}");
             return [];
         }
     }

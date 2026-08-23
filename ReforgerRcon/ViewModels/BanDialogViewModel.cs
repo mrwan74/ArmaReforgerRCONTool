@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -10,13 +12,13 @@ using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
-public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService rconService, PlayersViewModel parent) : ViewModelBase
+public partial class BanDialogViewModel : ViewModelBase
 {
-    private readonly List<PlayerModel> _targets = targets;
-    private readonly IRconService _rconService = rconService;
-    private readonly PlayersViewModel _parent = parent;
+    private readonly List<PlayerModel> _targets;
+    private readonly IRconService _rconService;
+    private readonly PlayersViewModel _parent;
 
-    [ObservableProperty] public partial string TargetNames { get; set; } = string.Join(", ", targets.Select(t => t.Name));
+    [ObservableProperty] public partial string TargetNames { get; set; }
     [ObservableProperty] public partial string SelectedPreset { get; set; } = "1 Day";
     [ObservableProperty] public partial int CustomYears { get; set; }
     [ObservableProperty] public partial int CustomMonths { get; set; }
@@ -32,14 +34,50 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
     [ObservableProperty] public partial bool IsExecuting { get; set; }
     [ObservableProperty] public partial string ProgressStatus { get; set; } = string.Empty;
 
+    [ObservableProperty] public partial bool AlsoBanIpAddress { get; set; } = true;
+    [ObservableProperty] public partial bool IsBanIpVisible { get; set; }
+    [ObservableProperty] public partial string BanIpCheckboxLabel { get; set; } = "Also ban IP Address";
+
     public bool IsCustomSelected => SelectedPreset == "Custom Duration";
+    public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
+
+    public BanDialogViewModel(List<PlayerModel> targets, IRconService rconService, PlayersViewModel parent)
+    {
+        _targets = targets;
+        _rconService = rconService;
+        _parent = parent;
+
+        TargetNames = string.Join(", ", targets.Select(t => t.Name));
+
+        var firstTarget = targets.FirstOrDefault();
+        bool hasValidIp = firstTarget != null &&
+                          !string.IsNullOrWhiteSpace(firstTarget.Ip) &&
+                          !firstTarget.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) &&
+                          IPAddress.TryParse(firstTarget.Ip, out _);
+
+        if (IsBattlEyeProtocol && hasValidIp)
+        {
+            IsBanIpVisible = true;
+            BanIpCheckboxLabel = targets.Count == 1
+                ? $"Also ban player IP address ({firstTarget!.Ip})"
+                : "Also ban player IP addresses";
+        }
+        else
+        {
+            IsBanIpVisible = false;
+        }
+
+        UpdateCalculations();
+    }
 
     partial void OnSelectedPresetChanged(string value)
     {
         OnPropertyChanged(nameof(IsCustomSelected));
+        AppLogger.Debug($"[BanDialog] Preset changed to '{value}'.");
         UpdateCalculations();
     }
 
+    partial void OnAlsoBanIpAddressChanged(bool value) => UpdateCalculations();
     partial void OnCustomYearsChanged(int value) => UpdateCalculations();
     partial void OnCustomMonthsChanged(int value) => UpdateCalculations();
     partial void OnCustomWeeksChanged(int value) => UpdateCalculations();
@@ -60,6 +98,7 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
     private async Task CopyCommandPreviewAsync()
     {
         await ClipboardService.SetTextAsync(CommandPreview);
+        AppLogger.Debug($"[BanDialog] Copied command preview '{CommandPreview}' to clipboard.");
         ToastNotificationService.Instance.ShowToast("Copied", "Copied ban command to clipboard.");
     }
 
@@ -107,10 +146,17 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
         }
         else
         {
-            var targetGuid = sampleTarget != null ? sampleTarget.Guid : "<GUID>";
+            var targetId = sampleTarget != null ? sampleTarget.Id.ToString(CultureInfo.InvariantCulture) : "<#>";
             long beMinutes = totalSec <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(totalSec / 60.0));
-            CommandPreview = $"addBan {targetGuid} {beMinutes} {Reason}";
+            CommandPreview = $"ban {targetId} {beMinutes} {Reason}";
+
+            if (AlsoBanIpAddress && sampleTarget != null && !string.IsNullOrWhiteSpace(sampleTarget.Ip) && !sampleTarget.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
+            {
+                CommandPreview += $" && addBan {sampleTarget.Ip} {beMinutes} {Reason} && loadBans";
+            }
         }
+
+        AppLogger.Trace($"[BanDialog] Ban calculation updated: {TotalCalculatedTimeText} -> '{CommandPreview}'");
     }
 
     [RelayCommand]
@@ -119,6 +165,7 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
         if (IsExecuting) return;
         IsExecuting = true;
 
+        using var timing = AppLogger.Measure($"BanDialogViewModel.ConfirmBanAsync({_targets.Count} targets)");
         int successCount = 0;
         int failedCount = 0;
 
@@ -126,26 +173,30 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
         {
             var totalSec = CalculateTotalSeconds();
             int total = _targets.Count;
+            AppLogger.Info($"[BanDialog] Starting sequential ban for {total} target(s) (Duration: {totalSec}s, Reason: '{Reason}', AlsoBanIp: {AlsoBanIpAddress})...");
+
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];
                 ProgressStatus = $"Banning {player.Name} ({i + 1}/{total})...";
-                AppLogger.Info($"[BanDialog] Sequentially banning target {i + 1}/{total}: {player.Name} (Duration: {totalSec}s)...");
+                AppLogger.Info($"[BanDialog] Sequentially banning target {i + 1}/{total}: '{player.Name}' (ID: {player.Id}, UID: {player.Uid}, IP: {player.Ip})...");
 
-                bool isSuccess = await _rconService.BanPlayerAsync(player, totalSec, Reason);
+                bool isSuccess = await _rconService.BanPlayerWithOptionalIpAsync(player, totalSec, Reason, AlsoBanIpAddress);
 
                 long beMinutes = totalSec <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(totalSec / 60.0));
                 var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
                     ? $"#ban create {player.Id} {totalSec} {Reason}"
-                    : $"addBan {player.Guid} {beMinutes} {Reason}";
+                    : $"ban {player.Id} {beMinutes} {Reason}";
 
                 if (isSuccess)
                 {
                     successCount++;
+                    AppLogger.Info($"[BanDialog] Ban SUCCESS for '{player.Name}'.");
                     ToastNotificationService.Instance.ShowSuccess("Ban Executed", $"Banned {player.Name}", cmd, async () =>
                     {
+                        AppLogger.Info($"[BanDialog] Ban Undo action invoked for '{player.Name}'.");
                         var allBans = await _rconService.GetBansAsync();
-                        var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid);
+                        var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid || b.IdentityId == player.Ip);
                         if (ban != null)
                         {
                             await _rconService.RemoveBanAsync(ban);
@@ -158,7 +209,7 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
                 else
                 {
                     failedCount++;
-                    AppLogger.Warn($"[BanDialog] Ban failed or timed out for {player.Name}. Retaining player in UI list.");
+                    AppLogger.Warn($"[BanDialog] Ban FAILED for '{player.Name}'. Command: '{cmd}'");
                     ToastNotificationService.Instance.ShowError(
                         "Ban Failed",
                         $"Could not ban {player.Name}: Server rejected command or timed out.",
@@ -166,6 +217,8 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
                     );
                 }
             }
+
+            AppLogger.Info($"[BanDialog] Ban execution finished (Success: {successCount}, Failed: {failedCount}).");
 
             _parent.CloseDialog();
             await _parent.TriggerPostBanRefreshAsync();
@@ -196,6 +249,7 @@ public partial class BanDialogViewModel(List<PlayerModel> targets, IRconService 
     private void Close()
     {
         if (IsExecuting) return;
+        AppLogger.Debug("[BanDialog] Operator closed ban dialog.");
         _parent.CloseDialog();
     }
 }

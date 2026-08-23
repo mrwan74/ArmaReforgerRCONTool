@@ -9,11 +9,9 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 using Sentry;
 using Serilog;
 using Serilog.Context;
-using Serilog.Enrichers.WithCaller;
 using Serilog.Events;
 using Serilog.ExceptionalLogContext;
 using Serilog.Exceptions;
@@ -35,13 +33,11 @@ public static class AppLogger
 {
     private static readonly string LogDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "logs");
     private static readonly ConcurrentQueue<string> Breadcrumbs = new();
-    private const int MaxBreadcrumbs = 250;
+    private const int MaxBreadcrumbs = 500;
     private static readonly Serilog.ILogger Logger;
 
     public static string SessionId { get; } = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
     public static string CurrentLogFilePath { get; }
-
-    public static event Action<LogLevel, string, Exception?>? LogEmitted;
 
     public static string ResolveSentryDsn()
     {
@@ -93,8 +89,8 @@ public static class AppLogger
 
         CurrentLogFilePath = Path.Combine(LogDirectory, $"reforger_rcon_session_{SessionId}.log");
 
-        const string fileOutputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [T{ThreadId:D2}] [{Caller}] {Message:lj}{NewLine}{Exception}";
-        const string debugOutputTemplate = "[{Timestamp:HH:mm:ss.fff}] [{Level:u3}] [T{ThreadId:D2}] [{Caller}] {Message:lj}{NewLine}{Exception}";
+        const string fileOutputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] [T{ThreadId:D2}] [{CallerContext}] {Message:lj}{NewLine}{Exception}";
+        const string debugOutputTemplate = "[{Timestamp:HH:mm:ss.fff}] [{Level:u3}] [T{ThreadId:D2}] [{CallerContext}] {Message:lj}{NewLine}{Exception}";
 
         try
         {
@@ -108,7 +104,6 @@ public static class AppLogger
                 .Enrich.WithProcessName()
                 .Enrich.WithDemystifiedStackTraces()
                 .Enrich.WithExceptionDetails()
-                .Enrich.WithCaller()
                 .WriteTo.Async(a => a.File(
                     CurrentLogFilePath,
                     outputTemplate: fileOutputTemplate,
@@ -237,6 +232,11 @@ public static class AppLogger
     public static void Fatal(string message, Exception? ex, IReadOnlyDictionary<string, object?>? context, [CallerMemberName] string member = "", [CallerFilePath] string path = "", [CallerLineNumber] int line = 0)
         => Dispatch(LogLevel.Fatal, message, ex, context, member, path, line);
 
+    public static TimingScope Measure(string operationName, [CallerMemberName] string member = "", [CallerFilePath] string path = "", [CallerLineNumber] int line = 0)
+    {
+        return new TimingScope(operationName, member, path, line);
+    }
+
     private static void Dispatch(LogLevel level, string message, Exception? ex, IReadOnlyDictionary<string, object?>? context, string member, string path, int line)
     {
         var demystifiedEx = ex?.Demystify();
@@ -244,7 +244,8 @@ public static class AppLogger
         var threadId = Environment.CurrentManagedThreadId;
         var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
-        var crumb = string.Create(CultureInfo.InvariantCulture, $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{file}:{line} -> {member}()] {message}");
+        var callerContext = $"{file}:{line} -> {member}()";
+        var crumb = string.Create(CultureInfo.InvariantCulture, $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{callerContext}] {message}");
         Breadcrumbs.Enqueue(crumb);
         while (Breadcrumbs.Count > MaxBreadcrumbs)
         {
@@ -278,18 +279,17 @@ public static class AppLogger
             level: sentryBreadcrumbLevel
         );
 
-        IDisposable? propertyScope = null;
+        List<IDisposable> disposables = [LogContext.PushProperty("CallerContext", callerContext)];
+
         if (context?.Count > 0)
         {
-            List<IDisposable> disposables = [];
             foreach (var kvp in context)
             {
                 disposables.Add(LogContext.PushProperty(kvp.Key, kvp.Value));
             }
-            propertyScope = new CompositeDisposable(disposables);
         }
 
-        using (propertyScope)
+        using (new CompositeDisposable(disposables))
         {
             var serilogLevel = level switch
             {
@@ -333,15 +333,6 @@ public static class AppLogger
                 }
             }
         }
-
-        try
-        {
-            LogEmitted?.Invoke(level, crumb, demystifiedEx);
-        }
-        catch (Exception exHandler)
-        {
-            System.Diagnostics.Debug.WriteLine($"[AppLogger] LogEmitted event subscriber error: {exHandler.Message}");
-        }
     }
 
     public static List<string> GetRecentBreadcrumbs() => [.. Breadcrumbs];
@@ -356,6 +347,40 @@ public static class AppLogger
     {
         Log.CloseAndFlush();
         SentrySdk.Close();
+    }
+
+    public sealed class TimingScope : IDisposable
+    {
+        private readonly string _operationName;
+        private readonly string _member;
+        private readonly string _path;
+        private readonly int _line;
+        private readonly long _startTimestamp;
+        private readonly long _initialMemory;
+        private bool _isDisposed;
+
+        public TimingScope(string operationName, string member, string path, int line)
+        {
+            _operationName = operationName;
+            _member = member;
+            _path = path;
+            _line = line;
+            _initialMemory = GC.GetAllocatedBytesForCurrentThread();
+            _startTimestamp = Stopwatch.GetTimestamp();
+            Dispatch(LogLevel.Trace, $"[TIMING:START] {_operationName}", null, null, _member, _path, _line);
+        }
+
+        public void Dispose()
+        {
+            if (_isDisposed) return;
+            _isDisposed = true;
+
+            var elapsed = Stopwatch.GetElapsedTime(_startTimestamp);
+            var memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - _initialMemory;
+            var memFormatted = memoryAllocated >= 1024 ? $"{memoryAllocated / 1024.0:F1} KB" : $"{memoryAllocated} B";
+
+            Dispatch(LogLevel.Debug, $"[TIMING:COMPLETED] {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted})", null, null, _member, _path, _line);
+        }
     }
 
     private sealed class CompositeDisposable(IEnumerable<IDisposable> disposables) : IDisposable

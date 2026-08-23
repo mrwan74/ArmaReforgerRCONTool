@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
@@ -14,11 +15,13 @@ public partial class App : Application
 {
     public override void Initialize()
     {
+        var sw = Stopwatch.StartNew();
         try
         {
             AppLogger.Info("Initializing Avalonia XAML Loader...");
             AvaloniaXamlLoader.Load(this);
-            AppLogger.Info("Avalonia XAML resources successfully loaded.");
+            sw.Stop();
+            AppLogger.Info($"Avalonia XAML resources successfully loaded in {sw.ElapsedMilliseconds} ms.");
 
 #if DEBUG
             AppLogger.Info("Enabling AvaloniaUI Developer Tools bridge. Press F12 while running to inspect visual tree.");
@@ -27,6 +30,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            sw.Stop();
             AppLogger.Fatal("Failed initializing Avalonia XAML resources.", ex);
             CrashReportService.HandleFatalException("App.Initialize", ex, isTerminating: true);
             throw;
@@ -35,6 +39,7 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        var sw = Stopwatch.StartNew();
         try
         {
             Dispatcher.UIThread.UnhandledExceptionFilter += (_, e) =>
@@ -54,10 +59,26 @@ public partial class App : Application
             };
 
             AppLogger.Info("Initializing LuminaUI Theme Engine...");
-            LuminaThemeManager.Initialize(this);
+            try
+            {
+                LuminaThemeManager.Initialize(this);
+            }
+            catch (Exception themeEx)
+            {
+                AppLogger.Error("LuminaUI Theme initialization notice: " + themeEx.Message, themeEx);
+                ToastNotificationService.Instance.ShowWarning("Theme Warning", "Failed to apply custom theme variant. Reverting to dark default.");
+            }
 
             AppLogger.Info("Initializing MaxMind GeoIP2 Engine...");
-            GeoIpService.Initialize();
+            try
+            {
+                GeoIpService.Initialize();
+            }
+            catch (Exception geoEx)
+            {
+                AppLogger.Error("GeoIP engine initialization failed: " + geoEx.Message, geoEx);
+                ToastNotificationService.Instance.ShowWarning("GeoIP Warning", "Geolocation lookup engine could not initialize. Operating in offline mode.");
+            }
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
@@ -66,10 +87,12 @@ public partial class App : Application
             }
 
             base.OnFrameworkInitializationCompleted();
-            AppLogger.Info("Framework initialization successfully completed.");
+            sw.Stop();
+            AppLogger.Info($"Framework initialization successfully completed in {sw.ElapsedMilliseconds} ms.");
         }
         catch (Exception ex)
         {
+            sw.Stop();
             AppLogger.Fatal("Fatal exception during FrameworkInitializationCompleted.", ex);
             CrashReportService.HandleFatalException("App.OnFrameworkInitializationCompleted", ex, isTerminating: true);
             throw;

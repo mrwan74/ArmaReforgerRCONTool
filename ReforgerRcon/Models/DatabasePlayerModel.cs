@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using CommunityToolkit.Mvvm.ComponentModel;
+using ReforgerRcon.Services;
 
 namespace ReforgerRcon.Models;
 
@@ -12,6 +13,8 @@ public partial class DatabasePlayerModel : ObservableObject
     [ObservableProperty] public partial string Name { get; set; } = string.Empty;
     [ObservableProperty] public partial string Uid { get; set; } = string.Empty;
     [ObservableProperty] public partial string Guid { get; set; } = string.Empty;
+    [ObservableProperty] public partial string ReforgerUid { get; set; } = string.Empty;
+    [ObservableProperty] public partial string BattlEyeGuid { get; set; } = string.Empty;
     [ObservableProperty] public partial string LastIp { get; set; } = "127.0.0.1";
     [ObservableProperty] public partial int LastPort { get; set; } = 2304;
     [ObservableProperty] public partial int Ping { get; set; } = 25;
@@ -26,10 +29,53 @@ public partial class DatabasePlayerModel : ObservableObject
     [ObservableProperty] public partial bool IsSelected { get; set; }
     [ObservableProperty] public partial DateTime LastSeen { get; set; } = DateTime.UtcNow;
     [ObservableProperty] public partial List<string> Aliases { get; set; } = [];
-    [ObservableProperty] public partial CountryInfo Country { get; set; } = new() { Code = "us", Name = "United States" };
-    [ObservableProperty] public partial string Location { get; set; } = "New York, USA";
+    [ObservableProperty] public partial CountryInfo Country { get; set; } = new() { Code = "xx", Name = "Unknown Region" };
+    [ObservableProperty] public partial string Location { get; set; } = string.Empty;
+    [ObservableProperty] public partial string TimeZone { get; set; } = string.Empty;
 
-    public string FormattedEndpoint => $"{LastIp}:{LastPort}";
-    public string PingDisplay => IsOnline ? $"{Ping} ms" : "Offline";
+    public bool HasReforgerUid => !string.IsNullOrWhiteSpace(ReforgerUid) && ReforgerUid.Length == 36 && ReforgerUid.Contains('-');
+    public bool HasBattlEyeGuid => !string.IsNullOrWhiteSpace(BattlEyeGuid) && BattlEyeGuid.Length == 32 && !BattlEyeGuid.Contains('-');
+
+    public string DisplayReforgerUid => ResolveDisplayReforgerUid();
+    public string DisplayBattlEyeGuid => ResolveDisplayBattlEyeGuid();
+
+    private string ResolveDisplayReforgerUid()
+    {
+        if (HasReforgerUid)
+        {
+            return ReforgerUid;
+        }
+
+        if (Uid.Length == 36 && Uid.Contains('-'))
+        {
+            return Uid;
+        }
+
+        return "N/A";
+    }
+
+    private string ResolveDisplayBattlEyeGuid()
+    {
+        if (HasBattlEyeGuid)
+        {
+            return BattlEyeGuid;
+        }
+
+        if (Guid.Length == 32 && !Guid.Contains('-'))
+        {
+            return Guid;
+        }
+
+        if (Uid.Length == 32 && !Uid.Contains('-'))
+        {
+            return Uid;
+        }
+
+        return "N/A";
+    }
+
+    public string FormattedEndpoint => LastIp.Equals("N/A", StringComparison.OrdinalIgnoreCase) || LastPort <= 0 ? "N/A" : $"{LastIp}:{LastPort}";
+    public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);
+    public string PingDisplay => Ping > 0 ? $"{Ping} ms" : "N/A";
     public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
 }

@@ -29,6 +29,8 @@ public partial class BansTabView : UserControl
                         ColumnLayoutStorageService.BindPersistence(BansGrid, gridKey);
 
                         UpdateColumnVisibilities(vm);
+                        UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+
                         vm.PropertyChanged += (s, e) =>
                         {
                             if (e.PropertyName is nameof(BansViewModel.IsMultiSelectMode) or
@@ -36,6 +38,7 @@ public partial class BansTabView : UserControl
                                                  nameof(BansViewModel.IsBattlEyeProtocol))
                             {
                                 UpdateColumnVisibilities(vm);
+                                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
                             }
                         };
                     }
@@ -51,6 +54,53 @@ public partial class BansTabView : UserControl
         catch (Exception ex)
         {
             AppLogger.Error("Failed during BansTabView constructor initialization.", ex);
+        }
+    }
+
+    private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
+    {
+        e.Handled = true;
+        var tag = e.Column.Tag?.ToString() ?? "";
+        if (DataContext is BansViewModel vm)
+        {
+            vm.CycleColumnSort(tag);
+            UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+        }
+    }
+
+    private static string GetCleanHeader(DataGridColumn col)
+    {
+        var headerText = col.Header?.ToString() ?? string.Empty;
+        return headerText.TrimEnd(' ', '▲', '▼');
+    }
+
+    private void UpdateColumnSortGlyphs(string sortField, bool isAscending)
+    {
+        try
+        {
+            foreach (var col in BansGrid.Columns)
+            {
+                var tag = col.Tag?.ToString() ?? "";
+                var field = BansViewModel.MapColumnTagToSortField(tag);
+                var cleanHeader = GetCleanHeader(col);
+
+                if (string.IsNullOrEmpty(cleanHeader)) continue;
+
+                if (!string.IsNullOrEmpty(field) &&
+                    string.Equals(field, sortField, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(sortField, "Default", StringComparison.OrdinalIgnoreCase))
+                {
+                    col.Header = isAscending ? $"{cleanHeader} ▲" : $"{cleanHeader} ▼";
+                }
+                else
+                {
+                    col.Header = cleanHeader;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"[BansTabView] Sort glyph update notice: {ex.Message}");
         }
     }
 
@@ -125,7 +175,6 @@ public partial class BansTabView : UserControl
                 }
             }
 
-            // Suppress context menu on empty area or headers
             BansGrid.SelectedItem = null;
             e.Handled = true;
         }

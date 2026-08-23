@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
@@ -15,7 +16,7 @@ public class ToastNotificationService
 
     public void ShowToast(string title, string message, string? commandExecuted = null, Func<Task>? undoAction = null, ToastType type = ToastType.Info)
     {
-        AppLogger.Info($"[TOAST:{type}] {title}: {message} [Command: {commandExecuted ?? "N/A"}]");
+        AppLogger.Info($"[TOAST:{type}] {title}: {message} [Command: {commandExecuted ?? "N/A"}] (Has Undo: {undoAction != null})");
 
         if (type is ToastType.Error or ToastType.Warning)
         {
@@ -34,26 +35,40 @@ public class ToastNotificationService
         {
             toast.UndoCommand = new AsyncRelayCommand(async () =>
             {
+                var sw = Stopwatch.StartNew();
                 try
                 {
-                    AppLogger.Info($"[TOAST UNDO] Executing undo action for toast: {title}");
+                    AppLogger.Info($"[TOAST UNDO] Executing undo action for toast: '{title}'...");
                     ActiveToasts.Remove(toast);
                     await undoAction();
+                    sw.Stop();
+                    AppLogger.Info($"[TOAST UNDO] Undo action for '{title}' completed in {sw.ElapsedMilliseconds} ms.");
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Error($"Error executing toast undo action: {ex.Message}", ex);
+                    sw.Stop();
+                    AppLogger.Error($"[TOAST UNDO] Error executing toast undo action: {ex.Message}", ex);
                     ShowError("Undo Failed", $"Could not revert action: {ex.Message}");
                 }
             });
         }
 
-        Dispatcher.UIThread.Post(() => ActiveToasts.Add(toast));
+        Dispatcher.UIThread.Post(() =>
+        {
+            ActiveToasts.Add(toast);
+            AppLogger.Trace($"[ToastNotificationService] Added toast '{title}' to visual queue (Total active: {ActiveToasts.Count}).");
+        });
 
         _ = Task.Run(async () =>
         {
             await Task.Delay(5000);
-            Dispatcher.UIThread.Post(() => ActiveToasts.Remove(toast));
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (ActiveToasts.Remove(toast))
+                {
+                    AppLogger.Trace($"[ToastNotificationService] Auto-dismissed toast '{title}'.");
+                }
+            });
         });
     }
 
@@ -68,6 +83,12 @@ public class ToastNotificationService
 
     public void Dismiss(ToastNotificationModel toast)
     {
-        Dispatcher.UIThread.Post(() => ActiveToasts.Remove(toast));
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ActiveToasts.Remove(toast))
+            {
+                AppLogger.Trace($"[ToastNotificationService] Manually dismissed toast '{toast.Title}'.");
+            }
+        });
     }
 }

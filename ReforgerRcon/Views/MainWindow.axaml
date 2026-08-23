@@ -9,15 +9,16 @@
                      xmlns:models="using:ReforgerRcon.Models"
                      x:Class="ReforgerRcon.Views.MainWindow"
                      x:DataType="vm:MainViewModel"
-                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.8.2"
+                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.8.49"
+                     Icon="/Assets/app.ico"
                      Width="1696" Height="937"
                      MinWidth="960" MinHeight="640"
                      WindowStartupLocation="CenterScreen"
                      WindowChromeMode="Extended"
-                     UseWindowGlass="True">
+                     UseWindowGlass="False">
 
   <lumina:LuminaWindow.TitleBarLeftContent>
-    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.8.2" 
+    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.8.49" 
                FontSize="11" 
                FontWeight="Bold" 
                Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
@@ -35,7 +36,6 @@
   </lumina:LuminaWindow.TitleBarRightContent>
 
   <Grid>
-    <!-- Dynamic View Hosting (Login / Dashboard) -->
     <TransitioningContentControl Content="{Binding CurrentView}">
       <TransitioningContentControl.DataTemplates>
         <DataTemplate DataType="vm:LoginViewModel">
@@ -47,7 +47,6 @@
       </TransitioningContentControl.DataTemplates>
     </TransitioningContentControl>
 
-    <!-- Global Toast Notifications Layer with Distinct Status Types & Accent Colors -->
     <ItemsControl ItemsSource="{Binding Source={x:Static services:ToastNotificationService.Instance}, Path=ActiveToasts}"
                   HorizontalAlignment="Right"
                   VerticalAlignment="Bottom"
@@ -58,7 +57,6 @@
           <lumina:LuminaCard Margin="0,4" Padding="14,10" Classes="Elevated" MinWidth="340" MaxWidth="480"
                              BorderBrush="{Binding AccentBrush}" BorderThickness="1.5">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" VerticalAlignment="Center">
-              <!-- Type Accent Icon -->
               <icons:MaterialIcon Grid.Column="0" Kind="{Binding IconKind}" Foreground="{Binding AccentBrush}" Width="20" Height="20" VerticalAlignment="Top" Margin="0,2,0,0"/>
 
               <StackPanel Grid.Column="1" Spacing="2">
@@ -68,7 +66,7 @@
                            IsVisible="{Binding HasCommand}"
                            FontSize="10" FontFamily="Consolas, monospace" Foreground="{Binding AccentBrush}" />
               </StackPanel>
-              
+
               <Button Grid.Column="2" Classes="Small Primary" Content="Undo" 
                       IsVisible="{Binding HasUndo}"
                       Command="{Binding UndoCommand}" Margin="4,0,0,0"/>
@@ -81,7 +79,6 @@
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
-    <!-- Global Modal Error / Crash Dialog Overlay -->
     <Border Background="#A0000000" 
             IsVisible="{Binding IsErrorDialogVisible}" 
             ZIndex="99999"

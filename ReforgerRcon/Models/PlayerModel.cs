@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using CommunityToolkit.Mvvm.ComponentModel;
+using ReforgerRcon.Services;
 
 namespace ReforgerRcon.Models;
 
@@ -11,6 +13,8 @@ public partial class PlayerModel : ObservableObject
     [ObservableProperty] public partial string Name { get; set; } = string.Empty;
     [ObservableProperty] public partial string Uid { get; set; } = string.Empty;
     [ObservableProperty] public partial string Guid { get; set; } = string.Empty;
+    [ObservableProperty] public partial string ReforgerUid { get; set; } = string.Empty;
+    [ObservableProperty] public partial string BattlEyeGuid { get; set; } = string.Empty;
     [ObservableProperty] public partial string Ip { get; set; } = "127.0.0.1";
     [ObservableProperty] public partial int Port { get; set; } = 2304;
     [ObservableProperty] public partial int Ping { get; set; } = 25;
@@ -22,12 +26,17 @@ public partial class PlayerModel : ObservableObject
 
     [ObservableProperty] public partial bool HasAliases { get; set; }
     [ObservableProperty] public partial bool IsSelected { get; set; }
-    [ObservableProperty] public partial CountryInfo Country { get; set; } = new() { Code = "us", Name = "United States" };
+    [ObservableProperty] public partial CountryInfo Country { get; set; } = new() { Code = "xx", Name = "Unknown Region" };
     [ObservableProperty] public partial List<string> Aliases { get; set; } = [];
-    [ObservableProperty] public partial string LocationCity { get; set; } = "Frankfurt";
-    [ObservableProperty] public partial string LocationState { get; set; } = "Hesse";
+    [ObservableProperty] public partial string LocationCity { get; set; } = string.Empty;
+    [ObservableProperty] public partial string LocationState { get; set; } = string.Empty;
+    [ObservableProperty] public partial string DisplayLocation { get; set; } = string.Empty;
+    [ObservableProperty] public partial string TimeZone { get; set; } = string.Empty;
+
+    public bool HasReforgerUid => !string.IsNullOrWhiteSpace(ReforgerUid) && ReforgerUid.Length == 36 && ReforgerUid.Contains('-');
+    public bool HasBattlEyeGuid => !string.IsNullOrWhiteSpace(BattlEyeGuid) && BattlEyeGuid.Length == 32 && !BattlEyeGuid.Contains('-');
 
     public string FormattedEndpoint => $"{Ip}:{Port}";
-    public string DisplayLocation => $"{LocationCity}, {LocationState}, {Country.Name}";
+    public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);
     public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
 }

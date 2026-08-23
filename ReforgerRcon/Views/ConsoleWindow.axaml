@@ -7,11 +7,12 @@
                      x:Class="ReforgerRcon.Views.ConsoleWindow"
                      x:DataType="vm:ConsoleViewModel"
                      Title="ARMA Reforger - RCON Console (DETACHED)"
+                     Icon="/Assets/app.ico"
                      Width="920" Height="580"
                      MinWidth="600" MinHeight="360"
                      WindowStartupLocation="CenterOwner"
                      WindowChromeMode="Extended"
-                     UseWindowGlass="True">
+                     UseWindowGlass="False">
 
   <lumina:LuminaWindow.TitleBarLeftContent>
     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">

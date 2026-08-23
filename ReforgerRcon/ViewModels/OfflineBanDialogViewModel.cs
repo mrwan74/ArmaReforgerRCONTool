@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Net;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -69,12 +70,14 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
             IsTargetTypeSelectionVisible = false;
         }
 
+        AppLogger.Info($"[OfflineBanDialog] Initialized for target UID: '{_uid}', IP: '{_ip}' ({TargetType})");
         UpdateCalculations();
     }
 
     partial void OnSelectedPresetChanged(string value)
     {
         OnPropertyChanged(nameof(IsCustomSelected));
+        AppLogger.Debug($"[OfflineBanDialog] Preset changed to '{value}'.");
         UpdateCalculations();
     }
 
@@ -135,6 +138,8 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
         if (IsExecuting) return;
         IsExecuting = true;
 
+        using var timing = AppLogger.Measure($"OfflineBanDialogViewModel.ConfirmAsync('{_uid}')");
+
         try
         {
             var totalSec = CalculateTotalSeconds();
@@ -142,6 +147,7 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
             bool banIp = !IsReforgerProtocol && (TargetType.Contains("IP", StringComparison.OrdinalIgnoreCase) || TargetType.Contains("Both", StringComparison.OrdinalIgnoreCase));
 
             bool allSucceeded = true;
+            AppLogger.Info($"[OfflineBanDialog] Executing offline ban for UID: '{_uid}', IP: '{_ip}' (Ban UID: {banUid}, Ban IP: {banIp}, Total Seconds: {totalSec})...");
 
             if (banUid)
             {
@@ -151,12 +157,14 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
                     if (!uidSuccess)
                     {
                         allSucceeded = false;
+                        AppLogger.Warn($"[OfflineBanDialog] Server rejected offline ban for UID: '{_uid}'.");
                         ToastNotificationService.Instance.ShowError("Offline Ban Failed", $"Server rejected ban for UID: {_uid}.");
                     }
                 }
                 else
                 {
                     allSucceeded = false;
+                    AppLogger.Warn("[OfflineBanDialog] Offline ban aborted: UID is missing or invalid.");
                     ToastNotificationService.Instance.ShowError("Invalid Target", "Cannot ban target: UID is missing or invalid.");
                 }
             }
@@ -167,18 +175,21 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
                 if (!ipSuccess)
                 {
                     allSucceeded = false;
+                    AppLogger.Warn($"[OfflineBanDialog] Server rejected offline IP ban for '{_ip}'.");
                     ToastNotificationService.Instance.ShowError("IP Ban Failed", $"Server rejected IP ban for {_ip}.");
                 }
             }
 
             if (allSucceeded)
             {
+                AppLogger.Info("[OfflineBanDialog] Offline ban confirmed successfully.");
                 ToastNotificationService.Instance.ShowSuccess(
                     "Offline Ban Complete",
                     $"Offline ban confirmed for {_uid}",
                     IsReforgerProtocol ? $"#ban create {_uid} {totalSec}" : $"addBan {_uid}",
                     async () =>
                     {
+                        AppLogger.Info($"[OfflineBanDialog] Undo action triggered for offline ban '{_uid}'. Removing ban...");
                         var allBans = await _rconService.GetBansAsync();
                         var ban = allBans.Find(b => b.IdentityId == _uid || b.IdentityId == _ip);
                         if (ban != null)
@@ -203,6 +214,7 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
     private void Close()
     {
         if (IsExecuting) return;
+        AppLogger.Debug("[OfflineBanDialog] Operator closed offline ban dialog.");
         _parent.CloseDialog();
     }
 }

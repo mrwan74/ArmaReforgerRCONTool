@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
@@ -42,6 +43,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     private void SetTab(string tab)
     {
+        AppLogger.Debug($"[ErrorDetailsDialog] Switched diagnostic tab to: '{tab}'");
         SelectedTab = tab;
     }
 
@@ -80,14 +82,16 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     public static void OpenLogFolder(string? filePath)
     {
+        var targetPath = filePath;
+        if (string.IsNullOrEmpty(targetPath))
+        {
+            targetPath = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
+        }
+
+        AppLogger.Info($"[ErrorDetailsDialog] Requesting native file manager to highlight: '{targetPath}'");
+
         try
         {
-            var targetPath = filePath;
-            if (string.IsNullOrEmpty(targetPath))
-            {
-                targetPath = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
-            }
-
             if (OperatingSystem.IsWindows())
             {
                 var explorerPath = ResolveExplorerPath();
@@ -160,9 +164,19 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
                 }
             }
         }
+        catch (Win32Exception winEx)
+        {
+            AppLogger.Error($"[ErrorDetailsDialog] Win32 error opening file manager for '{targetPath}': {winEx.Message}", winEx);
+            ToastNotificationService.Instance.ShowToast("File Manager Error", "Unable to launch system file explorer.");
+        }
+        catch (IOException ioEx)
+        {
+            AppLogger.Error($"[ErrorDetailsDialog] I/O error accessing path '{targetPath}': {ioEx.Message}", ioEx);
+            ToastNotificationService.Instance.ShowToast("File Manager Error", "Path is not accessible.");
+        }
         catch (Exception ex)
         {
-            AppLogger.Error("Failed to open crash log folder in native file manager.", ex);
+            AppLogger.Error($"[ErrorDetailsDialog] Unexpected error launching file manager for '{targetPath}'", ex);
             ToastNotificationService.Instance.ShowToast("File Manager Error", "Unable to launch native file explorer.");
         }
     }
@@ -179,6 +193,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         var success = await ClipboardService.SetTextAsync(content);
         if (success)
         {
+            AppLogger.Info($"[ErrorDetailsDialog] Copied full diagnostic crash report ({content.Length} chars) to clipboard.");
             ToastNotificationService.Instance.ShowToast("Copied", "Full diagnostic crash report with breadcrumbs and system stats copied to clipboard.");
         }
     }
@@ -190,6 +205,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         var success = await ClipboardService.SetTextAsync(Report.DumpFilePath);
         if (success)
         {
+            AppLogger.Info($"[ErrorDetailsDialog] Copied dump file path '{Report.DumpFilePath}' to clipboard.");
             ToastNotificationService.Instance.ShowToast("Copied", "Memory dump file path copied to clipboard.");
         }
     }
@@ -197,6 +213,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     public static void RestartApp()
     {
+        AppLogger.Info("[ErrorDetailsDialog] Restart application command executed by operator.");
         try
         {
             var exePath = Environment.ProcessPath;
@@ -217,5 +234,9 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     }
 
     [RelayCommand]
-    private void Close() => _onClose();
+    private void Close()
+    {
+        AppLogger.Debug("[ErrorDetailsDialog] Operator closed crash diagnostic window.");
+        _onClose();
+    }
 }

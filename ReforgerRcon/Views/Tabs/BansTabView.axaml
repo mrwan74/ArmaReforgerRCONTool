@@ -38,8 +38,17 @@
             </StackPanel>
           </Button>
 
-          <Button Classes="Outline Small" Content="loadBans" Command="{Binding LoadBansCommand}" IsVisible="{Binding IsBattlEyeProtocol}" />
-          <Button Classes="Outline Small" Content="writeBans" Command="{Binding WriteBansCommand}" IsVisible="{Binding IsBattlEyeProtocol}" />
+          <Button Classes="Outline Small" 
+                  Content="Load Bans" 
+                  Command="{Binding LoadBansCommand}" 
+                  IsVisible="{Binding IsBattlEyeProtocol}"
+                  ToolTip.Tip="(Re)load the BE ban list from bans.txt in your BE working directory. Issue loadBans command after an offline/IP ban for it to take effect." />
+
+          <Button Classes="Outline Small" 
+                  Content="Write Bans" 
+                  Command="{Binding WriteBansCommand}" 
+                  IsVisible="{Binding IsBattlEyeProtocol}"
+                  ToolTip.Tip="Re-write the current ban list to bans.txt in your BE working directory. This command can be used to remove expired bans." />
         </StackPanel>
 
         <ToggleButton Grid.Column="2" Classes="Outline Small" IsChecked="{Binding IsMultiSelectMode}" Content="Multi-Select" />
@@ -59,7 +68,7 @@
               SelectionMode="Single"
               Margin="0"
               x:CompileBindings="False">
-      
+
       <DataGrid.ContextMenu>
         <ContextMenu>
           <MenuItem Header="Remove Ban" Command="{Binding RemoveBanCommand}" CommandParameter="{Binding SelectedBan}" />

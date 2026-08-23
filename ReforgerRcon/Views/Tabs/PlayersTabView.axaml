@@ -13,6 +13,7 @@
     <Style Selector="DataGridColumnHeader">
       <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="Padding" Value="10,0" />
+      <Setter Property="ToolTip.Tip" Value="Click to cycle sort: Ascending → Descending → Default" />
     </Style>
     <Style Selector="DataGridCell">
       <Setter Property="Focusable" Value="False" />
@@ -65,6 +66,7 @@
               CanUserResizeColumns="True"
               CanUserReorderColumns="True"
               CanUserSortColumns="True"
+              Sorting="OnDataGridSorting"
               SelectionMode="Single"
               DoubleTapped="OnGridDoubleTapped"
               Margin="0"
@@ -126,7 +128,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="114" MinWidth="75">
+        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="114" MinWidth="75" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -137,9 +139,9 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="110" MinWidth="95" />
+        <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="110" MinWidth="95" CanUserSort="True" />
 
-        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="256" MinWidth="130">
+        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="256" MinWidth="130" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <TextBlock Text="{Binding Name}" 
@@ -152,21 +154,26 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="396" MinWidth="150" />
+        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding Uid}" Width="396" MinWidth="150" CanUserSort="True" />
 
-        <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" />
+        <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" CanUserSort="True" />
 
-        <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70">
+        <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center">
-                <lumina:LuminaImage Source="{Binding Country.FlagUrl}" Width="32" Height="22" Stretch="Uniform" ToolTip.Tip="{Binding Country.Name}" />
+                <Border CornerRadius="3" ClipToBounds="True" BoxShadow="0 1 3 #30000000">
+                  <Image Source="{Binding Country.FlagImage}" 
+                         Width="36" Height="25" 
+                         Stretch="Uniform" 
+                         ToolTip.Tip="{Binding DisplayLocation}" />
+                </Border>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120">
+        <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <TextBlock Text="{Binding Name}" 
@@ -179,11 +186,11 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding Guid}" Width="343" MinWidth="150" />
+        <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding Guid}" Width="343" MinWidth="150" CanUserSort="True" />
 
-        <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" />
+        <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" CanUserSort="True" />
 
-        <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65">
+        <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <TextBlock Text="{Binding Ping, StringFormat='{}{0} ms'}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
@@ -191,9 +198,9 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="434" MinWidth="120" />
+        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="348" MinWidth="120" CanUserSort="True" />
 
-        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180">
+        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,0,8,0">

@@ -56,6 +56,7 @@ public partial class PlayersTabView : UserControl
                         ColumnLayoutStorageService.BindPersistence(PlayersGrid, gridKey);
 
                         UpdateColumnVisibilities();
+                        UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
 
                         vm.PropertyChanged += (s, e) =>
                         {
@@ -78,7 +79,10 @@ public partial class PlayersTabView : UserControl
                                                      nameof(PlayersViewModel.IsReforgerProtocol) or
                                                      nameof(PlayersViewModel.IsBattlEyeProtocol))
                             {
+                                var activeKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
+                                ColumnLayoutStorageService.RestoreGridState(PlayersGrid, activeKey);
                                 UpdateColumnVisibilities();
+                                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
                             }
                         };
                     }
@@ -94,6 +98,53 @@ public partial class PlayersTabView : UserControl
         catch (Exception ex)
         {
             AppLogger.Error("Failed during PlayersTabView constructor initialization.", ex);
+        }
+    }
+
+    private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
+    {
+        e.Handled = true;
+        var tag = e.Column.Tag?.ToString() ?? "";
+        if (DataContext is PlayersViewModel vm)
+        {
+            vm.CycleColumnSort(tag);
+            UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+        }
+    }
+
+    private static string GetCleanHeader(DataGridColumn col)
+    {
+        var headerText = col.Header?.ToString() ?? string.Empty;
+        return headerText.TrimEnd(' ', '▲', '▼');
+    }
+
+    private void UpdateColumnSortGlyphs(string sortField, bool isAscending)
+    {
+        try
+        {
+            foreach (var col in PlayersGrid.Columns)
+            {
+                var tag = col.Tag?.ToString() ?? "";
+                var field = PlayersViewModel.MapColumnTagToSortField(tag);
+                var cleanHeader = GetCleanHeader(col);
+
+                if (string.IsNullOrEmpty(cleanHeader)) continue;
+
+                if (!string.IsNullOrEmpty(field) &&
+                    string.Equals(field, sortField, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(sortField, "Default", StringComparison.OrdinalIgnoreCase))
+                {
+                    col.Header = isAscending ? $"{cleanHeader} ▲" : $"{cleanHeader} ▼";
+                }
+                else
+                {
+                    col.Header = cleanHeader;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"[PlayersTabView] Sort glyph update notice: {ex.Message}");
         }
     }
 

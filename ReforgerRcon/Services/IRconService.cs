@@ -16,6 +16,9 @@ public interface IRconService : IDisposable
     event EventHandler<string>? OutputReceived;
     event EventHandler<PlayerModel>? PlayerJoined;
     event EventHandler<PlayerModel>? PlayerLeft;
+    event EventHandler<(string Name, int Id, string Reason)>? PlayerKickedStream;
+    event EventHandler<(string Name, int Id, string Guid, string Reason)>? PlayerBannedStream;
+    event EventHandler<(int AdminId, string Endpoint)>? AdminConnectedStream;
     event EventHandler<string>? ConnectionLost;
 
     Task<bool> ConnectAsync(ServerProfile profile);
@@ -24,9 +27,11 @@ public interface IRconService : IDisposable
     Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default);
     Task<List<BanModel>> GetBansAsync(CancellationToken cancellationToken = default);
     Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default);
+    Task<List<AdminModel>> GetAdminsAsync(CancellationToken cancellationToken = default);
 
     Task<bool> KickPlayerAsync(PlayerModel player, string reason, CancellationToken cancellationToken = default);
     Task<bool> BanPlayerAsync(PlayerModel player, long durationSeconds, string reason, CancellationToken cancellationToken = default);
+    Task<bool> BanPlayerWithOptionalIpAsync(PlayerModel player, long durationSeconds, string reason, bool banIp, CancellationToken cancellationToken = default);
     Task<bool> OfflineBanAsync(string identity, long durationSeconds, string reason, bool isIp, CancellationToken cancellationToken = default);
     Task<bool> RemoveBanAsync(BanModel ban, CancellationToken cancellationToken = default);
 

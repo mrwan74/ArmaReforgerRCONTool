@@ -20,7 +20,7 @@ public partial class MainViewModel : ViewModelBase
 
     private void OnUnhandledErrorCaptured(ErrorReportModel report)
     {
-        AppLogger.Info($"MainViewModel presenting global crash dialog: {report.ErrorId}");
+        AppLogger.Info($"MainViewModel presenting global crash dialog: #{report.ErrorId} ({report.ExceptionType})");
         CurrentErrorViewModel = new ErrorDetailsDialogViewModel(report, CloseErrorDialog);
         IsErrorDialogVisible = true;
     }

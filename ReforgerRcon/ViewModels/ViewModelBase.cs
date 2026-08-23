@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.Data.Sqlite;
 using ReforgerRcon.Services;
 using Sentry;
 using SerilogTimings;
@@ -16,6 +18,10 @@ namespace ReforgerRcon.ViewModels;
 
 public abstract class ViewModelBase : ObservableObject
 {
+    private const string UiActionErrorsMetric = "ui_action_errors";
+    private const string ErrorTypeTag = "error_type";
+    private const string ActionTag = "action";
+
     protected async Task<bool> ExecuteSafeAsync(
         Func<Task> action,
         string? userFriendlyErrorMessage = null,
@@ -23,6 +29,8 @@ public abstract class ViewModelBase : ObservableObject
         [CallerFilePath] string callerPath = "",
         [CallerLineNumber] int callerLine = 0)
     {
+        ArgumentNullException.ThrowIfNull(action);
+
         var callerType = GetType().Name;
         var transaction = SentrySdk.StartTransaction(actionName, $"ui.action.{callerType}");
         using var op = Operation.Begin("Execute {ActionName} on {CallerType}", actionName, callerType);
@@ -30,7 +38,7 @@ public abstract class ViewModelBase : ObservableObject
 
         SentrySdk.Metrics.EmitCounter("ui_action_invoked", 1,
         [
-            new KeyValuePair<string, object>("action", actionName),
+            new KeyValuePair<string, object>(ActionTag, actionName),
             new KeyValuePair<string, object>("caller", callerType)
         ]);
 
@@ -43,19 +51,19 @@ public abstract class ViewModelBase : ObservableObject
 
             SentrySdk.Metrics.EmitDistribution("ui_action_duration_ms", sw.ElapsedMilliseconds, MeasurementUnit.Duration.Millisecond,
             [
-                new KeyValuePair<string, object>("action", actionName),
+                new KeyValuePair<string, object>(ActionTag, actionName),
                 new KeyValuePair<string, object>("outcome", "success")
             ]);
 
             return true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException opEx)
         {
             sw.Stop();
             op.Cancel();
             transaction.Finish(SpanStatus.Cancelled);
 
-            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() was cancelled."), member: actionName, path: callerPath, line: callerLine);
+            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() was cancelled: {opEx.Message}"), member: actionName, path: callerPath, line: callerLine);
             return false;
         }
         catch (SocketException sockEx)
@@ -64,15 +72,18 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = sockEx.Demystify();
             transaction.Finish(SpanStatus.Unavailable);
 
-            SentrySdk.Metrics.EmitCounter("ui_action_errors", 1,
+            SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
-                new KeyValuePair<string, object>("action", actionName),
-                new KeyValuePair<string, object>("error_type", "socket")
+                new KeyValuePair<string, object>(ActionTag, actionName),
+                new KeyValuePair<string, object>(ErrorTypeTag, "socket"),
+                new KeyValuePair<string, object>("socket_code", sockEx.SocketErrorCode.ToString())
             ]);
 
-            var msg = userFriendlyErrorMessage ?? $"Network socket failure during '{actionName}': {sockEx.SocketErrorCode}";
-            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:SocketError] {callerType}.{actionName}(): {sockEx.SocketErrorCode}"), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("Connection Failure", msg, actionName);
+            var msg = userFriendlyErrorMessage ?? $"Network failure ({sockEx.SocketErrorCode}). Verify server IP, port, and firewall status.";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:SocketError] {callerType}.{actionName}(): SocketErrorCode={sockEx.SocketErrorCode}, NativeErrorCode={sockEx.NativeErrorCode}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+            ToastNotificationService.Instance.ShowError("Network Communication Error", msg, actionName);
             return false;
         }
         catch (TimeoutException timeEx)
@@ -81,15 +92,57 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = timeEx.Demystify();
             transaction.Finish(SpanStatus.DeadlineExceeded);
 
-            SentrySdk.Metrics.EmitCounter("ui_action_errors", 1,
+            SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
-                new KeyValuePair<string, object>("action", actionName),
-                new KeyValuePair<string, object>("error_type", "timeout")
+                new KeyValuePair<string, object>(ActionTag, actionName),
+                new KeyValuePair<string, object>(ErrorTypeTag, "timeout")
             ]);
 
-            var msg = userFriendlyErrorMessage ?? $"Operation '{actionName}' timed out waiting for server.";
-            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:Timeout] {callerType}.{actionName}() timed out."), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("Operation Timeout", msg, actionName);
+            var msg = userFriendlyErrorMessage ?? $"Request '{actionName}' timed out waiting for game server response.";
+            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:Timeout] {callerType}.{actionName}() timed out after {sw.ElapsedMilliseconds} ms."), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.WarningAlert);
+            ToastNotificationService.Instance.ShowWarning("Request Timed Out", msg, actionName);
+            return false;
+        }
+        catch (SqliteException sqlEx)
+        {
+            sw.Stop();
+            var demystified = sqlEx.Demystify();
+            transaction.Finish(SpanStatus.InternalError);
+
+            SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
+            [
+                new KeyValuePair<string, object>(ActionTag, actionName),
+                new KeyValuePair<string, object>(ErrorTypeTag, "sqlite"),
+                new KeyValuePair<string, object>("sqlite_code", sqlEx.SqliteErrorCode.ToString())
+            ]);
+
+            var msg = userFriendlyErrorMessage ?? $"SQLite storage fault (Code: {sqlEx.SqliteErrorCode}): {sqlEx.Message}";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:SqliteError] {callerType}.{actionName}(): SqliteErrorCode={sqlEx.SqliteErrorCode}, ExtendedCode={sqlEx.SqliteExtendedErrorCode}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+            ToastNotificationService.Instance.ShowError("Database Storage Error", msg, actionName);
+            return false;
+        }
+        catch (HttpRequestException httpEx)
+        {
+            sw.Stop();
+            var demystified = httpEx.Demystify();
+            transaction.Finish(SpanStatus.Unavailable);
+
+            SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
+            [
+                new KeyValuePair<string, object>(ActionTag, actionName),
+                new KeyValuePair<string, object>(ErrorTypeTag, "http"),
+                new KeyValuePair<string, object>("status_code", httpEx.StatusCode?.ToString() ?? "None")
+            ]);
+
+            var msg = userFriendlyErrorMessage ?? $"HTTP request failed ({httpEx.StatusCode?.ToString() ?? "No Response"}): {httpEx.Message}";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:HttpError] {callerType}.{actionName}(): StatusCode={httpEx.StatusCode}, HttpRequestError={httpEx.HttpRequestError}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.WarningAlert);
+            ToastNotificationService.Instance.ShowError("HTTP Web Service Error", msg, actionName);
             return false;
         }
         catch (JsonException jsonEx)
@@ -98,9 +151,24 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = jsonEx.Demystify();
             transaction.Finish(SpanStatus.InvalidArgument);
 
-            var msg = userFriendlyErrorMessage ?? $"Data parsing failure during '{actionName}'.";
-            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:JsonError] {callerType}.{actionName}()"), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("Data Format Error", msg, actionName);
+            var msg = userFriendlyErrorMessage ?? $"Data parsing error: {jsonEx.Message}";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:JsonError] {callerType}.{actionName}(): LineNumber={jsonEx.LineNumber}, Path={jsonEx.Path}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.WarningAlert);
+            ToastNotificationService.Instance.ShowError("JSON Format Error", msg, actionName);
+            return false;
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            sw.Stop();
+            var demystified = authEx.Demystify();
+            transaction.Finish(SpanStatus.PermissionDenied);
+
+            var msg = userFriendlyErrorMessage ?? "File access was denied by the operating system. Check application folder permissions.";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:AccessDenied] {callerType}.{actionName}(): {authEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+            ToastNotificationService.Instance.ShowError("Access Denied", msg, actionName);
             return false;
         }
         catch (IOException ioEx)
@@ -109,9 +177,35 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = ioEx.Demystify();
             transaction.Finish(SpanStatus.InternalError);
 
-            var msg = userFriendlyErrorMessage ?? $"File access error during '{actionName}': {ioEx.Message}";
-            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:IOError] {callerType}.{actionName}()"), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("Disk Error", msg, actionName);
+            var msg = userFriendlyErrorMessage ?? $"Disk read/write failure: {ioEx.Message}";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:IOError] {callerType}.{actionName}(): HResult=0x{ioEx.HResult:X8}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+            ToastNotificationService.Instance.ShowError("Disk I/O Error", msg, actionName);
+            return false;
+        }
+        catch (ArgumentException argEx)
+        {
+            sw.Stop();
+            var demystified = argEx.Demystify();
+            transaction.Finish(SpanStatus.InvalidArgument);
+
+            var msg = userFriendlyErrorMessage ?? $"Invalid parameter supplied: {argEx.Message}";
+            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:ArgumentError] {callerType}.{actionName}(): ParamName={argEx.ParamName}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowWarning("Invalid Parameter", msg, actionName);
+            return false;
+        }
+        catch (InvalidOperationException invOpEx)
+        {
+            sw.Stop();
+            var demystified = invOpEx.Demystify();
+            transaction.Finish(SpanStatus.FailedPrecondition);
+
+            var msg = userFriendlyErrorMessage ?? $"Operation '{actionName}' cannot be completed in current state: {invOpEx.Message}";
+            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:InvalidOperation] {callerType}.{actionName}(): {invOpEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowWarning("Invalid State", msg, actionName);
             return false;
         }
         catch (Exception ex)
@@ -120,15 +214,17 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = ex.Demystify();
             transaction.Finish(SpanStatus.UnknownError);
 
-            SentrySdk.Metrics.EmitCounter("ui_action_errors", 1,
+            SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
-                new KeyValuePair<string, object>("action", actionName),
-                new KeyValuePair<string, object>("error_type", demystified.GetType().Name)
+                new KeyValuePair<string, object>(ActionTag, actionName),
+                new KeyValuePair<string, object>(ErrorTypeTag, demystified.GetType().Name)
             ]);
 
-            var msg = userFriendlyErrorMessage ?? $"Operation '{actionName}' encountered an unexpected error: {ex.Message}";
-            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:Unexpected] {callerType}.{actionName}()"), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("System Alert", msg, actionName);
+            var msg = userFriendlyErrorMessage ?? $"Unexpected application error during '{actionName}': {ex.Message}";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:UnhandledException] {callerType}.{actionName}() encountered an unhandled fault: {ex.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+            ToastNotificationService.Instance.ShowError("System Alert", msg, actionName);
             return false;
         }
     }
@@ -140,6 +236,8 @@ public abstract class ViewModelBase : ObservableObject
         [CallerFilePath] string callerPath = "",
         [CallerLineNumber] int callerLine = 0)
     {
+        ArgumentNullException.ThrowIfNull(action);
+
         var callerType = GetType().Name;
         var transaction = SentrySdk.StartTransaction(actionName, $"ui.sync.{callerType}");
         using var op = Operation.Begin("Execute {ActionName} on {CallerType}", actionName, callerType);
@@ -155,7 +253,7 @@ public abstract class ViewModelBase : ObservableObject
         {
             op.Cancel();
             transaction.Finish(SpanStatus.Cancelled);
-            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() was cancelled."), member: actionName, path: callerPath, line: callerLine);
+            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() cancelled."), member: actionName, path: callerPath, line: callerLine);
             return false;
         }
         catch (ArgumentException argEx)
@@ -163,9 +261,21 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = argEx.Demystify();
             transaction.Finish(SpanStatus.InvalidArgument);
 
-            var msg = userFriendlyErrorMessage ?? $"Invalid parameter supplied to '{actionName}': {argEx.Message}";
-            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:ArgumentError] {callerType}.{actionName}()"), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("Invalid Parameter", msg, actionName);
+            var msg = userFriendlyErrorMessage ?? $"Invalid parameter supplied: {argEx.Message}";
+            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:ArgumentError] {callerType}.{actionName}(): ParamName={argEx.ParamName}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowWarning("Invalid Parameter", msg, actionName);
+            return false;
+        }
+        catch (InvalidOperationException invOpEx)
+        {
+            var demystified = invOpEx.Demystify();
+            transaction.Finish(SpanStatus.FailedPrecondition);
+
+            var msg = userFriendlyErrorMessage ?? $"Operation '{actionName}' cannot be executed in current state: {invOpEx.Message}";
+            AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:InvalidOperation] {callerType}.{actionName}(): {invOpEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowWarning("Invalid State", msg, actionName);
             return false;
         }
         catch (Exception ex)
@@ -174,8 +284,10 @@ public abstract class ViewModelBase : ObservableObject
             transaction.Finish(SpanStatus.UnknownError);
 
             var msg = userFriendlyErrorMessage ?? $"Action '{actionName}' failed: {ex.Message}";
-            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:Failed] {callerType}.{actionName}()"), demystified, member: actionName, path: callerPath, line: callerLine);
-            ToastNotificationService.Instance.ShowToast("Action Error", msg, actionName);
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:UnhandledException] {callerType}.{actionName}() failed: {ex.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+            ToastNotificationService.Instance.ShowError("Action Error", msg, actionName);
             return false;
         }
     }

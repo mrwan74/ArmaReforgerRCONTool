@@ -8,7 +8,99 @@
 
   <ScrollViewer Margin="24">
     <StackPanel Spacing="20" MaxWidth="720" HorizontalAlignment="Left">
-      <TextBlock Text="Application Settings" Classes="Display" FontSize="24" />
+      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <TextBlock Text="Application Settings" Classes="Display" FontSize="24" />
+        <Button Grid.Column="1" Classes="Primary" Content="Save Preferences" Command="{Binding SaveSettingsCommand}" />
+      </Grid>
+
+      <!-- Appearance and Window Effects Card -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="PaletteOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="Appearance and Window Effects" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="Control OS-level backdrop material transparency effects (Windows Mica / Acrylic blur). When disabled (default), windows render with crisp, solid, high-contrast theme backgrounds." Classes="Caption" />
+
+          <ToggleSwitch Content="Window Glass / Blur Backdrop Effect (Mica / Acrylic)" 
+                        IsChecked="{Binding Settings.EnableWindowGlass}"
+                        ToolTip.Tip="Toggle between OS-level acrylic glass blur and solid theme backgrounds." />
+        </StackPanel>
+      </lumina:LuminaCard>
+
+      <!-- Table Display & Default Sorting Card -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="SortVariant" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="Table Display &amp; Default Sorting" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="Configure independent default sorting fields and order for each tab. 'Default' preserves the raw order as received directly from the server or database." Classes="Caption" />
+
+          <!-- 1. Players Tab Sorting -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+            <Grid ColumnDefinitions="140,*,140" ColumnSpacing="12" VerticalAlignment="Center">
+              <TextBlock Text="Players Tab:" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="1" 
+                        ItemsSource="{Binding PlayersSortOptions}" 
+                        SelectedItem="{Binding Settings.PlayersSortBy}"
+                        HorizontalAlignment="Stretch"
+                        ToolTip.Tip="Default shows the player list in the order received directly from the server." />
+              <ComboBox Grid.Column="2" 
+                        ItemsSource="{Binding SortDirections}" 
+                        SelectedItem="{Binding Settings.PlayersSortAscending, Converter={x:Static ObjectConverters.IsNull}}"
+                        SelectedIndex="{Binding Settings.PlayersSortAscending, Converter={x:Static ObjectConverters.IsNull}}"
+                        HorizontalAlignment="Stretch"
+                        IsVisible="False" />
+              <ToggleSwitch Grid.Column="2" 
+                            OnContent="Ascending" 
+                            OffContent="Descending" 
+                            IsChecked="{Binding Settings.PlayersSortAscending}" 
+                            HorizontalAlignment="Right" />
+            </Grid>
+          </Border>
+
+          <!-- 2. Bans Tab Sorting -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+            <Grid ColumnDefinitions="140,*,140" ColumnSpacing="12" VerticalAlignment="Center">
+              <TextBlock Text="Bans Tab:" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="1" 
+                        ItemsSource="{Binding BansSortOptions}" 
+                        SelectedItem="{Binding Settings.BansSortBy}"
+                        HorizontalAlignment="Stretch"
+                        ToolTip.Tip="Default shows the ban list in the order received directly from the server." />
+              <ToggleSwitch Grid.Column="2" 
+                            OnContent="Ascending" 
+                            OffContent="Descending" 
+                            IsChecked="{Binding Settings.BansSortAscending}" 
+                            HorizontalAlignment="Right" />
+            </Grid>
+          </Border>
+
+          <!-- 3. Players Database Tab Sorting -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+            <Grid ColumnDefinitions="140,*,140" ColumnSpacing="12" VerticalAlignment="Center">
+              <TextBlock Text="Players Database:" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="1" 
+                        ItemsSource="{Binding DatabaseSortOptions}" 
+                        SelectedItem="{Binding Settings.DatabaseSortBy}"
+                        HorizontalAlignment="Stretch"
+                        ToolTip.Tip="Default shows the historical player database in the order retrieved from the database (Last Seen)." />
+              <ToggleSwitch Grid.Column="2" 
+                            OnContent="Ascending" 
+                            OffContent="Descending" 
+                            IsChecked="{Binding Settings.DatabaseSortAscending}" 
+                            HorizontalAlignment="Right" />
+            </Grid>
+          </Border>
+        </StackPanel>
+      </lumina:LuminaCard>
 
       <!-- SQLite Database Storage Details Card -->
       <lumina:LuminaCard Padding="16">

@@ -68,7 +68,8 @@ public static partial class SoundNotificationService
                 _ => MbOk
             };
 
-            MessageBeep(soundType);
+            bool success = MessageBeep(soundType);
+            AppLogger.Trace($"[SoundNotificationService] Windows MessageBeep dispatched for {alertType} (Type: 0x{soundType:X8}, Success: {success}).");
         }
         catch (Exception ex)
         {

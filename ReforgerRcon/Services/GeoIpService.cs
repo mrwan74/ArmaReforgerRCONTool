@@ -5,7 +5,9 @@ using Sentry;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Formats.Tar;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -17,6 +19,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using TimeZoneConverter;
 
 namespace ReforgerRcon.Services;
 
@@ -27,7 +30,152 @@ public record GeoLocationResult(
     string SubdivisionName,
     string PostalCode,
     double? Latitude,
-    double? Longitude);
+    double? Longitude,
+    string TimeZone,
+    string NaturalLocation);
+
+public static class LocationFormatter
+{
+    public const string UnknownRegion = "Unknown Region";
+
+    public static string FormatNatural(
+        string countryCode,
+        string countryName,
+        string? cityName,
+        IReadOnlyList<(string Name, string IsoCode)> subdivisions)
+    {
+        if (string.IsNullOrWhiteSpace(countryName) ||
+            countryCode.Equals("xx", StringComparison.OrdinalIgnoreCase) ||
+            countryName.Equals("Direct Reforger Server", StringComparison.OrdinalIgnoreCase) ||
+            (countryCode.Equals("un", StringComparison.OrdinalIgnoreCase) && !string.Equals(countryName.Trim(), "United Nations", StringComparison.OrdinalIgnoreCase)))
+        {
+            return UnknownRegion;
+        }
+
+        var cleanCity = string.IsNullOrWhiteSpace(cityName) ||
+                        cityName.Equals("Connected Region", StringComparison.OrdinalIgnoreCase) ||
+                        cityName.Equals("Unknown City", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : cityName.Trim();
+
+        var code = countryCode.Trim().ToUpperInvariant();
+
+        if (code == "US")
+        {
+            if (subdivisions.Count > 0)
+            {
+                var (stateName, stateIso) = subdivisions[^1];
+                var stateStr = !string.IsNullOrWhiteSpace(stateIso) && !string.Equals(stateName, stateIso, StringComparison.OrdinalIgnoreCase)
+                    ? $"{stateName} ({stateIso})"
+                    : stateName;
+
+                return !string.IsNullOrEmpty(cleanCity)
+                    ? $"{cleanCity}, {stateStr}, {countryName}"
+                    : $"{stateStr}, {countryName}";
+            }
+
+            return !string.IsNullOrEmpty(cleanCity) ? $"{cleanCity}, {countryName}" : countryName;
+        }
+
+        if (code == "GB")
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(cleanCity))
+            {
+                parts.Add(cleanCity);
+            }
+
+            if (subdivisions.Count >= 2)
+            {
+                var constituent = subdivisions[0].Name;
+                var county = subdivisions[1].Name;
+
+                if (!string.Equals(county, cleanCity, StringComparison.OrdinalIgnoreCase))
+                {
+                    parts.Add(county);
+                }
+                if (!string.Equals(constituent, county, StringComparison.OrdinalIgnoreCase))
+                {
+                    parts.Add(constituent);
+                }
+            }
+            else if (subdivisions.Count == 1)
+            {
+                var sub = subdivisions[0].Name;
+                if (!string.Equals(sub, cleanCity, StringComparison.OrdinalIgnoreCase))
+                {
+                    parts.Add(sub);
+                }
+            }
+
+            parts.Add(countryName);
+            return string.Join(", ", parts);
+        }
+
+        if (code is "CA" or "AU" && subdivisions.Count > 0)
+        {
+            var (subName, subIso) = subdivisions[^1];
+            var subStr = !string.IsNullOrWhiteSpace(subIso) && !string.Equals(subName, subIso, StringComparison.OrdinalIgnoreCase)
+                ? $"{subName} ({subIso})"
+                : subName;
+
+            return !string.IsNullOrEmpty(cleanCity)
+                ? $"{cleanCity}, {subStr}, {countryName}"
+                : $"{subStr}, {countryName}";
+        }
+
+        var generalParts = new List<string>();
+        if (!string.IsNullOrEmpty(cleanCity))
+        {
+            generalParts.Add(cleanCity);
+        }
+
+        if (subdivisions.Count > 0)
+        {
+            var mostSpecific = subdivisions[^1].Name;
+            if (!string.Equals(mostSpecific, cleanCity, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(mostSpecific, countryName, StringComparison.OrdinalIgnoreCase))
+            {
+                generalParts.Add(mostSpecific);
+            }
+        }
+
+        generalParts.Add(countryName);
+        return string.Join(", ", generalParts);
+    }
+
+    public static string FormatLocalTime(string? ianaTimeZone)
+    {
+        if (string.IsNullOrWhiteSpace(ianaTimeZone))
+        {
+            return "Unknown Timezone";
+        }
+
+        try
+        {
+            if (TZConvert.TryGetTimeZoneInfo(ianaTimeZone.Trim(), out var tzInfo))
+            {
+                var nowUtc = DateTime.UtcNow;
+                var localTime = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, tzInfo);
+                var offset = tzInfo.GetUtcOffset(nowUtc);
+                var offsetSign = offset >= TimeSpan.Zero ? "+" : "-";
+                var offsetHours = Math.Abs(offset.Hours);
+                var offsetMinutes = Math.Abs(offset.Minutes);
+                var offsetStr = offsetMinutes == 0
+                    ? $"UTC{offsetSign}{offsetHours}"
+                    : $"UTC{offsetSign}{offsetHours}:{offsetMinutes:D2}";
+
+                return $"{localTime:hh:mm tt} ({ianaTimeZone.Trim()}, {offsetStr})";
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug($"[LocationFormatter] TimeZoneConverter notice for '{ianaTimeZone}': {ex.Message}");
+        }
+
+        return ianaTimeZone.Trim();
+    }
+}
 
 public static class GeoIpService
 {
@@ -80,6 +228,7 @@ public static class GeoIpService
             if (!Directory.Exists(GeoIpDirectory))
             {
                 Directory.CreateDirectory(GeoIpDirectory);
+                AppLogger.Debug($"[GeoIpService] Created GeoIP directory: {GeoIpDirectory}");
             }
         }
         catch (IOException ex)
@@ -101,7 +250,7 @@ public static class GeoIpService
 
         if (HasCustomCredentials)
         {
-            AppLogger.Info("[GeoIpService] MaxMind credentials detected. Scheduling initial HEAD check and background update loop...");
+            AppLogger.Info("[GeoIpService] MaxMind credentials detected. Scheduling background update check...");
 
             _periodicUpdateCts?.Cancel();
             _periodicUpdateCts?.Dispose();
@@ -113,11 +262,11 @@ public static class GeoIpService
         }
         else if (IsCityDbLoaded || IsCountryDbLoaded)
         {
-            AppLogger.Info("[GeoIpService] Running in offline pre-bundled mode. Geolocation lookups active without credential requirements.");
+            AppLogger.Info("[GeoIpService] Running in offline pre-bundled mode. Geolocation lookups active.");
         }
         else
         {
-            AppLogger.Info("[GeoIpService] Running in standalone mode. To enable automatic GeoIP database updates, enter your MaxMind credentials in Settings.");
+            AppLogger.Info("[GeoIpService] Running in standalone mode. Enter MaxMind credentials in Settings to enable automatic updates.");
         }
     }
 
@@ -128,12 +277,13 @@ public static class GeoIpService
         {
             while (!cancellationToken.IsCancellationRequested && await periodicTimer.WaitForNextTickAsync(cancellationToken))
             {
+                AppLogger.Debug("[GeoIpService] Periodic timer tick triggered for background database update check.");
                 await UpdateDatabasesAsync(force: false, cancellationToken);
             }
         }
         catch (OperationCanceledException)
         {
-            AppLogger.Debug("[GeoIpService] Periodic background GeoIP update loop terminated cleanly via cancellation token.");
+            AppLogger.Debug("[GeoIpService] Periodic background GeoIP update loop terminated cleanly.");
         }
         catch (Exception ex)
         {
@@ -166,7 +316,7 @@ public static class GeoIpService
             try
             {
                 File.Copy(sourcePath, destinationPath, overwrite: false);
-                AppLogger.Info($"[GeoIpService] Deployed pre-bundled '{fileName}' from '{sourcePath}' to '{destinationPath}'.");
+                AppLogger.Info($"[GeoIpService] Deployed pre-bundled '{fileName}' from '{sourcePath}' to '{destinationPath}' ({new FileInfo(destinationPath).Length / 1024} KB).");
                 break;
             }
             catch (IOException ex)
@@ -186,6 +336,7 @@ public static class GeoIpService
         var envKey = Environment.GetEnvironmentVariable("MAXMIND_LICENSE_KEY");
         if (!string.IsNullOrWhiteSpace(envAccount) && !string.IsNullOrWhiteSpace(envKey))
         {
+            AppLogger.Debug("[GeoIpService] Resolved MaxMind credentials from environment variables.");
             return (envAccount.Trim(), envKey.Trim());
         }
 
@@ -197,6 +348,7 @@ public static class GeoIpService
                 var settings = JsonSerializer.Deserialize<AppSettings>(json);
                 if (settings != null && !string.IsNullOrWhiteSpace(settings.MaxMindAccountId) && !string.IsNullOrWhiteSpace(settings.MaxMindLicenseKey))
                 {
+                    AppLogger.Debug("[GeoIpService] Resolved MaxMind credentials from settings.json.");
                     return (settings.MaxMindAccountId.Trim(), settings.MaxMindLicenseKey.Trim());
                 }
             }
@@ -238,6 +390,7 @@ public static class GeoIpService
 
                 if (!string.IsNullOrWhiteSpace(parsedAccount) && !string.IsNullOrWhiteSpace(parsedKey))
                 {
+                    AppLogger.Debug("[GeoIpService] Resolved MaxMind credentials from GeoIP.conf.");
                     return (parsedAccount.Trim(), parsedKey.Trim());
                 }
             }
@@ -252,6 +405,7 @@ public static class GeoIpService
 
     public static void ReloadReaders()
     {
+        using var timing = AppLogger.Measure("GeoIpService.ReloadReaders");
         lock (ReaderLock)
         {
             try
@@ -303,7 +457,7 @@ public static class GeoIpService
     {
         if (string.IsNullOrWhiteSpace(ip) || ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
         {
-            return new GeoLocationResult("un", "Unknown Region", "Unknown City", "Unknown State", string.Empty, null, null);
+            return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         }
 
         if (LookupCache.TryGetValue(ip, out var cached))
@@ -313,13 +467,15 @@ public static class GeoIpService
 
         if (!IPAddress.TryParse(ip, out var parsedIp))
         {
-            return new GeoLocationResult("un", "Unknown Region", "Invalid IP Format", "Unknown State", string.Empty, null, null);
+            AppLogger.Trace($"[GeoIpService] IP '{ip}' is not a valid IPAddress format.");
+            return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         }
 
         if (IsPrivateOrLoopbackIp(parsedIp))
         {
-            var localResult = new GeoLocationResult("un", "Local Network", "Internal LAN / Dedicated Host", "Local Subnet", string.Empty, 0.0, 0.0);
+            var localResult = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, "Local Subnet", "LAN", string.Empty, 0.0, 0.0, TimeZoneInfo.Local.Id, LocationFormatter.UnknownRegion);
             LookupCache[ip] = localResult;
+            AppLogger.Trace($"[GeoIpService] IP '{ip}' identified as private/loopback address.");
             return localResult;
         }
 
@@ -331,17 +487,25 @@ public static class GeoIpService
                 {
                     if (_cityReader.TryCity(parsedIp, out var cityResponse) && cityResponse != null)
                     {
-                        var countryCode = !string.IsNullOrEmpty(cityResponse.Country.IsoCode) ? cityResponse.Country.IsoCode.ToLowerInvariant() : "un";
-                        var countryName = !string.IsNullOrEmpty(cityResponse.Country.Name) ? cityResponse.Country.Name : "Unknown Country";
-                        var cityName = !string.IsNullOrEmpty(cityResponse.City.Name) ? cityResponse.City.Name : "Connected Region";
+                        var countryCode = !string.IsNullOrEmpty(cityResponse.Country.IsoCode) ? cityResponse.Country.IsoCode.ToLowerInvariant() : "xx";
+                        var countryName = !string.IsNullOrEmpty(cityResponse.Country.Name) ? cityResponse.Country.Name : LocationFormatter.UnknownRegion;
+                        var cityName = !string.IsNullOrEmpty(cityResponse.City.Name) ? cityResponse.City.Name : string.Empty;
                         var stateName = !string.IsNullOrEmpty(cityResponse.MostSpecificSubdivision.Name) ? cityResponse.MostSpecificSubdivision.Name : countryName;
                         var postal = cityResponse.Postal.Code ?? string.Empty;
                         var lat = cityResponse.Location.Latitude;
                         var lon = cityResponse.Location.Longitude;
+                        var timeZone = cityResponse.Location.TimeZone ?? string.Empty;
 
-                        var result = new GeoLocationResult(countryCode, countryName, cityName, stateName, postal, lat, lon);
+                        var subList = cityResponse.Subdivisions
+                            .Where(s => !string.IsNullOrWhiteSpace(s.Name))
+                            .Select(s => (s.Name!, s.IsoCode ?? string.Empty))
+                            .ToList();
+
+                        var naturalLoc = LocationFormatter.FormatNatural(countryCode, countryName, cityName, subList);
+
+                        var result = new GeoLocationResult(countryCode, countryName, cityName, stateName, postal, lat, lon, timeZone, naturalLoc);
                         LookupCache[ip] = result;
-                        AppLogger.Trace($"[GeoIpService] City resolved for {ip} -> {cityName}, {stateName}, {countryName} [{countryCode.ToUpperInvariant()}]");
+                        AppLogger.Trace($"[GeoIpService] City resolved for {ip} -> '{naturalLoc}' [TZ: {timeZone}]");
 
                         SentrySdk.Metrics.EmitCounter("geoip_resolved_city", 1,
                         [
@@ -367,10 +531,10 @@ public static class GeoIpService
                 {
                     if (_countryReader.TryCountry(parsedIp, out var countryResponse) && countryResponse != null)
                     {
-                        var countryCode = !string.IsNullOrEmpty(countryResponse.Country.IsoCode) ? countryResponse.Country.IsoCode.ToLowerInvariant() : "un";
-                        var countryName = !string.IsNullOrEmpty(countryResponse.Country.Name) ? countryResponse.Country.Name : "Unknown Country";
+                        var countryCode = !string.IsNullOrEmpty(countryResponse.Country.IsoCode) ? countryResponse.Country.IsoCode.ToLowerInvariant() : "xx";
+                        var countryName = !string.IsNullOrEmpty(countryResponse.Country.Name) ? countryResponse.Country.Name : LocationFormatter.UnknownRegion;
 
-                        var result = new GeoLocationResult(countryCode, countryName, "Connected Region", countryName, string.Empty, null, null);
+                        var result = new GeoLocationResult(countryCode, countryName, string.Empty, countryName, string.Empty, null, null, string.Empty, countryName);
                         LookupCache[ip] = result;
                         AppLogger.Trace($"[GeoIpService] Country resolved for {ip} -> {countryName} [{countryCode.ToUpperInvariant()}]");
 
@@ -393,7 +557,7 @@ public static class GeoIpService
             }
         }
 
-        var fallbackResult = new GeoLocationResult("un", "Direct Region", "Connected Network", "Direct Routing", string.Empty, null, null);
+        var fallbackResult = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         LookupCache[ip] = fallbackResult;
         return fallbackResult;
     }
@@ -412,7 +576,7 @@ public static class GeoIpService
     {
         if (IsUpdating)
         {
-            AppLogger.Warn("[GeoIpService] Database update is already in progress.");
+            AppLogger.Warn("[GeoIpService] Database update requested while another update cycle is active.");
             return false;
         }
 
@@ -432,8 +596,9 @@ public static class GeoIpService
         }
 
         IsUpdating = true;
+        using var timing = AppLogger.Measure("GeoIpService.UpdateDatabasesAsync");
         var transaction = SentrySdk.StartTransaction("UpdateGeoIpDatabases", "geoip.update");
-        AppLogger.Info("[GeoIpService] Starting MaxMind GeoLite2 smart check and update cycle...");
+        AppLogger.Info("[GeoIpService] Starting MaxMind GeoLite2 check and update cycle...");
 
         try
         {
@@ -456,13 +621,13 @@ public static class GeoIpService
                 return true;
             }
 
-            AppLogger.Info("[GeoIpService] GeoIP databases are already at the latest release. No download quota consumed.");
+            AppLogger.Info("[GeoIpService] GeoIP databases are already at latest release. No download quota consumed.");
             transaction.Finish(SpanStatus.Ok);
             return false;
         }
         catch (OperationCanceledException)
         {
-            AppLogger.Info("[GeoIpService] GeoIP database update canceled.");
+            AppLogger.Info("[GeoIpService] GeoIP database update cancelled.");
             transaction.Finish(SpanStatus.Cancelled);
             return false;
         }
@@ -552,7 +717,7 @@ public static class GeoIpService
         {
             if (entry.Name.EndsWith(".mmdb", StringComparison.OrdinalIgnoreCase))
             {
-                AppLogger.Info($"[GeoIpService] Extracting '{entry.Name}' to '{tempExtractFile}'...");
+                AppLogger.Info($"[GeoIpService] Extracting '{entry.Name}' ({entry.Length} bytes) to '{tempExtractFile}'...");
                 await entry.ExtractToFileAsync(tempExtractFile, overwrite: true, cancellationToken: cancellationToken);
 
                 if (File.Exists(targetMmdbPath))
