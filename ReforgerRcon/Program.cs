@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Logging;
+using ReforgerRcon.Models;
 using ReforgerRcon.Services;
 using Sentry;
 using Sentry.Profiling;
@@ -69,9 +70,10 @@ internal static partial class Program
             };
 
             var dsn = AppLogger.ResolveSentryDsn();
+            var telemetryAllowed = AppSettings.IsCrashReportingEnabled();
             IDisposable? sentrySdk = null;
 
-            if (!string.IsNullOrWhiteSpace(dsn))
+            if (!string.IsNullOrWhiteSpace(dsn) && telemetryAllowed)
             {
                 sentrySdk = SentrySdk.Init(options =>
                 {
@@ -85,7 +87,34 @@ internal static partial class Program
                     options.AttachStacktrace = true;
                     options.SendDefaultPii = false;
                     options.Environment = "production";
-                    options.Release = "ReforgerRcon@0.8.2";
+                    options.Release = "ReforgerRcon@0.8.49";
+
+                    // Pre-Send PII & Privacy Enforcement Hook
+                    options.SetBeforeSend((sentryEvent, _) =>
+                    {
+                        if (!AppSettings.IsCrashReportingEnabled())
+                        {
+                            return null; // Drop event if user opted out in Settings
+                        }
+
+                        if (sentryEvent.Message?.Formatted != null)
+                        {
+                            sentryEvent.Message = AppLogger.SanitizeSensitiveData(sentryEvent.Message.Formatted);
+                        }
+
+                        return sentryEvent;
+                    });
+
+                    // Pre-Send Transaction Trace Privacy Hook
+                    options.SetBeforeSendTransaction((transaction, _) =>
+                    {
+                        if (!AppSettings.IsCrashReportingEnabled())
+                        {
+                            return null; // Drop transaction if user opted out in Settings
+                        }
+
+                        return transaction;
+                    });
                 });
             }
 
@@ -98,7 +127,7 @@ internal static partial class Program
 
                     BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
 
-                    AppLogger.Info("Process shutting down cleanly. Flushing buffers.");
+                    AppLogger.Info("Process shutting down cleanly. Flushing telemetry and log buffers.");
                     AppLogger.Shutdown();
                 }
             }

@@ -1,3 +1,7 @@
+using System;
+using System.IO;
+using System.Text.Json;
+
 namespace ReforgerRcon.Models;
 
 public class AppSettings
@@ -16,6 +20,7 @@ public class AppSettings
     public bool RunInBackground { get; set; } = true;
 
     public bool EnableWindowGlass { get; set; } = false;
+    public bool SendAnonymousCrashReports { get; set; } = false;
 
     public string MaxMindAccountId { get; set; } = string.Empty;
     public string MaxMindLicenseKey { get; set; } = string.Empty;
@@ -30,4 +35,26 @@ public class AppSettings
 
     public string DatabaseSortBy { get; set; } = "Default";
     public bool DatabaseSortAscending { get; set; } = true;
+
+    public static bool IsCrashReportingEnabled()
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json");
+            if (File.Exists(path))
+            {
+                var json = File.ReadAllText(path);
+                var settings = JsonSerializer.Deserialize<AppSettings>(json);
+                if (settings != null)
+                {
+                    return settings.SendAnonymousCrashReports;
+                }
+            }
+        }
+        catch
+        {
+            // Default to disabled (false) if unreadable
+        }
+        return false;
+    }
 }

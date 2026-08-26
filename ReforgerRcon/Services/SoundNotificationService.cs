@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Threading;
@@ -31,7 +32,7 @@ public static partial class SoundNotificationService
 
     public static void PlayAlert(SoundAlertType alertType)
     {
-        Task.Run(() =>
+        _ = Task.Run(() =>
         {
             try
             {
@@ -43,14 +44,18 @@ public static partial class SoundNotificationService
                     }
                     else
                     {
-                        AppLogger.Trace($"[SoundNotificationService] Terminal audio bell emitted for alert: {alertType}");
+                        AppLogger.Trace($"[SoundNotificationService] Emitting terminal audio bell for alert: {alertType}");
                         Console.Beep();
                     }
                 }
             }
+            catch (InvalidOperationException invEx)
+            {
+                AppLogger.Trace($"[SoundNotificationService] Audio device unavailable: {invEx.Message}");
+            }
             catch (Exception ex)
             {
-                AppLogger.Warn($"[SoundNotificationService] Failed playing sound alert ({alertType}): {ex.Message}");
+                AppLogger.Debug($"[SoundNotificationService] Non-fatal audio alert notice ({alertType}): {ex.Message}");
             }
         });
     }
@@ -71,9 +76,9 @@ public static partial class SoundNotificationService
             bool success = MessageBeep(soundType);
             AppLogger.Trace($"[SoundNotificationService] Windows MessageBeep dispatched for {alertType} (Type: 0x{soundType:X8}, Success: {success}).");
         }
-        catch (Exception ex)
+        catch (Win32Exception winEx)
         {
-            AppLogger.Warn($"[SoundNotificationService] Win32 MessageBeep notice: {ex.Message}");
+            AppLogger.Trace($"[SoundNotificationService] Win32 MessageBeep notice: {winEx.Message}");
         }
     }
 }

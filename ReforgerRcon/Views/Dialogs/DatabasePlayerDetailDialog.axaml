@@ -95,7 +95,7 @@
             </StackPanel>
           </Grid>
 
-          <!-- Country with SVG Flag & Natural Location (Zero-Overlap Grid Layout) -->
+          <!-- Country with SVG Flag & Natural Location -->
           <Grid ColumnDefinitions="110,Auto,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Grid.Column="0" Text="Location:" Classes="Caption" VerticalAlignment="Center" />
             
@@ -157,8 +157,8 @@
 
           <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Last Endpoint:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.LastIp}" VerticalAlignment="Center" FontFamily="Consolas, monospace" FontSize="12" />
-            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.LastIp}">
+            <TextBlock Grid.Column="1" Text="{Binding Player.FormattedEndpoint}" VerticalAlignment="Center" FontFamily="Consolas, monospace" FontSize="12" />
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.FormattedEndpoint}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>

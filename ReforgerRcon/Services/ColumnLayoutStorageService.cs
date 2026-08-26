@@ -53,10 +53,22 @@ public static class ColumnLayoutStorageService
                 _cache = GetDefaultColumnMap();
             }
         }
-        catch (Exception ex)
+        catch (JsonException jsonEx)
         {
             sw.Stop();
-            AppLogger.Error($"[ColumnLayoutStorage] Error loading column layout configuration from '{StorageFile}'. Reverting to defaults.", ex);
+            AppLogger.Warn($"[ColumnLayoutStorage] Corrupted JSON in '{StorageFile}': {jsonEx.Message}. Reverting to defaults.");
+            _cache = GetDefaultColumnMap();
+        }
+        catch (IOException ioEx)
+        {
+            sw.Stop();
+            AppLogger.Warn($"[ColumnLayoutStorage] Disk I/O error reading '{StorageFile}': {ioEx.Message}. Reverting to defaults.");
+            _cache = GetDefaultColumnMap();
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            sw.Stop();
+            AppLogger.Warn($"[ColumnLayoutStorage] Access denied reading '{StorageFile}': {authEx.Message}. Reverting to defaults.");
             _cache = GetDefaultColumnMap();
         }
     }
@@ -131,6 +143,9 @@ public static class ColumnLayoutStorageService
 
     public static void SaveGridState(string gridKey, DataGrid dataGrid)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
+        ArgumentNullException.ThrowIfNull(dataGrid);
+
         if (RestoringGrids.Contains(dataGrid)) return;
 
         try
@@ -184,9 +199,13 @@ public static class ColumnLayoutStorageService
                 AppLogger.Trace($"[ColumnLayoutStorage] Saved {columnMap.Count} column layout settings for grid '{gridKey}'.");
             }
         }
-        catch (Exception ex)
+        catch (IOException ioEx)
         {
-            AppLogger.Error($"[ColumnLayoutStorage] Failed to persist layout state for grid: {gridKey}", ex);
+            AppLogger.Error($"[ColumnLayoutStorage] Disk I/O error saving layout for grid '{gridKey}': {ioEx.Message}", ioEx);
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            AppLogger.Error($"[ColumnLayoutStorage] Access denied saving layout for grid '{gridKey}': {authEx.Message}", authEx);
         }
     }
 
@@ -216,69 +235,63 @@ public static class ColumnLayoutStorageService
             var json = JsonSerializer.Serialize(_cache, JsonOptions);
             File.WriteAllText(StorageFile, json);
         }
-        catch (Exception ex)
+        catch (IOException ioEx)
         {
-            AppLogger.Error($"[ColumnLayoutStorage] Error writing column layout to disk: {ex.Message}", ex);
+            AppLogger.Error($"[ColumnLayoutStorage] I/O error writing column layout to disk: {ioEx.Message}", ioEx);
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            AppLogger.Error($"[ColumnLayoutStorage] Permission error writing column layout to disk: {authEx.Message}", authEx);
         }
     }
 
     public static void BindPersistence(DataGrid dataGrid, string gridKey)
     {
-        try
+        ArgumentNullException.ThrowIfNull(dataGrid);
+        ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
+
+        EnsureLoaded();
+        RestoreGridState(dataGrid, gridKey);
+
+        dataGrid.Loaded += (_, _) => RestoreGridState(dataGrid, gridKey);
+        dataGrid.Unloaded += (_, _) => SaveGridState(gridKey, dataGrid);
+        dataGrid.DetachedFromVisualTree += (_, _) => SaveGridState(gridKey, dataGrid);
+
+        foreach (var col in dataGrid.Columns)
         {
-            EnsureLoaded();
-
-            RestoreGridState(dataGrid, gridKey);
-
-            dataGrid.Loaded += (_, _) => RestoreGridState(dataGrid, gridKey);
-            dataGrid.Unloaded += (_, _) => SaveGridState(gridKey, dataGrid);
-            dataGrid.DetachedFromVisualTree += (_, _) => SaveGridState(gridKey, dataGrid);
-
-            foreach (var col in dataGrid.Columns)
+            col.PropertyChanged += (_, e) =>
             {
-                col.PropertyChanged += (_, e) =>
-                {
-                    if (RestoringGrids.Contains(dataGrid)) return;
+                if (RestoringGrids.Contains(dataGrid)) return;
 
-                    if (e.Property.Name is "ActualWidth" or "Width" or "DisplayIndex")
-                    {
-                        SaveGridState(gridKey, dataGrid);
-                    }
-                };
-            }
-            AppLogger.Debug($"[ColumnLayoutStorage] Bound column persistence hooks for grid '{gridKey}'.");
+                if (e.Property.Name is "ActualWidth" or "Width" or "DisplayIndex")
+                {
+                    SaveGridState(gridKey, dataGrid);
+                }
+            };
         }
-        catch (Exception ex)
-        {
-            AppLogger.Error($"[ColumnLayoutStorage] Failed to bind column layout persistence for {gridKey}", ex);
-        }
+        AppLogger.Debug($"[ColumnLayoutStorage] Bound column persistence hooks for grid '{gridKey}'.");
     }
 
     public static void RestoreGridState(DataGrid dataGrid, string gridKey)
     {
+        ArgumentNullException.ThrowIfNull(dataGrid);
+        ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
+
+        EnsureLoaded();
+        if (!_cache.TryGetValue(gridKey, out var columnMap)) return;
+
+        RestoringGrids.Add(dataGrid);
         try
         {
-            EnsureLoaded();
-            if (!_cache.TryGetValue(gridKey, out var columnMap)) return;
-
-            RestoringGrids.Add(dataGrid);
-            try
-            {
-                var sw = Stopwatch.StartNew();
-                RestoreWidths(dataGrid, columnMap);
-                RestoreDisplayOrder(dataGrid, columnMap);
-                sw.Stop();
-                AppLogger.Debug($"[ColumnLayoutStorage] Restored column layout state for grid '{gridKey}' in {sw.ElapsedMilliseconds} ms.");
-            }
-            finally
-            {
-                RestoringGrids.Remove(dataGrid);
-            }
+            var sw = Stopwatch.StartNew();
+            RestoreWidths(dataGrid, columnMap);
+            RestoreDisplayOrder(dataGrid, columnMap);
+            sw.Stop();
+            AppLogger.Debug($"[ColumnLayoutStorage] Restored column layout state for grid '{gridKey}' in {sw.ElapsedMilliseconds} ms.");
         }
-        catch (Exception ex)
+        finally
         {
             RestoringGrids.Remove(dataGrid);
-            AppLogger.Warn($"[ColumnLayoutStorage] Failed restoring column state for grid {gridKey}: {ex.Message}", ex);
         }
     }
 

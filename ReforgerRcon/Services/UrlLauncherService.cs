@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
@@ -13,12 +14,12 @@ public static class UrlLauncherService
     {
         if (string.IsNullOrWhiteSpace(url))
         {
-            AppLogger.Warn("[UrlLauncherService] Attempted to launch an empty or null URL string.");
+            AppLogger.Warn("[UrlLauncherService] OpenUrlAsync aborted for empty URL.");
             return false;
         }
 
         var trimmedUrl = url.Trim();
-        AppLogger.Info($"[UrlLauncherService] Dispatching external browser request for target: {trimmedUrl}");
+        AppLogger.Info($"[UrlLauncherService] Launching external browser for: '{trimmedUrl}'");
 
         try
         {
@@ -29,7 +30,6 @@ public static class UrlLauncherService
                     FileName = trimmedUrl,
                     UseShellExecute = true
                 });
-                AppLogger.Debug($"[UrlLauncherService] ShellExecute process dispatched on Windows for: {trimmedUrl}");
                 return true;
             }
 
@@ -42,7 +42,6 @@ public static class UrlLauncherService
                     Arguments = $"\"{trimmedUrl}\"",
                     UseShellExecute = false
                 });
-                AppLogger.Debug($"[UrlLauncherService] macOS open process dispatched for: {trimmedUrl} via {macOpenPath}");
                 return true;
             }
 
@@ -53,23 +52,44 @@ public static class UrlLauncherService
                 Arguments = $"\"{trimmedUrl}\"",
                 UseShellExecute = false
             });
-            AppLogger.Debug($"[UrlLauncherService] Linux xdg-open process dispatched for: {trimmedUrl} via {xdgOpenPath}");
             return true;
+        }
+        catch (Win32Exception winEx)
+        {
+            AppLogger.Error($"[UrlLauncherService] Win32 shell execution error for '{trimmedUrl}': {winEx.Message}", winEx);
+            await FallbackCopyToClipboardAsync(trimmedUrl);
+            return false;
+        }
+        catch (FileNotFoundException fnfEx)
+        {
+            AppLogger.Error($"[UrlLauncherService] Browser launcher binary not found: {fnfEx.Message}", fnfEx);
+            await FallbackCopyToClipboardAsync(trimmedUrl);
+            return false;
+        }
+        catch (InvalidOperationException invEx)
+        {
+            AppLogger.Error($"[UrlLauncherService] Process launch invalid in current state: {invEx.Message}", invEx);
+            await FallbackCopyToClipboardAsync(trimmedUrl);
+            return false;
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[UrlLauncherService] Failed to launch external browser for URL '{trimmedUrl}': {ex.Message}", ex);
-
-            var clipboardSuccess = await ClipboardService.SetTextAsync(trimmedUrl);
-            if (clipboardSuccess)
-            {
-                ToastNotificationService.Instance.ShowToast(
-                    "Link Copied to Clipboard",
-                    $"Unable to launch default browser. Copied URL to clipboard: {trimmedUrl}",
-                    "URL_FALLBACK_CLIPBOARD"
-                );
-            }
+            AppLogger.Error($"[UrlLauncherService] Unexpected error launching web browser: {ex.Message}", ex);
+            await FallbackCopyToClipboardAsync(trimmedUrl);
             return false;
+        }
+    }
+
+    private static async Task FallbackCopyToClipboardAsync(string url)
+    {
+        var clipboardSuccess = await ClipboardService.SetTextAsync(url);
+        if (clipboardSuccess)
+        {
+            ToastNotificationService.Instance.ShowToast(
+                "Link Copied to Clipboard",
+                $"Unable to open browser automatically. Copied URL to clipboard: {url}",
+                "URL_FALLBACK_CLIPBOARD"
+            );
         }
     }
 

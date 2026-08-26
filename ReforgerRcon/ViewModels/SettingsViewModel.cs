@@ -1,11 +1,3 @@
-using System;
-using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.Globalization;
-using System.IO;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -14,6 +6,16 @@ using LuminaUI.Controls;
 using Material.Icons;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
+using Sentry;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -93,7 +95,7 @@ public partial class SettingsViewModel : ViewModelBase
                 var (acc, key) = GeoIpService.ResolveCredentials();
                 Settings.MaxMindAccountId = acc;
                 Settings.MaxMindLicenseKey = key;
-                AppLogger.Info("[SettingsViewModel] Initialized default application settings.");
+                AppLogger.Info("[SettingsViewModel] Initialized default application settings (Telemetry default: disabled).");
             }
 
             ApplyWindowGlassState(Settings.EnableWindowGlass);
@@ -115,12 +117,18 @@ public partial class SettingsViewModel : ViewModelBase
     public Task<bool> RefreshDatabaseStatsAsync() => ExecuteSafeAsync(async () =>
     {
         using var timing = AppLogger.Measure("SettingsViewModel.RefreshDatabaseStatsAsync");
+        var transaction = SentrySdk.StartTransaction("RefreshDatabaseStats", "settings.db_stats");
         AppLogger.Debug("[SettingsViewModel] Refreshing SQLite database telemetry statistics...");
 
         var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync();
         DatabaseSizeText = $"{stats.DatabaseSizeBytes / (1024.0 * 1024.0):F2} MB (WAL: {stats.WalSizeBytes / 1024.0:F1} KB)";
-        DatabaseRecordsText = $"{stats.TotalPlayers:N0} Players ({stats.TotalAliases:N0} Recorded Aliases)";
+        DatabaseRecordsText = $"{stats.TotalReforgerPlayers:N0} Reforger / {stats.TotalBattlEyePlayers:N0} BattlEye Players";
 
+        SentrySdk.Metrics.EmitGauge("db_reforger_players", stats.TotalReforgerPlayers, MeasurementUnit.None);
+        SentrySdk.Metrics.EmitGauge("db_battleye_players", stats.TotalBattlEyePlayers, MeasurementUnit.None);
+        SentrySdk.Metrics.EmitGauge("db_file_size_bytes", stats.DatabaseSizeBytes, MeasurementUnit.Information.Byte);
+
+        transaction.Finish(SpanStatus.Ok);
         AppLogger.Info($"[SettingsViewModel] Refreshed database stats: {DatabaseRecordsText}, Size: {DatabaseSizeText}");
     }, "Failed to query SQLite database telemetry stats.");
 
@@ -142,6 +150,8 @@ public partial class SettingsViewModel : ViewModelBase
         return ExecuteSafeAsync(async () =>
         {
             using var timing = AppLogger.Measure("SettingsViewModel.SaveSettingsAsync");
+            var transaction = SentrySdk.StartTransaction("SaveSettings", "settings.save");
+
             var dir = Path.GetDirectoryName(SettingsFile);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
@@ -150,6 +160,7 @@ public partial class SettingsViewModel : ViewModelBase
 
             var json = JsonSerializer.Serialize(Settings, JsonOptions);
 
+            var writeSpan = transaction.StartChild("fs.write", "Save settings to disk");
             lock (FileLock)
             {
                 File.WriteAllText(TempSettingsFile, json);
@@ -159,12 +170,19 @@ public partial class SettingsViewModel : ViewModelBase
                 }
                 File.Move(TempSettingsFile, SettingsFile, overwrite: true);
             }
+            writeSpan.Finish(SpanStatus.Ok);
 
             ApplyWindowGlassState(Settings.EnableWindowGlass);
             OnSortSettingChanged();
 
-            AppLogger.Info($"[SettingsViewModel] Settings saved to '{SettingsFile}'.");
-            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences, appearance, and sorting updated.");
+            SentrySdk.Metrics.EmitCounter("settings_saved", 1,
+            [
+                new KeyValuePair<string, object>("telemetry_enabled", Settings.SendAnonymousCrashReports.ToString())
+            ]);
+            transaction.Finish(SpanStatus.Ok);
+
+            AppLogger.Info($"[SettingsViewModel] Settings saved to '{SettingsFile}' (Telemetry enabled: {Settings.SendAnonymousCrashReports}).");
+            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences, appearance, privacy, and sorting updated.");
             RefreshGeoIpStatus();
         });
     }
@@ -245,14 +263,16 @@ public partial class SettingsViewModel : ViewModelBase
 
             _dashboard?.ShowDialog(new ConfirmDialogViewModel(
                 "Clear SQLite Database",
-                "Are you sure you want to permanently clear all historical player records and alias tables from SQLite?",
+                "Are you sure you want to permanently clear all historical player records from both Reforger and BattlEye tables?",
                 "Clear Database",
                 true,
                 async () =>
                 {
                     AppLogger.Warn("[SettingsViewModel] Confirmed SQLite database purge. Purging data tables...");
-                    await PlayerDatabaseStorageService.ClearAsync();
+                    var transaction = SentrySdk.StartTransaction("PurgeDatabase", "db.sqlite.purge_full");
+                    await PlayerDatabaseStorageService.ClearDatabaseAsync(null);
                     await RefreshDatabaseStatsAsync();
+                    transaction.Finish(SpanStatus.Ok);
                     ToastNotificationService.Instance.ShowToast("Database Cleared", "SQLite historical database purged.");
                 },
                 () => _dashboard.CloseDialog()

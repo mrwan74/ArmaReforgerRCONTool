@@ -10,6 +10,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
+using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -443,9 +444,21 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             dbPlayer.IsWatchlisted = player.IsWatchlisted;
         }
 
-        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(player.Uid, player.IsWatchlisted);
+        string identifier;
+        if (IsBattlEyeProtocol)
+        {
+            identifier = string.IsNullOrWhiteSpace(player.Guid) || player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
+                ? player.Uid
+                : player.Guid;
+        }
+        else
+        {
+            identifier = player.Uid;
+        }
+
+        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted, _rconService.CurrentProtocol);
         var feedbackMessage = player.IsWatchlisted ? $"Added {player.Name} to Watchlist" : $"Removed {player.Name} from Watchlist";
-        AppLogger.Info($"[PlayersViewModel] Watchlist toggled for '{player.Name}' (UID: {player.Uid}) -> {player.IsWatchlisted}");
+        AppLogger.Info($"[PlayersViewModel] Watchlist toggled for '{player.Name}' (ID: {identifier}) -> {player.IsWatchlisted}");
         ToastNotificationService.Instance.ShowToast("Watchlist Updated", feedbackMessage);
     });
 

@@ -173,7 +173,7 @@ public sealed class RconService : IRconService
 
                 StopBackgroundPingMonitor();
                 _hasInitialPlayerSnapshot = false;
-                await PlayerDatabaseStorageService.SetAllOfflineAsync();
+                await PlayerDatabaseStorageService.SetAllOfflineAsync(_currentProfile?.Protocol);
 
                 lock (_playersLock)
                 {
@@ -267,7 +267,7 @@ public sealed class RconService : IRconService
             }
         }
 
-        await PlayerDatabaseStorageService.SetAllOfflineAsync();
+        await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol);
 
         lock (_playersLock)
         {
@@ -418,7 +418,6 @@ public sealed class RconService : IRconService
     {
         try
         {
-            // 1. Player Disconnected Event
             var disconnMatch = BattlEyeResponseParser.PlayerDisconnectedStreamRegex().Match(message);
             if (disconnMatch.Success && int.TryParse(disconnMatch.Groups[1].Value, out int discId))
             {
@@ -440,7 +439,6 @@ public sealed class RconService : IRconService
                 return;
             }
 
-            // 2. Player GUID Stream Announcement (Enriches player with BattlEye GUID)
             var guidMatch = BattlEyeResponseParser.PlayerGuidStreamRegex().Match(message);
             if (guidMatch.Success && int.TryParse(guidMatch.Groups[1].Value, out int guidPlayerId))
             {
@@ -474,7 +472,7 @@ public sealed class RconService : IRconService
                     }
                 }
 
-                _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync([matched]);
+                _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync([matched], CurrentProtocol);
 
                 if (isNew)
                 {
@@ -483,7 +481,6 @@ public sealed class RconService : IRconService
                 return;
             }
 
-            // 3. Player Admin Ban Event
             var banMatch = BattlEyeResponseParser.PlayerBannedStreamRegex().Match(message);
             if (banMatch.Success && int.TryParse(banMatch.Groups[1].Value, out int banId))
             {
@@ -509,7 +506,6 @@ public sealed class RconService : IRconService
                 return;
             }
 
-            // 4. Player Admin Kick Event
             var kickMatch = BattlEyeResponseParser.PlayerKickedStreamRegex().Match(message);
             if (kickMatch.Success && int.TryParse(kickMatch.Groups[1].Value, out int kickId))
             {
@@ -535,7 +531,6 @@ public sealed class RconService : IRconService
                 return;
             }
 
-            // 5. Player Connected Event (Immediate trigger for live join)
             var connMatch = BattlEyeResponseParser.PlayerConnectedStreamRegex().Match(message);
             if (connMatch.Success && int.TryParse(connMatch.Groups[1].Value, out int connId))
             {
@@ -564,12 +559,11 @@ public sealed class RconService : IRconService
                     _lastKnownPlayers.Add(newPlayer);
                 }
 
-                _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync([newPlayer]);
+                _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync([newPlayer], CurrentProtocol);
                 RaisePlayerJoined(newPlayer);
                 return;
             }
 
-            // 6. Admin Connected Event
             var adminMatch = BattlEyeResponseParser.AdminConnectedStreamRegex().Match(message);
             if (adminMatch.Success && int.TryParse(adminMatch.Groups[1].Value, out int adminId))
             {
@@ -620,22 +614,24 @@ public sealed class RconService : IRconService
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#players" : "players";
 
             AppLogger.Debug($"[RconService:Timing] Requesting player list via '{command}'...");
+
+            var networkSpan = transaction.StartChild("network.rcon.command", $"Execute '{command}'");
             string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(4.0), queryToken);
+            networkSpan.Finish(SpanStatus.Ok);
+
             queryToken.ThrowIfCancellationRequested();
 
-            var networkMs = sw.ElapsedMilliseconds;
-
-            var parseSw = Stopwatch.StartNew();
+            var parseSpan = transaction.StartChild("parser.players", $"Parse {CurrentProtocol} player buffer");
             List<PlayerModel> currentPlayers = CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? ReforgerResponseParser.ParsePlayers(rawResponse)
                 : BattlEyeResponseParser.ParsePlayers(rawResponse);
-            parseSw.Stop();
+            parseSpan.Finish(SpanStatus.Ok);
 
             queryToken.ThrowIfCancellationRequested();
 
-            var dbSw = Stopwatch.StartNew();
-            await PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers);
-            dbSw.Stop();
+            var dbSpan = transaction.StartChild("db.sqlite.record", "Record seen active players");
+            await PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol);
+            dbSpan.Finish(SpanStatus.Ok);
 
             queryToken.ThrowIfCancellationRequested();
 
@@ -673,7 +669,7 @@ public sealed class RconService : IRconService
             }
 
             sw.Stop();
-            AppLogger.Info($"[RconService:Timing] Player query completed in {sw.ElapsedMilliseconds} ms (Network: {networkMs} ms, Parse: {parseSw.ElapsedMilliseconds} ms, SQLite: {dbSw.ElapsedMilliseconds} ms, Total Players: {currentPlayers.Count}).");
+            AppLogger.Info($"[RconService:Timing] Player query completed in {sw.ElapsedMilliseconds} ms (Total Players: {currentPlayers.Count}).");
 
             op.Complete("PlayerCount", currentPlayers.Count);
             transaction.Finish(SpanStatus.Ok);
@@ -715,19 +711,21 @@ public sealed class RconService : IRconService
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#ban list" : "bans";
 
             AppLogger.Debug($"[RconService:Timing] Fetching ban list via '{command}'...");
+
+            var networkSpan = transaction.StartChild("network.rcon.command", $"Execute '{command}'");
             string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(4.0), queryToken);
+            networkSpan.Finish(SpanStatus.Ok);
+
             queryToken.ThrowIfCancellationRequested();
 
-            var networkMs = sw.ElapsedMilliseconds;
-
-            var parseSw = Stopwatch.StartNew();
+            var parseSpan = transaction.StartChild("parser.bans", $"Parse {CurrentProtocol} ban buffer");
             var bans = CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? ReforgerResponseParser.ParseBans(rawResponse)
                 : BattlEyeResponseParser.ParseBans(rawResponse);
-            parseSw.Stop();
+            parseSpan.Finish(SpanStatus.Ok);
             sw.Stop();
 
-            AppLogger.Info($"[RconService:Timing] Ban query completed in {sw.ElapsedMilliseconds} ms (Network: {networkMs} ms, Parse: {parseSw.ElapsedMilliseconds} ms, Total Bans: {bans.Count}).");
+            AppLogger.Info($"[RconService:Timing] Ban query completed in {sw.ElapsedMilliseconds} ms (Total Bans: {bans.Count}).");
 
             op.Complete("BanCount", bans.Count);
             transaction.Finish(SpanStatus.Ok);
@@ -758,19 +756,23 @@ public sealed class RconService : IRconService
     {
         if (_client is not { Connected: true }) return [];
 
+        var transaction = SentrySdk.StartTransaction("GetAdmins", "rcon.query.admins");
         try
         {
             string rawResponse = await ExecuteCommandWithAggregateResponseAsync("admins", TimeSpan.FromSeconds(3.0), cancellationToken);
-            return BattlEyeResponseParser.ParseAdmins(rawResponse);
+            var admins = BattlEyeResponseParser.ParseAdmins(rawResponse);
+            transaction.Finish(SpanStatus.Ok);
+            return admins;
         }
         catch (Exception ex)
         {
+            transaction.Finish(SpanStatus.UnknownError);
             AppLogger.Error($"[RconService] Failed querying connected admins: {ex.Message}", ex.Demystify());
             return [];
         }
     }
 
-    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync();
+    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync(CurrentProtocol);
 
     private static string BuildKickCommand(int playerId, string reason, RconProtocol protocol)
     {
@@ -782,10 +784,14 @@ public sealed class RconService : IRconService
     {
         ArgumentNullException.ThrowIfNull(player);
 
+        var transaction = SentrySdk.StartTransaction("KickPlayer", "rcon.moderation.kick");
         string cleanReason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
         string cmd = BuildKickCommand(player.Id, cleanReason, CurrentProtocol);
 
-        SentrySdk.Metrics.EmitCounter("player_kicks", 1);
+        SentrySdk.Metrics.EmitCounter("player_kicks", 1,
+        [
+            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
+        ]);
         AppLogger.Info($"[RconService] Executing kick command for '{player.Name}' (ID: #{player.Id})...");
 
         string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
@@ -794,10 +800,12 @@ public sealed class RconService : IRconService
         if (isSuccess)
         {
             AppLogger.Info($"[RconService] Server confirmed kick for '{player.Name}'.");
+            transaction.Finish(SpanStatus.Ok);
         }
         else
         {
             AppLogger.Warn($"[RconService] Kick command for '{player.Name}' returned unverified response: '{response}'.");
+            transaction.Finish(SpanStatus.UnknownError);
         }
 
         return isSuccess;
@@ -833,12 +841,14 @@ public sealed class RconService : IRconService
     {
         ArgumentNullException.ThrowIfNull(player);
 
+        var transaction = SentrySdk.StartTransaction("BanPlayer", "rcon.moderation.ban");
         long beMinutes = durationSeconds <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(durationSeconds / 60.0));
         string cleanReason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
 
         SentrySdk.Metrics.EmitCounter("player_bans", 1,
         [
-            new KeyValuePair<string, object>("permanent", (durationSeconds <= 0).ToString(CultureInfo.InvariantCulture))
+            new KeyValuePair<string, object>("permanent", (durationSeconds <= 0).ToString(CultureInfo.InvariantCulture)),
+            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
         ]);
 
         if (CurrentProtocol == RconProtocol.ReforgerBuiltIn)
@@ -846,7 +856,9 @@ public sealed class RconService : IRconService
             string cmd = BuildReforgerBanCommand(player.Id, durationSeconds, cleanReason);
             AppLogger.Info($"[RconService] Executing Reforger ban for '{player.Name}' (Duration: {durationSeconds}s)...");
             string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
-            return VerifyModerationSuccess(response, ["ban created!", "banned!"]);
+            bool verified = VerifyModerationSuccess(response, ["ban created!", "banned!"]);
+            transaction.Finish(verified ? SpanStatus.Ok : SpanStatus.UnknownError);
+            return verified;
         }
 
         string beCmd = BuildBattlEyeBanCommand(player.Id, beMinutes, cleanReason);
@@ -864,6 +876,7 @@ public sealed class RconService : IRconService
             await SendCommandAsync("loadBans");
         }
 
+        transaction.Finish(banSuccess ? SpanStatus.Ok : SpanStatus.UnknownError);
         return banSuccess;
     }
 
@@ -871,10 +884,15 @@ public sealed class RconService : IRconService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(identity);
 
+        var transaction = SentrySdk.StartTransaction("OfflineBan", "rcon.moderation.offline_ban");
         long beMinutes = durationSeconds <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(durationSeconds / 60.0));
         string cleanReason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
 
-        SentrySdk.Metrics.EmitCounter("offline_bans", 1);
+        SentrySdk.Metrics.EmitCounter("offline_bans", 1,
+        [
+            new KeyValuePair<string, object>("is_ip", isIp.ToString(CultureInfo.InvariantCulture)),
+            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
+        ]);
         AppLogger.Info($"[RconService] Executing offline ban command for '{identity}' (Duration: {durationSeconds}s)...");
 
         if (CurrentProtocol == RconProtocol.ReforgerBuiltIn)
@@ -884,7 +902,9 @@ public sealed class RconService : IRconService
                 : $"#ban create {identity} {durationSeconds} {cleanReason}";
 
             string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
-            return VerifyModerationSuccess(response, ["ban created!", "banned!"]);
+            bool verified = VerifyModerationSuccess(response, ["ban created!", "banned!"]);
+            transaction.Finish(verified ? SpanStatus.Ok : SpanStatus.UnknownError);
+            return verified;
         }
 
         string beAddCmd = string.IsNullOrEmpty(cleanReason)
@@ -894,6 +914,7 @@ public sealed class RconService : IRconService
         await SendCommandAsync(beAddCmd);
         await Task.Delay(100, cancellationToken);
         await SendCommandAsync("loadBans");
+        transaction.Finish(SpanStatus.Ok);
         return true;
     }
 
@@ -901,11 +922,15 @@ public sealed class RconService : IRconService
     {
         ArgumentNullException.ThrowIfNull(ban);
 
+        var transaction = SentrySdk.StartTransaction("RemoveBan", "rcon.moderation.remove_ban");
         string cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn
             ? $"#ban remove {ban.IdentityId}"
             : $"removeBan {ban.BanNumber}";
 
-        SentrySdk.Metrics.EmitCounter("ban_removals", 1);
+        SentrySdk.Metrics.EmitCounter("ban_removals", 1,
+        [
+            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
+        ]);
         AppLogger.Info($"[RconService] Executing ban removal for '{ban.IdentityId}' (#{ban.BanNumber})...");
         string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
 
@@ -913,6 +938,7 @@ public sealed class RconService : IRconService
         {
             await Task.Delay(100, cancellationToken);
             await SendCommandAsync("writeBans");
+            transaction.Finish(SpanStatus.Ok);
             return true;
         }
 
@@ -920,10 +946,12 @@ public sealed class RconService : IRconService
         if (isSuccess)
         {
             AppLogger.Info($"[RconService] Server confirmed ban removal for '{ban.IdentityId}'.");
+            transaction.Finish(SpanStatus.Ok);
         }
         else
         {
             AppLogger.Warn($"[RconService] Ban removal for '{ban.IdentityId}' returned unverified response: '{response}'.");
+            transaction.Finish(SpanStatus.UnknownError);
         }
 
         return isSuccess;
@@ -985,10 +1013,10 @@ public sealed class RconService : IRconService
             }
         }
 
-        return PlayerDatabaseStorageService.UpdateCommentAsync(uid, comment);
+        return PlayerDatabaseStorageService.UpdateCommentAsync(uid, comment, CurrentProtocol);
     }
 
-    public Task ClearDatabaseAsync() => PlayerDatabaseStorageService.ClearAsync();
+    public Task ClearDatabaseAsync() => PlayerDatabaseStorageService.ClearDatabaseAsync(CurrentProtocol);
 
     private async Task<string> ExecuteCommandWithAggregateResponseAsync(string command, TimeSpan maxTimeout, CancellationToken cancellationToken = default)
     {

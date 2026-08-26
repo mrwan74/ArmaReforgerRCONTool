@@ -137,9 +137,14 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                         Thread.Sleep(500);
                     }
                 }
+                catch (ObjectDisposedException dispEx)
+                {
+                    AppLogger.Warn($"[BattlEyeClient] Socket disposed during connection attempt #{attempt}: {dispEx.Message}");
+                    break;
+                }
                 catch (Exception ex)
                 {
-                    AppLogger.Error($"[BattlEyeClient] Error during handshake attempt #{attempt} to {remoteEp}", ex);
+                    AppLogger.Error($"[BattlEyeClient] Unexpected error during handshake attempt #{attempt} to {remoteEp}", ex);
                     if (attempt < totalRetries && !ct.IsCancellationRequested)
                     {
                         Thread.Sleep(500);
@@ -155,6 +160,8 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
     public byte SendCommand(string command, bool log = true)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+
         byte seq;
         lock (_syncLock)
         {
@@ -199,6 +206,8 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
     public async Task<string> SendCommandWithResponseAsync(string command, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         byte seq = SendCommand(command, log: true);
         _pendingCommandTcs[seq] = tcs;
@@ -396,9 +405,13 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                 _socket?.Dispose();
                 _socket = null;
             }
-            catch (Exception ex)
+            catch (SocketException sockEx)
             {
-                AppLogger.Debug($"[BattlEyeClient] Exception during socket close: {ex.Message}");
+                AppLogger.Debug($"[BattlEyeClient] Socket exception during socket close: {sockEx.Message}");
+            }
+            catch (ObjectDisposedException)
+            {
+                AppLogger.Debug("[BattlEyeClient] Socket already disposed on disconnect.");
             }
         }
 
@@ -451,7 +464,14 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                     AppLogger.Error("[BattlEyeClient] Unexpected error in receive worker loop.", ex);
                 }
 
-                await Task.Delay(5);
+                try
+                {
+                    await Task.Delay(5);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
 
             if (_keepRunning && ReconnectOnPacketLoss)

@@ -25,6 +25,9 @@ public static class WindowStateStorageService
 
     public static void BindWindowPersistence(Window window, string windowKey = "MainWindow")
     {
+        ArgumentNullException.ThrowIfNull(window);
+        ArgumentException.ThrowIfNullOrWhiteSpace(windowKey);
+
         window.Opened += (_, _) => RestoreWindowState(window, windowKey);
         window.Closing += (_, _) => SaveWindowState(window, windowKey);
         AppLogger.Debug($"[WindowStateStorage] Attached window persistence hooks for '{windowKey}'.");
@@ -45,10 +48,20 @@ public static class WindowStateStorageService
                 AppLogger.Info($"[WindowStateStorage] Restored window geometry for '{windowKey}' in {sw.ElapsedMilliseconds} ms: {state.Width}x{state.Height} at ({state.X},{state.Y}) [Maximized: {state.IsMaximized}]");
             }
         }
-        catch (Exception ex)
+        catch (JsonException jsonEx)
         {
             sw.Stop();
-            AppLogger.Error($"[WindowStateStorage] Failed to restore window state for {windowKey}", ex);
+            AppLogger.Warn($"[WindowStateStorage] Corrupted window geometry JSON in '{StorageFile}': {jsonEx.Message}");
+        }
+        catch (IOException ioEx)
+        {
+            sw.Stop();
+            AppLogger.Warn($"[WindowStateStorage] Disk I/O error reading '{StorageFile}': {ioEx.Message}");
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            sw.Stop();
+            AppLogger.Warn($"[WindowStateStorage] Access denied reading '{StorageFile}': {authEx.Message}");
         }
     }
 
@@ -85,10 +98,15 @@ public static class WindowStateStorageService
             sw.Stop();
             AppLogger.Debug($"[WindowStateStorage] Saved window geometry state for '{windowKey}' in {sw.ElapsedMilliseconds} ms: {window.Width}x{window.Height} at ({window.Position.X},{window.Position.Y}) [WindowState: {window.WindowState}].");
         }
-        catch (Exception ex)
+        catch (IOException ioEx)
         {
             sw.Stop();
-            AppLogger.Error($"[WindowStateStorage] Failed to persist window state for {windowKey}", ex);
+            AppLogger.Error($"[WindowStateStorage] Disk I/O error persisting window state for {windowKey}: {ioEx.Message}", ioEx);
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            sw.Stop();
+            AppLogger.Error($"[WindowStateStorage] Access denied saving window state for {windowKey}: {authEx.Message}", authEx);
         }
     }
 
@@ -100,9 +118,14 @@ public static class WindowStateStorageService
         {
             return JsonSerializer.Deserialize<Dictionary<string, WindowStateModel>>(File.ReadAllText(StorageFile)) ?? [];
         }
-        catch (Exception ex)
+        catch (JsonException ex)
         {
-            AppLogger.Warn($"[WindowStateStorage] Failed reading existing window state dictionary: {ex.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Failed deserializing window state JSON: {ex.Message}");
+            return [];
+        }
+        catch (IOException ioEx)
+        {
+            AppLogger.Warn($"[WindowStateStorage] Disk I/O error reading state dictionary: {ioEx.Message}");
             return [];
         }
     }

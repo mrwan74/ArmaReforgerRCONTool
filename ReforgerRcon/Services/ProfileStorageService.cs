@@ -38,18 +38,35 @@ public static class ProfileStorageService
             AppLogger.Info($"[ProfileStorageService] Loaded {profiles.Count} server profile(s) from '{FilePath}' in {sw.ElapsedMilliseconds} ms.");
             return profiles;
         }
-        catch (Exception ex)
+        catch (JsonException jsonEx)
         {
             sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Profile loading fallback triggered due to error reading '{FilePath}': {ex.Message}", ex);
-            ToastNotificationService.Instance.ShowWarning("Profile Warning", "Could not load saved server profiles from disk. Using defaults.");
+            AppLogger.Error($"[ProfileStorageService] Corrupted profiles JSON in '{FilePath}': {jsonEx.Message}. Reverting to defaults.", jsonEx);
+            ToastNotificationService.Instance.ShowWarning("Profile Warning", "Saved profiles were corrupted. Using default configurations.");
+            return GetDefaultProfiles();
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            sw.Stop();
+            AppLogger.Error($"[ProfileStorageService] Permission denied accessing profiles file '{FilePath}': {authEx.Message}", authEx);
+            ToastNotificationService.Instance.ShowError("Access Denied", "Unable to read profiles configuration due to OS permissions.");
+            return GetDefaultProfiles();
+        }
+        catch (IOException ioEx)
+        {
+            sw.Stop();
+            AppLogger.Error($"[ProfileStorageService] Disk I/O error reading '{FilePath}': {ioEx.Message}", ioEx);
+            ToastNotificationService.Instance.ShowWarning("Disk Error", "Failed reading profiles configuration from disk.");
             return GetDefaultProfiles();
         }
     }
 
     public static async Task SaveProfilesAsync(List<ServerProfile> profiles)
     {
+        ArgumentNullException.ThrowIfNull(profiles);
+
         var sw = Stopwatch.StartNew();
+        await SaveSemaphore.WaitAsync();
         try
         {
             if (!Directory.Exists(StorageDirectory))
@@ -57,31 +74,34 @@ public static class ProfileStorageService
                 Directory.CreateDirectory(StorageDirectory);
                 AppLogger.Debug($"[ProfileStorageService] Created storage directory: {StorageDirectory}");
             }
+
             var json = JsonSerializer.Serialize(profiles, CachedSerializerOptions);
 
-            await SaveSemaphore.WaitAsync();
-            try
+            await File.WriteAllTextAsync(TempFilePath, json);
+            if (File.Exists(FilePath))
             {
-                await File.WriteAllTextAsync(TempFilePath, json);
-                if (File.Exists(FilePath))
-                {
-                    File.Delete(FilePath);
-                }
-                File.Move(TempFilePath, FilePath, overwrite: true);
+                File.Delete(FilePath);
             }
-            finally
-            {
-                SaveSemaphore.Release();
-            }
+            File.Move(TempFilePath, FilePath, overwrite: true);
 
             sw.Stop();
             AppLogger.Debug($"[ProfileStorageService] Persisted {profiles.Count} server profile(s) to '{FilePath}' in {sw.ElapsedMilliseconds} ms.");
         }
-        catch (Exception ex)
+        catch (UnauthorizedAccessException authEx)
         {
             sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Failed saving server profiles to disk at '{FilePath}': {ex.Message}", ex);
-            ToastNotificationService.Instance.ShowError("Profile Save Failed", "Could not persist connection profiles to disk: " + ex.Message);
+            AppLogger.Error($"[ProfileStorageService] Access denied saving profiles to '{FilePath}': {authEx.Message}", authEx);
+            ToastNotificationService.Instance.ShowError("Profile Save Failed", "Permission denied writing profiles configuration.");
+        }
+        catch (IOException ioEx)
+        {
+            sw.Stop();
+            AppLogger.Error($"[ProfileStorageService] Disk I/O error saving profiles to '{FilePath}': {ioEx.Message}", ioEx);
+            ToastNotificationService.Instance.ShowError("Disk I/O Error", "Could not persist connection profiles: " + ioEx.Message);
+        }
+        finally
+        {
+            SaveSemaphore.Release();
         }
     }
 

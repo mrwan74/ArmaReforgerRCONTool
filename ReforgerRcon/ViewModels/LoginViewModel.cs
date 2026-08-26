@@ -14,6 +14,7 @@ using LuminaUI.Theming;
 using Material.Icons;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
+using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 

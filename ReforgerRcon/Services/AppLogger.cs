@@ -9,6 +9,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using Sentry;
 using Serilog;
 using Serilog.Context;
@@ -29,7 +30,7 @@ public enum LogLevel
 }
 
 [SuppressMessage("Major Code Smell", "S3963:Static constructor is required to guarantee thread initialization order", Justification = "Guarantees Serilog pipeline and Sentry integration are configured before background operations start")]
-public static class AppLogger
+public static partial class AppLogger
 {
     private static readonly string LogDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "logs");
     private static readonly ConcurrentQueue<string> Breadcrumbs = new();
@@ -39,24 +40,77 @@ public static class AppLogger
     public static string SessionId { get; } = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
     public static string CurrentLogFilePath { get; }
 
+    [GeneratedRegex(@"(?:password|pwd|rconpassword|#login)\s+([^\s\r\n\t]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    private static partial Regex RconPasswordRegex();
+
+    [GeneratedRegex(@"(?:Basic\s+)([A-Za-z0-9+/=]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    private static partial Regex BasicAuthHeaderRegex();
+
+    [GeneratedRegex(@"(?:LicenseKey[=:\s]+)([A-Za-z0-9_-]{8,})", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    private static partial Regex LicenseKeyRegex();
+
+    public static string SanitizeSensitiveData(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+
+        var sanitized = input;
+        try
+        {
+            sanitized = RconPasswordRegex().Replace(sanitized, m => $"{m.Value.Split(' ')[0]} [REDACTED]");
+            sanitized = BasicAuthHeaderRegex().Replace(sanitized, "Basic [REDACTED]");
+            sanitized = LicenseKeyRegex().Replace(sanitized, "LicenseKey=[REDACTED]");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return "[CONTENT_TRUNCATED_DUE_TO_PARSING]";
+        }
+
+        return sanitized;
+    }
+
     public static string ResolveSentryDsn()
     {
+        try
+        {
+            var embedded = TelemetrySecrets.GetEmbeddedDsn();
+            if (!string.IsNullOrWhiteSpace(embedded))
+            {
+                return embedded.Trim();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Embedded telemetry secret notice: {ex.Message}");
+        }
+
         var envDsn = Environment.GetEnvironmentVariable("SENTRY_DSN");
         if (!string.IsNullOrWhiteSpace(envDsn))
         {
             return envDsn.Trim();
         }
 
+        var appDataFile = Path.Combine(AppContext.BaseDirectory, "appdata", "sentry_dsn.txt");
+        var assetFile = Path.Combine(AppContext.BaseDirectory, "Assets", "sentry_dsn.txt");
+        var rootFile = Path.Combine(AppContext.BaseDirectory, "sentry_dsn.txt");
+
         try
         {
-            var localFile = Path.Combine(AppContext.BaseDirectory, "appdata", "sentry_dsn.txt");
-            if (File.Exists(localFile))
+            if (File.Exists(appDataFile))
             {
-                var fileDsn = File.ReadAllText(localFile).Trim();
-                if (!string.IsNullOrWhiteSpace(fileDsn))
-                {
-                    return fileDsn;
-                }
+                var fileDsn = File.ReadAllText(appDataFile).Trim();
+                if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
+            }
+
+            if (File.Exists(assetFile))
+            {
+                var fileDsn = File.ReadAllText(assetFile).Trim();
+                if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
+            }
+
+            if (File.Exists(rootFile))
+            {
+                var fileDsn = File.ReadAllText(rootFile).Trim();
+                if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
             }
         }
         catch (Exception ex)
@@ -239,13 +293,14 @@ public static class AppLogger
 
     private static void Dispatch(LogLevel level, string message, Exception? ex, IReadOnlyDictionary<string, object?>? context, string member, string path, int line)
     {
+        var cleanMessage = SanitizeSensitiveData(message);
         var demystifiedEx = ex?.Demystify();
         var file = Path.GetFileName(path);
         var threadId = Environment.CurrentManagedThreadId;
         var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
         var callerContext = $"{file}:{line} -> {member}()";
-        var crumb = string.Create(CultureInfo.InvariantCulture, $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{callerContext}] {message}");
+        var crumb = string.Create(CultureInfo.InvariantCulture, $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{callerContext}] {cleanMessage}");
         Breadcrumbs.Enqueue(crumb);
         while (Breadcrumbs.Count > MaxBreadcrumbs)
         {
@@ -267,17 +322,23 @@ public static class AppLogger
             sentryData = [];
             foreach (var kvp in context)
             {
-                sentryData[kvp.Key] = kvp.Value?.ToString() ?? "null";
+                sentryData[kvp.Key] = SanitizeSensitiveData(kvp.Value?.ToString() ?? "null");
             }
         }
 
         SentrySdk.AddBreadcrumb(
-            message: message,
+            message: cleanMessage,
             category: member,
             type: null,
             data: sentryData,
             level: sentryBreadcrumbLevel
         );
+
+        SentrySdk.Metrics.EmitCounter("app_logs_count", 1,
+        [
+            new KeyValuePair<string, object>("level", level.ToString()),
+            new KeyValuePair<string, object>("member", member)
+        ]);
 
         List<IDisposable> disposables = [LogContext.PushProperty("CallerContext", callerContext)];
 
@@ -304,7 +365,7 @@ public static class AppLogger
 
             if (demystifiedEx != null)
             {
-                Logger.Write(serilogLevel, demystifiedEx, "{Message}", message);
+                Logger.Write(serilogLevel, demystifiedEx, "{Message}", cleanMessage);
 
                 if (level is LogLevel.Error or LogLevel.Fatal)
                 {
@@ -325,11 +386,11 @@ public static class AppLogger
             }
             else
             {
-                Logger.Write(serilogLevel, "{Message}", message);
+                Logger.Write(serilogLevel, "{Message}", cleanMessage);
 
                 if (level == LogLevel.Fatal)
                 {
-                    SentrySdk.CaptureMessage(message, SentryLevel.Fatal);
+                    SentrySdk.CaptureMessage(cleanMessage, SentryLevel.Fatal);
                 }
             }
         }

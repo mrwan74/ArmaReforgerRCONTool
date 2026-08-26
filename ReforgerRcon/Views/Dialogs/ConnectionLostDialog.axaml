@@ -8,7 +8,6 @@
 
   <lumina:LuminaCard Padding="24" Width="480" Classes="Elevated">
     <StackPanel Spacing="16">
-      <!-- Header Row with Warning Icon and 'X' Dismiss Button -->
       <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Border Background="#25EF4444" CornerRadius="8" Padding="8" VerticalAlignment="Center">
@@ -20,11 +19,9 @@
           </StackPanel>
         </StackPanel>
 
-        <!-- Top-Right 'X' Close Button -->
         <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding DismissCommand}" ToolTip.Tip="Close notification" VerticalAlignment="Center" />
       </Grid>
 
-      <!-- Connection Details Banner -->
       <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
         <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="120,*" RowSpacing="6">
           <TextBlock Grid.Row="0" Grid.Column="0" Text="Server Endpoint:" Classes="Caption" FontWeight="SemiBold" />
@@ -40,7 +37,6 @@
         </Grid>
       </Border>
 
-      <!-- Reconnect Error Feedback Box -->
       <Border Background="{DynamicResource LuminaDangerBgBrush}" 
               BorderBrush="{DynamicResource LuminaDangerBrush}" 
               BorderThickness="1" 
@@ -50,7 +46,6 @@
         <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource LuminaDangerBrush}" FontSize="12" TextWrapping="Wrap" />
       </Border>
 
-      <!-- Action Buttons -->
       <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Margin="0,4,0,0">
         <Button Grid.Column="1" Classes="Outline" Content="Return to Login" Command="{Binding ReturnToLoginCommand}" />
         <Button Grid.Column="2" 

@@ -109,7 +109,7 @@ public class MockRconService : IRconService
         OutputReceived?.Invoke(this, $"[SYSTEM] Connected to {profile.ServerIp}:{profile.Port} via {profile.Protocol}");
         OutputReceived?.Invoke(this, "[RCON] Logged in successfully as Administrator (Demo Simulation Mode).");
 
-        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players);
+        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players, profile.Protocol);
 
         if (profile.Protocol == RconProtocol.BattlEye)
         {
@@ -123,14 +123,8 @@ public class MockRconService : IRconService
     {
         await Task.Delay(100, CancellationToken.None);
         IsConnected = false;
-        await PlayerDatabaseStorageService.SetAllOfflineAsync();
+        await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol);
         OutputReceived?.Invoke(this, "[SYSTEM] Disconnected from server.");
-    }
-
-    public void SimulateConnectionDrop()
-    {
-        IsConnected = false;
-        ConnectionLost?.Invoke(this, "Connection timed out (No packets received)");
     }
 
     public void SimulatePlayerJoin(PlayerModel player)
@@ -145,11 +139,17 @@ public class MockRconService : IRconService
         PlayerLeft?.Invoke(this, player);
     }
 
+    public void SimulateConnectionDrop()
+    {
+        IsConnected = false;
+        ConnectionLost?.Invoke(this, "Connection timed out (No packets received)");
+    }
+
     public async Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         LastPacketTime = DateTime.UtcNow;
-        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players);
+        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players, CurrentProtocol);
         return [.. _players];
     }
 
@@ -170,7 +170,7 @@ public class MockRconService : IRconService
         });
     }
 
-    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync();
+    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync(CurrentProtocol);
 
     public Task<bool> KickPlayerAsync(PlayerModel player, string reason, CancellationToken cancellationToken = default)
     {
@@ -256,10 +256,10 @@ public class MockRconService : IRconService
     public Task UpdatePlayerCommentAsync(string uid, string comment)
     {
         if (_players.FirstOrDefault(x => x.Uid == uid) is { } p) p.Comment = comment;
-        return PlayerDatabaseStorageService.UpdateCommentAsync(uid, comment);
+        return PlayerDatabaseStorageService.UpdateCommentAsync(uid, comment, CurrentProtocol);
     }
 
-    public Task ClearDatabaseAsync() => PlayerDatabaseStorageService.ClearAsync();
+    public Task ClearDatabaseAsync() => PlayerDatabaseStorageService.ClearDatabaseAsync(CurrentProtocol);
 
     public void Dispose()
     {

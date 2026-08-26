@@ -33,7 +33,7 @@ public static partial class ReforgerResponseParser
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
-            AppLogger.Trace($"[ReforgerResponseParser:Sanitizer] Empty or null input string received. Returning fallback: '{fallback}'");
+            AppLogger.Trace($"[ReforgerResponseParser:Sanitizer] Empty or whitespace text provided. Returning fallback: '{fallback}'");
             return fallback;
         }
 
@@ -128,14 +128,14 @@ public static partial class ReforgerResponseParser
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
-            AppLogger.Trace("[ReforgerResponseParser] Received empty or null raw player response buffer.");
+            AppLogger.Trace("[ReforgerResponseParser] Received empty or null player response payload.");
             return players;
         }
 
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            AppLogger.Debug($"[ReforgerResponseParser] Beginning line-by-line parsing for {lines.Length} line(s) ({rawResponse.Length} UTF-8 characters)...");
+            AppLogger.Debug($"[ReforgerResponseParser] Parsing {lines.Length} line(s) for Reforger player records (Total length: {rawResponse.Length} chars)...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -143,7 +143,7 @@ public static partial class ReforgerResponseParser
 
                 if (IsKnownPlayerHeaderLine(rawLine))
                 {
-                    AppLogger.Trace($"[ReforgerResponseParser] Skipped known player header line #{i + 1}: '{rawLine}'");
+                    AppLogger.Trace($"[ReforgerResponseParser] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -157,11 +157,11 @@ public static partial class ReforgerResponseParser
                 }
             }
 
-            AppLogger.Info($"[ReforgerResponseParser] Finished parsing Reforger player payload. Successfully extracted {players.Count} player record(s) from {lines.Length} line(s).");
+            AppLogger.Info($"[ReforgerResponseParser] Successfully parsed {players.Count} Reforger player(s) from {lines.Length} line(s).");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[ReforgerResponseParser] Fatal error during Reforger player list parsing. Forensic Payload Snapshot:\n{ToForensicDump(rawResponse)}", ex);
+            AppLogger.Error($"[ReforgerResponseParser] Critical failure while parsing Reforger player list. Forensic Dump:\n{ToForensicDump(rawResponse)}", ex);
         }
 
         return players;
@@ -210,7 +210,7 @@ public static partial class ReforgerResponseParser
                     DisplayLocation = string.Empty
                 };
 
-                AppLogger.Trace($"[ReforgerResponseParser] Successfully parsed player #{id} (ReforgerUID: {uid}, Name: '{sanitizedName}') on line #{lineIndex + 1}.");
+                AppLogger.Trace($"[ReforgerResponseParser] Parsed player #{id} (UID: {uid}, Name: '{sanitizedName}') on line #{lineIndex + 1}.");
                 return true;
             }
         }
@@ -272,7 +272,7 @@ public static partial class ReforgerResponseParser
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            AppLogger.Debug($"[ReforgerResponseParser] Beginning ban parsing for {lines.Length} line(s)...");
+            AppLogger.Debug($"[ReforgerResponseParser] Processing {lines.Length} line(s) for Reforger ban records...");
             int banSequence = 1;
 
             for (int i = 0; i < lines.Length; i++)
@@ -281,7 +281,7 @@ public static partial class ReforgerResponseParser
 
                 if (IsKnownBanHeaderLine(rawLine))
                 {
-                    AppLogger.Trace($"[ReforgerResponseParser] Skipped known ban header line #{i + 1}: '{rawLine}'");
+                    AppLogger.Trace($"[ReforgerResponseParser] Skipped ban header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -296,7 +296,7 @@ public static partial class ReforgerResponseParser
                 }
             }
 
-            AppLogger.Info($"[ReforgerResponseParser] Finished parsing Reforger bans. Extracted {bans.Count} ban record(s) from {lines.Length} line(s).");
+            AppLogger.Info($"[ReforgerResponseParser] Successfully parsed {bans.Count} Reforger ban(s) from {lines.Length} line(s).");
         }
         catch (Exception ex)
         {

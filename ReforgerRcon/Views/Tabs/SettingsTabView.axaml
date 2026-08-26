@@ -31,6 +31,24 @@
         </StackPanel>
       </lumina:LuminaCard>
 
+      <!-- Privacy & Diagnostic Telemetry Card -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="ShieldLockOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="Privacy &amp; Telemetry" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="Help improve ARRT by automatically sending anonymous diagnostic crash reports and performance metrics. All server passwords, RCON secrets, and sensitive tokens are strictly redacted before sending. (Disabled by default)" Classes="Caption" />
+
+          <ToggleSwitch Content="Send anonymous diagnostic and crash reports" 
+                        IsChecked="{Binding Settings.SendAnonymousCrashReports}"
+                        ToolTip.Tip="Disabled by default. When enabled, unhandled exception logs and diagnostic metrics are sent anonymously. All passwords and server credentials are scrubbed." />
+        </StackPanel>
+      </lumina:LuminaCard>
+
       <!-- Table Display & Default Sorting Card -->
       <lumina:LuminaCard Padding="16">
         <StackPanel Spacing="14">
@@ -52,12 +70,6 @@
                         SelectedItem="{Binding Settings.PlayersSortBy}"
                         HorizontalAlignment="Stretch"
                         ToolTip.Tip="Default shows the player list in the order received directly from the server." />
-              <ComboBox Grid.Column="2" 
-                        ItemsSource="{Binding SortDirections}" 
-                        SelectedItem="{Binding Settings.PlayersSortAscending, Converter={x:Static ObjectConverters.IsNull}}"
-                        SelectedIndex="{Binding Settings.PlayersSortAscending, Converter={x:Static ObjectConverters.IsNull}}"
-                        HorizontalAlignment="Stretch"
-                        IsVisible="False" />
               <ToggleSwitch Grid.Column="2" 
                             OnContent="Ascending" 
                             OffContent="Descending" 

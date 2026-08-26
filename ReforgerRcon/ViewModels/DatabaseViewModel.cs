@@ -10,6 +10,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
+using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -45,15 +46,19 @@ public partial class DatabaseViewModel : ViewModelBase
     [RelayCommand]
     public Task<bool> LoadDbAsync() => ExecuteSafeAsync(async () =>
     {
-        using var timing = AppLogger.Measure("DatabaseViewModel.LoadDbAsync");
-        AppLogger.Debug("[DatabaseViewModel] Querying player database records from SQLite storage...");
+        using var timing = AppLogger.Measure($"DatabaseViewModel.LoadDbAsync({_rconService.CurrentProtocol})");
+        AppLogger.Debug($"[DatabaseViewModel] Querying player database records from SQLite for {_rconService.CurrentProtocol}...");
 
         _allDbPlayers = await _rconService.GetDatabasePlayersAsync();
         var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync();
-        DatabaseStatsSummary = $"SQLite DB: {stats.TotalPlayers:N0} total players | {stats.OnlinePlayers:N0} online | {stats.WatchlistedPlayers:N0} watchlisted | Size: {stats.DatabaseSizeBytes / 1024.0:F1} KB";
+
+        var protocolCount = IsBattlEyeProtocol ? stats.TotalBattlEyePlayers : stats.TotalReforgerPlayers;
+        var protocolName = IsBattlEyeProtocol ? "BattlEye" : "Reforger";
+
+        DatabaseStatsSummary = $"{protocolName} Records: {protocolCount:N0} | {stats.OnlinePlayers:N0} online | {stats.WatchlistedPlayers:N0} watchlisted | Size: {stats.DatabaseSizeBytes / 1024.0:F1} KB";
 
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
-        AppLogger.Info($"[DatabaseViewModel] Loaded {_allDbPlayers.Count} historical player record(s) from SQLite (Summary: {DatabaseStatsSummary}).");
+        AppLogger.Info($"[DatabaseViewModel] Loaded {_allDbPlayers.Count} {protocolName} player record(s) from SQLite (Summary: {DatabaseStatsSummary}).");
     }, "Failed to retrieve player database records from SQLite.");
 
     public static string MapColumnTagToSortField(string? tag)
@@ -136,15 +141,6 @@ public partial class DatabaseViewModel : ViewModelBase
 
             IEnumerable<DatabasePlayerModel> filtered = _allDbPlayers;
 
-            if (IsBattlEyeProtocol)
-            {
-                filtered = filtered.Where(p => p.HasBattlEyeGuid);
-            }
-            else if (IsReforgerProtocol)
-            {
-                filtered = filtered.Where(p => p.HasReforgerUid);
-            }
-
             if (!string.IsNullOrWhiteSpace(query))
             {
                 filtered = searchType switch
@@ -184,8 +180,8 @@ public partial class DatabaseViewModel : ViewModelBase
                         ? filtered.OrderBy(p => p.DisplayBattlEyeGuid)
                         : filtered.OrderByDescending(p => p.DisplayBattlEyeGuid),
                     "IP:Port" => isAscending
-                        ? filtered.OrderBy(p => p.LastIp).ThenBy(p => p.LastPort)
-                        : filtered.OrderByDescending(p => p.LastIp).ThenByDescending(p => p.LastPort),
+                        ? filtered.OrderBy(p => p.FormattedEndpoint)
+                        : filtered.OrderByDescending(p => p.FormattedEndpoint),
                     "Ping" => isAscending
                         ? filtered.OrderBy(p => p.Ping)
                         : filtered.OrderByDescending(p => p.Ping),
@@ -283,8 +279,9 @@ public partial class DatabaseViewModel : ViewModelBase
             player ??= SelectedPlayer;
             if (player == null) return;
             var targetId = IsBattlEyeProtocol ? player.DisplayBattlEyeGuid : player.DisplayReforgerUid;
-            AppLogger.Info($"[DatabaseViewModel] Opening offline ban dialog for '{player.Name}' (TargetId: {targetId}, IP: {player.LastIp}).");
-            _dashboard.ShowDialog(new OfflineBanDialogViewModel(targetId, player.LastIp, _rconService, this));
+            var endpoint = player.LastIpPort;
+            AppLogger.Info($"[DatabaseViewModel] Opening offline ban dialog for '{player.Name}' (TargetId: {targetId}, Endpoint: {endpoint}).");
+            _dashboard.ShowDialog(new OfflineBanDialogViewModel(targetId, endpoint, _rconService, this));
         });
     }
 
@@ -334,7 +331,7 @@ public partial class DatabaseViewModel : ViewModelBase
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            var targetId = !string.IsNullOrEmpty(player.ReforgerUid) ? player.ReforgerUid : player.BattlEyeGuid;
+            var targetId = IsBattlEyeProtocol ? player.BattlEyeGuid : player.ReforgerUid;
             AppLogger.Debug($"[DatabaseViewModel] Opening set comment dialog for '{player.Name}'.");
             _dashboard.ShowDialog(new SetCommentDialogViewModel(player.Name, targetId, player.Comment, _rconService, _dashboard));
         });
@@ -355,8 +352,8 @@ public partial class DatabaseViewModel : ViewModelBase
             livePlayer.IsWatchlisted = player.IsWatchlisted;
         }
 
-        var identifier = !string.IsNullOrEmpty(player.ReforgerUid) ? player.ReforgerUid : player.BattlEyeGuid;
-        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted);
+        var identifier = IsBattlEyeProtocol ? player.BattlEyeGuid : player.ReforgerUid;
+        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted, _rconService.CurrentProtocol);
 
         var feedbackMessage = player.IsWatchlisted ? $"Added {player.Name} to Watchlist" : $"Removed {player.Name} from Watchlist";
         AppLogger.Info($"[DatabaseViewModel] Toggled watchlist for '{player.Name}' (ID: {identifier}) -> {player.IsWatchlisted}");
