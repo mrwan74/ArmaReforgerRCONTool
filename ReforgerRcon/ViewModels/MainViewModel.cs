@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Styling;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LuminaUI.Theming;
@@ -36,6 +38,14 @@ public partial class MainViewModel : ViewModelBase
     public static void ToggleTheme()
     {
         LuminaThemeManager.ToggleThemeVariant();
+        var currentActual = Application.Current?.ActualThemeVariant;
+        var newMode = currentActual == ThemeVariant.Dark ? "Dark" : "Light";
+
+        var settings = AppSettings.LoadFromDisk();
+        settings.ThemeMode = newMode;
+        AppSettings.SaveToDisk(settings);
+
+        AppLogger.Info($"[MainViewModel] Toggled theme variant (New Mode: {newMode}, Actual: {currentActual})");
     }
 
     private void OnLoginSuccess(ServerProfile profile, IRconService rconService)

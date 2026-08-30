@@ -1,5 +1,6 @@
-// FILE: ReforgerRcon\Views\Dialogs\DatabasePlayerDetailDialog.axaml.cs
+using System;
 using Avalonia.Controls;
+using ReforgerRcon.Services;
 
 namespace ReforgerRcon.Views.Dialogs;
 
@@ -7,6 +8,13 @@ public partial class DatabasePlayerDetailDialog : UserControl
 {
     public DatabasePlayerDetailDialog()
     {
-        InitializeComponent();
+        try
+        {
+            InitializeComponent();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[DatabasePlayerDetailDialog] Component initialization failed.", ex);
+        }
     }
 }

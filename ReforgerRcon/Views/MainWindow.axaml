@@ -9,7 +9,7 @@
                      xmlns:models="using:ReforgerRcon.Models"
                      x:Class="ReforgerRcon.Views.MainWindow"
                      x:DataType="vm:MainViewModel"
-                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.8.53"
+                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.8.60"
                      Icon="/Assets/app.ico"
                      Width="1696" Height="937"
                      MinWidth="960" MinHeight="640"
@@ -18,7 +18,7 @@
                      UseWindowGlass="False">
 
   <lumina:LuminaWindow.TitleBarLeftContent>
-    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.8.53" 
+    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.8.60" 
                FontSize="11" 
                FontWeight="Bold" 
                Foreground="{DynamicResource LuminaTextSecondaryBrush}" 

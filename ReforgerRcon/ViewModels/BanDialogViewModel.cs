@@ -97,7 +97,7 @@ public partial class BanDialogViewModel : ViewModelBase
     [RelayCommand]
     private async Task CopyCommandPreviewAsync()
     {
-        await ClipboardService.SetTextAsync(CommandPreview);
+        await ClipboardService.SetTextAsync(CommandPreview).ConfigureAwait(false);
         AppLogger.Debug($"[BanDialog] Copied command preview '{CommandPreview}' to clipboard.");
         ToastNotificationService.Instance.ShowToast("Copied", "Copied ban command to clipboard.");
     }
@@ -181,7 +181,7 @@ public partial class BanDialogViewModel : ViewModelBase
                 ProgressStatus = $"Banning {player.Name} ({i + 1}/{total})...";
                 AppLogger.Info($"[BanDialog] Sequentially banning target {i + 1}/{total}: '{player.Name}' (ID: {player.Id}, UID: {player.Uid}, IP: {player.Ip})...");
 
-                bool isSuccess = await _rconService.BanPlayerWithOptionalIpAsync(player, totalSec, Reason, AlsoBanIpAddress);
+                bool isSuccess = await _rconService.BanPlayerWithOptionalIpAsync(player, totalSec, Reason, AlsoBanIpAddress).ConfigureAwait(false);
 
                 long beMinutes = totalSec <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(totalSec / 60.0));
                 var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
@@ -195,12 +195,12 @@ public partial class BanDialogViewModel : ViewModelBase
                     ToastNotificationService.Instance.ShowSuccess("Ban Executed", $"Banned {player.Name}", cmd, async () =>
                     {
                         AppLogger.Info($"[BanDialog] Ban Undo action invoked for '{player.Name}'.");
-                        var allBans = await _rconService.GetBansAsync();
+                        var allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
                         var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid || b.IdentityId == player.Ip);
                         if (ban != null)
                         {
-                            await _rconService.RemoveBanAsync(ban);
-                            await _parent.TriggerPostBanRefreshAsync();
+                            await _rconService.RemoveBanAsync(ban).ConfigureAwait(false);
+                            await _parent.TriggerPostBanRefreshAsync().ConfigureAwait(false);
                         }
                     });
 
@@ -221,7 +221,7 @@ public partial class BanDialogViewModel : ViewModelBase
             AppLogger.Info($"[BanDialog] Ban execution finished (Success: {successCount}, Failed: {failedCount}).");
 
             _parent.CloseDialog();
-            await _parent.TriggerPostBanRefreshAsync();
+            await _parent.TriggerPostBanRefreshAsync().ConfigureAwait(false);
 
             if (total > 1)
             {

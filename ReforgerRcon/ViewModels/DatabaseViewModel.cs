@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
@@ -10,16 +9,15 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
-using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 
-public partial class DatabaseViewModel : ViewModelBase
+public partial class DatabaseViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
     public const string DefaultSortKey = "Default";
 
-    private readonly IRconService _rconService;
-    private readonly DashboardViewModel _dashboard;
+    private readonly IRconService _rconService = rconService;
+    private readonly DashboardViewModel _dashboard = dashboard;
     private List<DatabasePlayerModel> _allDbPlayers = [];
     private bool _isUpdatingSelection;
 
@@ -27,7 +25,7 @@ public partial class DatabaseViewModel : ViewModelBase
     [ObservableProperty] public partial DatabasePlayerModel? SelectedPlayer { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
     [ObservableProperty] public partial bool IsAllSelected { get; set; }
-    [ObservableProperty] public partial string DatabaseStatsSummary { get; set; } = "Loading SQLite database...";
+    [ObservableProperty] public partial string DatabaseStatsSummary { get; set; } = "Initializing database...";
 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
@@ -35,30 +33,22 @@ public partial class DatabaseViewModel : ViewModelBase
     public string CurrentSortField => _dashboard.SettingsTab.Settings.DatabaseSortBy;
     public bool CurrentSortAscending => _dashboard.SettingsTab.Settings.DatabaseSortAscending;
 
-    public DatabaseViewModel(IRconService rconService, DashboardViewModel dashboard)
-    {
-        _rconService = rconService;
-        _dashboard = dashboard;
-        AppLogger.Debug("[DatabaseViewModel] Initializing DatabaseViewModel and triggering initial SQLite load...");
-        _ = LoadDbAsync();
-    }
-
     [RelayCommand]
     public Task<bool> LoadDbAsync() => ExecuteSafeAsync(async () =>
     {
-        using var timing = AppLogger.Measure($"DatabaseViewModel.LoadDbAsync({_rconService.CurrentProtocol})");
-        AppLogger.Debug($"[DatabaseViewModel] Querying player database records from SQLite for {_rconService.CurrentProtocol}...");
-
-        _allDbPlayers = await _rconService.GetDatabasePlayersAsync();
-        var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync();
+        _allDbPlayers = await _rconService.GetDatabasePlayersAsync().ConfigureAwait(false);
+        var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync().ConfigureAwait(false);
 
         var protocolCount = IsBattlEyeProtocol ? stats.TotalBattlEyePlayers : stats.TotalReforgerPlayers;
         var protocolName = IsBattlEyeProtocol ? "BattlEye" : "Reforger";
 
-        DatabaseStatsSummary = $"{protocolName} Records: {protocolCount:N0} | {stats.OnlinePlayers:N0} online | {stats.WatchlistedPlayers:N0} watchlisted | Size: {stats.DatabaseSizeBytes / 1024.0:F1} KB";
+        var summary = $"{protocolName} Records: {protocolCount:N0} | {stats.OnlinePlayers:N0} online | {stats.WatchlistedPlayers:N0} watchlisted | Size: {stats.DatabaseSizeBytes / 1024.0:F1} KB";
 
-        ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
-        AppLogger.Info($"[DatabaseViewModel] Loaded {_allDbPlayers.Count} {protocolName} player record(s) from SQLite (Summary: {DatabaseStatsSummary}).");
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            DatabaseStatsSummary = summary;
+            ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+        });
     }, "Failed to retrieve player database records from SQLite.");
 
     public static string MapColumnTagToSortField(string? tag)
@@ -92,20 +82,17 @@ public partial class DatabaseViewModel : ViewModelBase
                 if (currentAsc)
                 {
                     _dashboard.SettingsTab.Settings.DatabaseSortAscending = false;
-                    AppLogger.Info($"[DatabaseViewModel] Cycled sort for '{mappedField}' -> Descending.");
                 }
                 else
                 {
                     _dashboard.SettingsTab.Settings.DatabaseSortBy = DefaultSortKey;
                     _dashboard.SettingsTab.Settings.DatabaseSortAscending = true;
-                    AppLogger.Info($"[DatabaseViewModel] Cycled sort for '{mappedField}' -> Default (raw database order).");
                 }
             }
             else
             {
                 _dashboard.SettingsTab.Settings.DatabaseSortBy = mappedField;
                 _dashboard.SettingsTab.Settings.DatabaseSortAscending = true;
-                AppLogger.Info($"[DatabaseViewModel] Cycled sort column -> '{mappedField}' (Ascending).");
             }
 
             ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
@@ -114,10 +101,9 @@ public partial class DatabaseViewModel : ViewModelBase
 
     public async Task RefreshAfterOfflineBanAsync()
     {
-        AppLogger.Info("[DatabaseViewModel] Refreshing historical database and server ban list post-offline ban...");
-        await _dashboard.BansTab.RefreshBansAsync();
-        _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count;
-        await LoadDbAsync();
+        await _dashboard.BansTab.RefreshBansAsync().ConfigureAwait(false);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count);
+        await LoadDbAsync().ConfigureAwait(false);
     }
 
     private static int GetPlayerStatusWeight(DatabasePlayerModel p)
@@ -132,8 +118,6 @@ public partial class DatabaseViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            using var timing = AppLogger.Measure($"DatabaseViewModel.ApplyFilter('{query}', '{searchType}')");
-
             foreach (var p in Players)
             {
                 p.PropertyChanged -= OnPlayerPropertyChanged;
@@ -200,7 +184,6 @@ public partial class DatabaseViewModel : ViewModelBase
             }
 
             UpdateSelectedState();
-            AppLogger.Trace($"[DatabaseViewModel] Filtered {Players.Count}/{_allDbPlayers.Count} database players using query '{query}' (Protocol: {_rconService.CurrentProtocol}, Sort: {sortField}, Asc: {isAscending}).");
         });
     }
 
@@ -225,7 +208,6 @@ public partial class DatabaseViewModel : ViewModelBase
                 {
                     p.IsSelected = value;
                 }
-                AppLogger.Debug($"[DatabaseViewModel] Toggled IsAllSelected to {value} across {Players.Count} entries.");
             }
             finally
             {
@@ -261,12 +243,7 @@ public partial class DatabaseViewModel : ViewModelBase
         ExecuteSafe(() =>
         {
             player ??= SelectedPlayer;
-            if (player == null)
-            {
-                AppLogger.Warn("[DatabaseViewModel] OpenPlayerDetails called with null player.");
-                return;
-            }
-            AppLogger.Info($"[DatabaseViewModel] Opening details dialog for '{player.Name}' (ReforgerUID: {player.ReforgerUid}, BE-GUID: {player.BattlEyeGuid}).");
+            if (player == null) return;
             _dashboard.ShowDialog(new DatabasePlayerDetailViewModel(player, this));
         });
     }
@@ -280,7 +257,6 @@ public partial class DatabaseViewModel : ViewModelBase
             if (player == null) return;
             var targetId = IsBattlEyeProtocol ? player.DisplayBattlEyeGuid : player.DisplayReforgerUid;
             var endpoint = player.LastIpPort;
-            AppLogger.Info($"[DatabaseViewModel] Opening offline ban dialog for '{player.Name}' (TargetId: {targetId}, Endpoint: {endpoint}).");
             _dashboard.ShowDialog(new OfflineBanDialogViewModel(targetId, endpoint, _rconService, this));
         });
     }
@@ -293,7 +269,6 @@ public partial class DatabaseViewModel : ViewModelBase
             player ??= SelectedPlayer;
             if (player == null) return;
 
-            AppLogger.Info($"[DatabaseViewModel] Attempting quick kick on historical player '{player.Name}' (ReforgerUID: {player.ReforgerUid}, BE-GUID: {player.BattlEyeGuid})...");
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Quick Kick Target",
                 $"Attempt to kick active sessions matching {player.Name}?",
@@ -301,21 +276,20 @@ public partial class DatabaseViewModel : ViewModelBase
                 true,
                 async () =>
                 {
-                    var active = (await _rconService.GetPlayersAsync()).FirstOrDefault(p =>
+                    var active = (await _rconService.GetPlayersAsync().ConfigureAwait(false)).FirstOrDefault(p =>
                         (!string.IsNullOrEmpty(player.ReforgerUid) && p.ReforgerUid == player.ReforgerUid) ||
                         (!string.IsNullOrEmpty(player.BattlEyeGuid) && p.BattlEyeGuid == player.BattlEyeGuid) ||
                         string.Equals(p.Name, player.Name, StringComparison.OrdinalIgnoreCase));
 
                     if (active != null)
                     {
-                        await _rconService.KickPlayerAsync(active, "Kicked from Historical Database");
+                        await _rconService.KickPlayerAsync(active, "Kicked from Historical Database").ConfigureAwait(false);
                         ToastNotificationService.Instance.ShowToast("Kick Dispatched", $"Kicked {player.Name}", $"#kick {active.Id}");
                         _dashboard.PlayersTab.RemovePlayerFromList(active);
                         _ = _dashboard.PlayersTab.RefreshPlayersAsync();
                     }
                     else
                     {
-                        AppLogger.Info($"[DatabaseViewModel] Quick kick cancelled: '{player.Name}' is not online.");
                         ToastNotificationService.Instance.ShowToast("Player Offline", $"{player.Name} is not currently online.");
                     }
                 },
@@ -332,7 +306,6 @@ public partial class DatabaseViewModel : ViewModelBase
             player ??= SelectedPlayer;
             if (player == null) return;
             var targetId = IsBattlEyeProtocol ? player.BattlEyeGuid : player.ReforgerUid;
-            AppLogger.Debug($"[DatabaseViewModel] Opening set comment dialog for '{player.Name}'.");
             _dashboard.ShowDialog(new SetCommentDialogViewModel(player.Name, targetId, player.Comment, _rconService, _dashboard));
         });
     }
@@ -353,10 +326,9 @@ public partial class DatabaseViewModel : ViewModelBase
         }
 
         var identifier = IsBattlEyeProtocol ? player.BattlEyeGuid : player.ReforgerUid;
-        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted, _rconService.CurrentProtocol);
+        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted, _rconService.CurrentProtocol).ConfigureAwait(false);
 
         var feedbackMessage = player.IsWatchlisted ? $"Added {player.Name} to Watchlist" : $"Removed {player.Name} from Watchlist";
-        AppLogger.Info($"[DatabaseViewModel] Toggled watchlist for '{player.Name}' (ID: {identifier}) -> {player.IsWatchlisted}");
         ToastNotificationService.Instance.ShowToast("Watchlist Updated", feedbackMessage);
     });
 
@@ -404,8 +376,7 @@ public partial class DatabaseViewModel : ViewModelBase
         player ??= SelectedPlayer;
         if (player == null) return;
         var text = FormatDatabasePlayerInfo(player);
-        await ClipboardService.SetTextAsync(text);
-        AppLogger.Info($"[DatabaseViewModel] Copied database player info for '{player.Name}' to clipboard.");
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied info for {player.Name}");
     });
 
@@ -418,8 +389,7 @@ public partial class DatabaseViewModel : ViewModelBase
         var formattedEntries = selected.Select(FormatDatabasePlayerInfo);
         var text = string.Join("\n\n", formattedEntries);
 
-        await ClipboardService.SetTextAsync(text);
-        AppLogger.Info($"[DatabaseViewModel] Copied {selected.Count} database player records to clipboard.");
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
         ToastNotificationService.Instance.ShowToast("Clipboard", "Copied player database to clipboard.");
     });
 

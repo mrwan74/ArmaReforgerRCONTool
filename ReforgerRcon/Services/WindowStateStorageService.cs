@@ -36,11 +36,12 @@ public static class WindowStateStorageService
     private static void RestoreWindowState(Window window, string windowKey)
     {
         var sw = Stopwatch.StartNew();
+        if (!File.Exists(StorageFile)) return;
+
         try
         {
-            if (!File.Exists(StorageFile)) return;
             var json = File.ReadAllText(StorageFile);
-            var dict = JsonSerializer.Deserialize<Dictionary<string, WindowStateModel>>(json);
+            var dict = JsonSerializer.Deserialize<Dictionary<string, WindowStateModel>>(json, JsonOptions);
             if (dict != null && dict.TryGetValue(windowKey, out var state))
             {
                 ApplyStateToWindow(window, state);
@@ -51,17 +52,17 @@ public static class WindowStateStorageService
         catch (JsonException jsonEx)
         {
             sw.Stop();
-            AppLogger.Warn($"[WindowStateStorage] Corrupted window geometry JSON in '{StorageFile}': {jsonEx.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Corrupted window geometry JSON in '{StorageFile}': {jsonEx.Message}", jsonEx);
         }
         catch (IOException ioEx)
         {
             sw.Stop();
-            AppLogger.Warn($"[WindowStateStorage] Disk I/O error reading '{StorageFile}': {ioEx.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Disk I/O error reading '{StorageFile}': {ioEx.Message}", ioEx);
         }
         catch (UnauthorizedAccessException authEx)
         {
             sw.Stop();
-            AppLogger.Warn($"[WindowStateStorage] Access denied reading '{StorageFile}': {authEx.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Access denied reading '{StorageFile}': {authEx.Message}", authEx);
         }
     }
 
@@ -116,16 +117,21 @@ public static class WindowStateStorageService
 
         try
         {
-            return JsonSerializer.Deserialize<Dictionary<string, WindowStateModel>>(File.ReadAllText(StorageFile)) ?? [];
+            return JsonSerializer.Deserialize<Dictionary<string, WindowStateModel>>(File.ReadAllText(StorageFile), JsonOptions) ?? [];
         }
         catch (JsonException ex)
         {
-            AppLogger.Warn($"[WindowStateStorage] Failed deserializing window state JSON: {ex.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Failed deserializing window state JSON: {ex.Message}", ex);
             return [];
         }
         catch (IOException ioEx)
         {
-            AppLogger.Warn($"[WindowStateStorage] Disk I/O error reading state dictionary: {ioEx.Message}");
+            AppLogger.Warn($"[WindowStateStorage] Disk I/O error reading state dictionary: {ioEx.Message}", ioEx);
+            return [];
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            AppLogger.Warn($"[WindowStateStorage] Access denied reading state dictionary: {authEx.Message}", authEx);
             return [];
         }
     }

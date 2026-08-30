@@ -1,4 +1,6 @@
-﻿using System;
+﻿using ReforgerRcon.Services;
+using ReforgerRcon.Services.Parsers;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -7,8 +9,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using ReforgerRcon.Services;
-using ReforgerRcon.Services.Parsers;
 
 namespace ReforgerRcon.BattleNET;
 
@@ -74,7 +74,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             {
                 if (ct.IsCancellationRequested)
                 {
-                    AppLogger.Warn($"[BattlEyeClient] Handshake cancelled by token for {remoteEp}.");
+                    AppLogger.Warn($"[BattlEyeClient] Handshake cancelled for {remoteEp}.");
                     OnConnect(_loginCredentials, BattlEyeConnectionResult.ConnectionFailed);
                     return BattlEyeConnectionResult.ConnectionFailed;
                 }
@@ -86,8 +86,8 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                     {
                         ReceiveBufferSize = 262144,
                         SendBufferSize = 65535,
-                        ReceiveTimeout = 2500,
-                        SendTimeout = 2500,
+                        ReceiveTimeout = 900,
+                        SendTimeout = 900,
                         ExclusiveAddressUse = false
                     };
 
@@ -126,7 +126,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                     }
                     else
                     {
-                        AppLogger.Warn($"[BattlEyeClient] Handshake packet validation failed on attempt #{attempt}. Raw response:\n{ReforgerResponseParser.ToForensicDump(Encoding.Latin1.GetString(receiveBuffer, 0, bytesReceived))}");
+                        AppLogger.Warn($"[BattlEyeClient] Handshake packet validation failed on attempt #{attempt}.");
                     }
                 }
                 catch (SocketException sockEx)
@@ -134,12 +134,11 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                     AppLogger.Warn($"[BattlEyeClient] Handshake attempt #{attempt} socket notice ({sockEx.SocketErrorCode}): {sockEx.Message}");
                     if (attempt < totalRetries && !ct.IsCancellationRequested)
                     {
-                        Thread.Sleep(500);
+                        Thread.Sleep(100);
                     }
                 }
-                catch (ObjectDisposedException dispEx)
+                catch (ObjectDisposedException)
                 {
-                    AppLogger.Warn($"[BattlEyeClient] Socket disposed during connection attempt #{attempt}: {dispEx.Message}");
                     break;
                 }
                 catch (Exception ex)
@@ -147,7 +146,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                     AppLogger.Error($"[BattlEyeClient] Unexpected error during handshake attempt #{attempt} to {remoteEp}", ex);
                     if (attempt < totalRetries && !ct.IsCancellationRequested)
                     {
-                        Thread.Sleep(500);
+                        Thread.Sleep(100);
                     }
                 }
             }
@@ -214,7 +213,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
         try
         {
-            return await tcs.Task.WaitAsync(timeout, cancellationToken);
+            return await tcs.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -264,6 +263,10 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             AppLogger.Debug($"[BattlEyeClient] Socket disposed during keepalive transmission: {dispEx.Message}");
         }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[BattlEyeClient] Unexpected error sending keepalive heartbeat.", ex);
+        }
     }
 
     private void SendServerMessageAcknowledge(byte sequenceNumber)
@@ -285,6 +288,10 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             AppLogger.Debug($"[BattlEyeClient] Socket disposed during server message ACK (Seq: {sequenceNumber}): {dispEx.Message}");
         }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[BattlEyeClient] Unexpected error sending server message ACK (Seq: {sequenceNumber})", ex);
+        }
     }
 
     private void SendRaw(byte[] packet)
@@ -300,6 +307,10 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         catch (ObjectDisposedException)
         {
             AppLogger.Debug("[BattlEyeClient] SendRaw aborted: Socket disposed.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[BattlEyeClient] General exception in SendRaw.", ex);
         }
     }
 
@@ -413,6 +424,10 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             {
                 AppLogger.Debug("[BattlEyeClient] Socket already disposed on disconnect.");
             }
+            catch (Exception ex)
+            {
+                AppLogger.Error("[BattlEyeClient] Unexpected error closing socket.", ex);
+            }
         }
 
         if (disconnectionType != null)
@@ -466,7 +481,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
                 try
                 {
-                    await Task.Delay(5);
+                    await Task.Delay(4).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -539,7 +554,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                 break;
 
             default:
-                AppLogger.Warn($"[BattlEyeClient] Unknown packet type byte: 0x{packetType:X2}. Payload Hex: {Convert.ToHexString(payload)}");
+                AppLogger.Warn($"[BattlEyeClient] Unknown packet type byte: 0x{packetType:X2}.");
                 break;
         }
     }
@@ -621,9 +636,41 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         }
     }
 
-    private void OnBattlEyeMessage(string message, int id) => BattlEyeMessageReceived?.Invoke(new BattlEyeMessageEventArgs(message, id));
-    private void OnConnect(BattlEyeLoginCredentials loginDetails, BattlEyeConnectionResult connectionResult) => BattlEyeConnected?.Invoke(new BattlEyeConnectEventArgs(loginDetails, connectionResult));
-    private void OnDisconnect(BattlEyeLoginCredentials loginDetails, BattlEyeDisconnectionType? disconnectionType) => BattlEyeDisconnected?.Invoke(new BattlEyeDisconnectEventArgs(loginDetails, disconnectionType));
+    private void OnBattlEyeMessage(string message, int id)
+    {
+        try
+        {
+            BattlEyeMessageReceived?.Invoke(new BattlEyeMessageEventArgs(message, id));
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[BattlEyeClient] Subscriber error in BattlEyeMessageReceived: {ex.Message}", ex);
+        }
+    }
+
+    private void OnConnect(BattlEyeLoginCredentials loginDetails, BattlEyeConnectionResult connectionResult)
+    {
+        try
+        {
+            BattlEyeConnected?.Invoke(new BattlEyeConnectEventArgs(loginDetails, connectionResult));
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[BattlEyeClient] Subscriber error in BattlEyeConnected: {ex.Message}", ex);
+        }
+    }
+
+    private void OnDisconnect(BattlEyeLoginCredentials loginDetails, BattlEyeDisconnectionType? disconnectionType)
+    {
+        try
+        {
+            BattlEyeDisconnected?.Invoke(new BattlEyeDisconnectEventArgs(loginDetails, disconnectionType));
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[BattlEyeClient] Subscriber error in BattlEyeDisconnected: {ex.Message}", ex);
+        }
+    }
 
     public void Dispose()
     {

@@ -18,7 +18,6 @@ public partial class MainWindow : LuminaWindow
             ApplyInitialGlassSetting();
             DataContext = new MainViewModel();
             WindowStateStorageService.BindWindowPersistence(this, "MainWindow");
-            DebugLayoutLoggerService.AttachMainWindow(this);
         }
         catch (Exception ex)
         {
@@ -40,13 +39,12 @@ public partial class MainWindow : LuminaWindow
                 if (settings != null)
                 {
                     UseWindowGlass = settings.EnableWindowGlass;
-                    AppLogger.Debug($"[MainWindow] Initialized UseWindowGlass={UseWindowGlass}");
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[MainWindow] Non-fatal glass setting inspection notice: {ex.Message}");
+            AppLogger.Trace($"[MainWindow] Glass inspection notice: {ex.Message}");
         }
     }
 }

@@ -1,18 +1,25 @@
-using System;
-using System.Diagnostics;
+using Aptabase.Avalonia;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using AvaloniaUI.DiagnosticsSupport;
 using LuminaUI.Theming;
+using ReforgerRcon.Models;
 using ReforgerRcon.Services;
 using ReforgerRcon.Views;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 
 namespace ReforgerRcon;
 
 public partial class App : Application
 {
+    private bool _developerToolsAttached;
+
     public override void Initialize()
     {
         var sw = Stopwatch.StartNew();
@@ -24,8 +31,19 @@ public partial class App : Application
             AppLogger.Info($"Avalonia XAML resources successfully loaded in {sw.ElapsedMilliseconds} ms.");
 
 #if DEBUG
-            AppLogger.Info("Enabling AvaloniaUI Developer Tools bridge. Press F12 while running to inspect visual tree.");
-            this.AttachDeveloperTools();
+            if (!_developerToolsAttached)
+            {
+                _developerToolsAttached = true;
+                try
+                {
+                    AppLogger.Info("Attaching AvaloniaUI Developer Tools diagnostics bridge (Port 29414)...");
+                    this.AttachDeveloperTools();
+                }
+                catch (Exception devEx)
+                {
+                    AppLogger.Warn($"Failed attaching Developer Tools diagnostics bridge: {devEx.Message}", devEx);
+                }
+            }
 #endif
         }
         catch (Exception ex)
@@ -44,9 +62,9 @@ public partial class App : Application
         {
             Dispatcher.UIThread.UnhandledExceptionFilter += (_, e) =>
             {
-                if (e.Exception is OperationCanceledException)
+                if (e.Exception is OperationCanceledException or TaskCanceledException)
                 {
-                    AppLogger.Debug("[Dispatcher.UIThread.UnhandledExceptionFilter] Filtered expected OperationCanceledException from UI crash handler.");
+                    AppLogger.Debug($"[Dispatcher.UIThread.UnhandledExceptionFilter] Filtered expected {e.Exception.GetType().Name} from UI error handler.");
                     e.RequestCatch = false;
                 }
             };
@@ -62,23 +80,22 @@ public partial class App : Application
             try
             {
                 LuminaThemeManager.Initialize(this);
+
+                var savedSettings = AppSettings.LoadFromDisk();
+                AppSettings.ApplyThemeMode(savedSettings.ThemeMode);
+                AppLogger.Info($"[App] Applied startup theme mode: {savedSettings.ThemeMode}");
             }
             catch (Exception themeEx)
             {
                 AppLogger.Error("LuminaUI Theme initialization notice: " + themeEx.Message, themeEx);
-                ToastNotificationService.Instance.ShowWarning("Theme Warning", "Failed to apply custom theme variant. Reverting to dark default.");
+                ToastNotificationService.Instance.ShowWarning("Theme Warning", "Failed to apply custom theme variant. Reverting to default.");
             }
 
-            AppLogger.Info("Initializing MaxMind GeoIP2 Engine...");
-            try
-            {
-                GeoIpService.Initialize();
-            }
-            catch (Exception geoEx)
-            {
-                AppLogger.Error("GeoIP engine initialization failed: " + geoEx.Message, geoEx);
-                ToastNotificationService.Instance.ShowWarning("GeoIP Warning", "Geolocation lookup engine could not initialize. Operating in offline mode.");
-            }
+            AppLogger.Info("Initializing MaxMind GeoIP2 Engine asynchronously...");
+            GeoIpService.Initialize();
+
+            // Safe background pre-warm of flag icons now that AssetLoader is registered
+            FlagAssetService.PrewarmCache();
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
@@ -89,6 +106,24 @@ public partial class App : Application
             base.OnFrameworkInitializationCompleted();
             sw.Stop();
             AppLogger.Info($"Framework initialization successfully completed in {sw.ElapsedMilliseconds} ms.");
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    AppLogger.TrackEvent("app_started", new Dictionary<string, object>
+                    {
+                        ["os"] = RuntimeInformation.OSDescription,
+                        ["arch"] = RuntimeInformation.ProcessArchitecture.ToString(),
+                        ["cores"] = Environment.ProcessorCount,
+                        ["telemetry_enabled"] = AppSettings.IsCrashReportingEnabled()
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Debug($"[App] Failed tracking app_started event: {ex.Message}");
+                }
+            });
         }
         catch (Exception ex)
         {

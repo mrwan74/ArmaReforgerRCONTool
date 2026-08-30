@@ -10,7 +10,7 @@
              x:Name="RootLoginView">
 
   <Grid>
-    <!-- Main Content Container with Expanded Left Sidebar Width -->
+    <!-- Main Content Container -->
     <Grid ColumnDefinitions="410,*" Margin="32">
       <!-- Left Sidebar: Saved Profiles Management -->
       <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16" x:CompileBindings="False">
@@ -29,7 +29,7 @@
             </Button>
           </Grid>
 
-          <!-- Profiles List with Compact Action Buttons & Full Text Breathing Room -->
+          <!-- Profiles List -->
           <ListBox Grid.Row="1" 
                    ItemsSource="{Binding Profiles}" 
                    SelectedItem="{Binding SelectedProfile}">
@@ -169,7 +169,7 @@
             <TextBlock Text="Manage your ARMA Reforger server using Reforger's Built-In RCON or BattlEye RCON" Classes="Caption" />
           </StackPanel>
 
-          <!-- RCON Protocol Selection Header with Help Button & Wrapping ToolTip -->
+          <!-- RCON Protocol Selection Header -->
           <StackPanel Spacing="6">
             <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
               <TextBlock Text="RCON Protocol" Classes="Label" VerticalAlignment="Center" />
@@ -193,7 +193,7 @@
           </StackPanel>
 
           <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
-            <StackPanel Spacing="4">
+            <StackPanel Grid.Column="0" Spacing="4">
               <TextBlock Text="Server IP / Hostname" Classes="Label" />
               <TextBox Text="{Binding ServerIp}" PlaceholderText="127.0.0.1" />
             </StackPanel>
@@ -246,16 +246,21 @@
       </lumina:LuminaCard>
     </Grid>
 
-    <!-- Modal Dialog Overlay for Login Screen -->
-    <Border Background="#90000000" 
+    <!-- Modal Dialog Overlay Centered Across Entire Window -->
+    <Border Background="#A0000000" 
             IsVisible="{Binding IsDialogVisible}" 
             ZIndex="9000"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch">
-      <ContentControl Content="{Binding ActiveDialog}" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <ContentControl Content="{Binding ActiveDialog}" 
+                      HorizontalAlignment="Center" 
+                      VerticalAlignment="Center">
         <ContentControl.DataTemplates>
           <DataTemplate DataType="{x:Type vm:ProtocolHelpDialogViewModel}">
             <dialogs:ProtocolHelpDialog />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:TelemetryConsentDialogViewModel}">
+            <dialogs:TelemetryConsentDialog />
           </DataTemplate>
         </ContentControl.DataTemplates>
       </ContentControl>

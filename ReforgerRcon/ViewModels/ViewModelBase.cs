@@ -1,3 +1,10 @@
+using Aptabase.Avalonia;
+using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.Data.Sqlite;
+using ReforgerRcon.Services;
+using Sentry;
+using Serilog.Context;
+using SerilogTimings;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,11 +15,6 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Tasks;
-using CommunityToolkit.Mvvm.ComponentModel;
-using Microsoft.Data.Sqlite;
-using ReforgerRcon.Services;
-using Sentry;
-using SerilogTimings;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -32,7 +34,11 @@ public abstract class ViewModelBase : ObservableObject
         ArgumentNullException.ThrowIfNull(action);
 
         var callerType = GetType().Name;
+        var file = Path.GetFileName(callerPath);
+        var callerContext = $"{file}:{callerLine} -> {actionName}()";
+
         var transaction = SentrySdk.StartTransaction(actionName, $"ui.action.{callerType}");
+        using var logContext = LogContext.PushProperty("CallerContext", callerContext);
         using var op = Operation.Begin("Execute {ActionName} on {CallerType}", actionName, callerType);
         var sw = Stopwatch.StartNew();
 
@@ -44,7 +50,7 @@ public abstract class ViewModelBase : ObservableObject
 
         try
         {
-            await action();
+            await action().ConfigureAwait(false);
             sw.Stop();
             op.Complete();
             transaction.Finish(SpanStatus.Ok);
@@ -54,6 +60,13 @@ public abstract class ViewModelBase : ObservableObject
                 new KeyValuePair<string, object>(ActionTag, actionName),
                 new KeyValuePair<string, object>("outcome", "success")
             ]);
+
+            AppLogger.TrackEvent("ui_action_completed", new Dictionary<string, object>
+            {
+                ["action"] = actionName,
+                ["view_model"] = callerType,
+                ["duration_ms"] = sw.ElapsedMilliseconds
+            });
 
             return true;
         }
@@ -72,6 +85,8 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = sockEx.Demystify();
             transaction.Finish(SpanStatus.Unavailable);
 
+            TrackAptabaseError(demystified, actionName, callerType);
+
             SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
                 new KeyValuePair<string, object>(ActionTag, actionName),
@@ -79,7 +94,7 @@ public abstract class ViewModelBase : ObservableObject
                 new KeyValuePair<string, object>("socket_code", sockEx.SocketErrorCode.ToString())
             ]);
 
-            var msg = userFriendlyErrorMessage ?? $"Network communication failure (Error Code: {sockEx.SocketErrorCode}). Verify that the remote server IP and port are reachable and open in firewall.";
+            var msg = userFriendlyErrorMessage ?? string.Create(CultureInfo.InvariantCulture, $"Network communication failure (Error Code: {sockEx.SocketErrorCode}). Verify that the remote server IP and port are reachable and open in firewall.");
             AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:SocketError] {callerType}.{actionName}(): SocketErrorCode={sockEx.SocketErrorCode}, NativeErrorCode={sockEx.NativeErrorCode}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
             SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
@@ -91,6 +106,8 @@ public abstract class ViewModelBase : ObservableObject
             sw.Stop();
             var demystified = timeEx.Demystify();
             transaction.Finish(SpanStatus.DeadlineExceeded);
+
+            TrackAptabaseError(demystified, actionName, callerType);
 
             SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
@@ -111,14 +128,16 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = sqlEx.Demystify();
             transaction.Finish(SpanStatus.InternalError);
 
+            TrackAptabaseError(demystified, actionName, callerType);
+
             SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
                 new KeyValuePair<string, object>(ActionTag, actionName),
                 new KeyValuePair<string, object>(ErrorTypeTag, "sqlite"),
-                new KeyValuePair<string, object>("sqlite_code", sqlEx.SqliteErrorCode.ToString())
+                new KeyValuePair<string, object>("sqlite_code", sqlEx.SqliteErrorCode.ToString(CultureInfo.InvariantCulture))
             ]);
 
-            var msg = userFriendlyErrorMessage ?? $"Local SQLite database storage error (Code: {sqlEx.SqliteErrorCode}).";
+            var msg = userFriendlyErrorMessage ?? string.Create(CultureInfo.InvariantCulture, $"Local SQLite database storage error (Code: {sqlEx.SqliteErrorCode}).");
             AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:SqliteError] {callerType}.{actionName}(): SqliteErrorCode={sqlEx.SqliteErrorCode}, ExtendedCode={sqlEx.SqliteExtendedErrorCode}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
             SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
@@ -130,6 +149,8 @@ public abstract class ViewModelBase : ObservableObject
             sw.Stop();
             var demystified = httpEx.Demystify();
             transaction.Finish(SpanStatus.Unavailable);
+
+            TrackAptabaseError(demystified, actionName, callerType);
 
             SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
@@ -151,6 +172,8 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = jsonEx.Demystify();
             transaction.Finish(SpanStatus.InvalidArgument);
 
+            TrackAptabaseError(demystified, actionName, callerType);
+
             var msg = userFriendlyErrorMessage ?? "Failed to parse data configuration format.";
             AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:JsonError] {callerType}.{actionName}(): LineNumber={jsonEx.LineNumber}, BytePosition={jsonEx.BytePositionInLine}, Path={jsonEx.Path}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
@@ -163,6 +186,8 @@ public abstract class ViewModelBase : ObservableObject
             sw.Stop();
             var demystified = authEx.Demystify();
             transaction.Finish(SpanStatus.PermissionDenied);
+
+            TrackAptabaseError(demystified, actionName, callerType);
 
             var msg = userFriendlyErrorMessage ?? "File or directory access was denied by operating system permissions.";
             AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:AccessDenied] {callerType}.{actionName}(): {authEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
@@ -177,6 +202,8 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = ioEx.Demystify();
             transaction.Finish(SpanStatus.InternalError);
 
+            TrackAptabaseError(demystified, actionName, callerType);
+
             var msg = userFriendlyErrorMessage ?? "Disk read/write failure occurred.";
             AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:IOError] {callerType}.{actionName}(): HResult=0x{ioEx.HResult:X8}, Message={ioEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
@@ -190,6 +217,8 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = argEx.Demystify();
             transaction.Finish(SpanStatus.InvalidArgument);
 
+            TrackAptabaseError(demystified, actionName, callerType);
+
             var msg = userFriendlyErrorMessage ?? $"Invalid parameter specified: {argEx.Message}";
             AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:ArgumentError] {callerType}.{actionName}(): ParamName={argEx.ParamName}, Message={argEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
@@ -202,6 +231,8 @@ public abstract class ViewModelBase : ObservableObject
             var demystified = invOpEx.Demystify();
             transaction.Finish(SpanStatus.FailedPrecondition);
 
+            TrackAptabaseError(demystified, actionName, callerType);
+
             var msg = userFriendlyErrorMessage ?? $"Action '{actionName}' cannot be performed in current state: {invOpEx.Message}";
             AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:InvalidOperation] {callerType}.{actionName}(): {invOpEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
@@ -213,6 +244,8 @@ public abstract class ViewModelBase : ObservableObject
             sw.Stop();
             var demystified = ex.Demystify();
             transaction.Finish(SpanStatus.UnknownError);
+
+            TrackAptabaseError(demystified, actionName, callerType);
 
             SentrySdk.Metrics.EmitCounter(UiActionErrorsMetric, 1,
             [
@@ -229,6 +262,26 @@ public abstract class ViewModelBase : ObservableObject
         }
     }
 
+    private static void TrackAptabaseError(Exception ex, string actionName, string callerType)
+    {
+        if (!Models.AppSettings.IsCrashReportingEnabled() || !AptabaseExtensions.IsInitialized) return;
+
+        try
+        {
+            _ = AptabaseExtensions.Instance.TrackError(ex, fatal: false);
+            AppLogger.TrackEvent("ui_action_error", new Dictionary<string, object>
+            {
+                ["action"] = actionName,
+                ["caller"] = callerType,
+                ["error_type"] = ex.GetType().Name
+            });
+        }
+        catch (Exception aptaEx)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ViewModelBase] TrackAptabaseError notice: {aptaEx.Message}");
+        }
+    }
+
     protected bool ExecuteSafe(
         Action action,
         string? userFriendlyErrorMessage = null,
@@ -239,7 +292,11 @@ public abstract class ViewModelBase : ObservableObject
         ArgumentNullException.ThrowIfNull(action);
 
         var callerType = GetType().Name;
+        var file = Path.GetFileName(callerPath);
+        var callerContext = $"{file}:{callerLine} -> {actionName}()";
+
         var transaction = SentrySdk.StartTransaction(actionName, $"ui.sync.{callerType}");
+        using var logContext = LogContext.PushProperty("CallerContext", callerContext);
         using var op = Operation.Begin("Execute {ActionName} on {CallerType}", actionName, callerType);
 
         try
@@ -260,6 +317,7 @@ public abstract class ViewModelBase : ObservableObject
         {
             var demystified = argEx.Demystify();
             transaction.Finish(SpanStatus.InvalidArgument);
+            TrackAptabaseError(demystified, actionName, callerType);
 
             var msg = userFriendlyErrorMessage ?? $"Invalid parameter specified: {argEx.Message}";
             AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:ArgumentError] {callerType}.{actionName}(): ParamName={argEx.ParamName}"), demystified, member: actionName, path: callerPath, line: callerLine);
@@ -271,6 +329,7 @@ public abstract class ViewModelBase : ObservableObject
         {
             var demystified = invOpEx.Demystify();
             transaction.Finish(SpanStatus.FailedPrecondition);
+            TrackAptabaseError(demystified, actionName, callerType);
 
             var msg = userFriendlyErrorMessage ?? $"Action '{actionName}' cannot be executed in current state: {invOpEx.Message}";
             AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:InvalidOperation] {callerType}.{actionName}(): {invOpEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
@@ -282,6 +341,7 @@ public abstract class ViewModelBase : ObservableObject
         {
             var demystified = ex.Demystify();
             transaction.Finish(SpanStatus.UnknownError);
+            TrackAptabaseError(demystified, actionName, callerType);
 
             var msg = userFriendlyErrorMessage ?? $"Action '{actionName}' failed: {ex.Message}";
             AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:UnhandledException] {callerType}.{actionName}() failed: {ex.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);

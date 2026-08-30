@@ -144,7 +144,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
                     }
                 }
             }
-            else // Linux / Unix
+            else
             {
                 var dir = Directory.Exists(targetPath) ? targetPath : Path.GetDirectoryName(targetPath);
                 if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))

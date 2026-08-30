@@ -1,0 +1,107 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             x:Class="ReforgerRcon.Views.Dialogs.GeoIpUpdateDialog"
+             x:DataType="vm:GeoIpUpdateDialogViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="600" MaxHeight="720" Classes="Elevated">
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="14">
+
+      <!-- Header -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="{DynamicResource LuminaPrimaryBgBrush}" CornerRadius="8" Padding="8" VerticalAlignment="Center">
+            <icons:MaterialIcon Kind="EarthArrowRight" Foreground="{DynamicResource LuminaPrimaryBrush}" Width="22" Height="22" />
+          </Border>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="MaxMind GeoIP Database Update" Classes="SectionTitle" FontSize="18" FontWeight="Bold" />
+            <TextBlock Text="{Binding CurrentStatusTitle}" FontSize="12" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+          </StackPanel>
+        </StackPanel>
+
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CancelOrCloseCommand}" ToolTip.Tip="Close" VerticalAlignment="Center" />
+      </Grid>
+
+      <!-- Overall Progress Bar -->
+      <StackPanel Grid.Row="1" Spacing="6">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="Overall Progress" Classes="Caption" FontWeight="SemiBold" />
+          <TextBlock Grid.Column="1" Text="{Binding ProgressPercentage, StringFormat='{}{0:F0}%'}" FontWeight="Bold" FontSize="12" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+        </Grid>
+        <ProgressBar Minimum="0" Maximum="100" Value="{Binding ProgressPercentage}" Height="8" CornerRadius="4" />
+      </StackPanel>
+
+      <!-- Database Step Status Cards (City & Country) -->
+      <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="12">
+        
+        <!-- City Database -->
+        <Border Grid.Column="0" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+          <StackPanel Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="{Binding CityIconKind}" Width="16" Height="16" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+              <TextBlock Text="GeoLite2-City" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="{Binding CityStatusText}" Classes="Caption" FontSize="11" TextTrimming="CharacterEllipsis" />
+          </StackPanel>
+        </Border>
+
+        <!-- Country Database -->
+        <Border Grid.Column="1" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+          <StackPanel Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="{Binding CountryIconKind}" Width="16" Height="16" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+              <TextBlock Text="GeoLite2-Country" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="{Binding CountryStatusText}" Classes="Caption" FontSize="11" TextTrimming="CharacterEllipsis" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Activity Log Stream -->
+      <StackPanel Grid.Row="3" Spacing="6">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="Activity Log" Classes="Caption" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Classes="Small Ghost" Command="{Binding CopyLogsCommand}" ToolTip.Tip="Copy log output to clipboard">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="ContentCopy" Width="13" Height="13" />
+              <TextBlock Text="Copy Log" />
+            </StackPanel>
+          </Button>
+        </Grid>
+
+        <Border Background="{DynamicResource LuminaNavigationPaneBrush}"
+                BorderBrush="{DynamicResource LuminaBorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="8">
+          <ScrollViewer Height="160" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding ActivityLogs}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}" 
+                             FontFamily="Consolas, Cascadia Code, monospace" 
+                             FontSize="11" 
+                             Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
+                             TextWrapping="NoWrap" 
+                             Margin="0,1" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Border>
+      </StackPanel>
+
+      <!-- Footer Action Buttons -->
+      <Grid Grid.Row="4" ColumnDefinitions="*,Auto">
+        <Button Grid.Column="1"
+                Classes="Primary"
+                Content="{Binding ActionButtonText}"
+                Command="{Binding CancelOrCloseCommand}"
+                MinWidth="100"
+                HorizontalContentAlignment="Center" />
+      </Grid>
+    </Grid>
+  </lumina:LuminaCard>
+</UserControl>

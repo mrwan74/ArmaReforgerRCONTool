@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<PackageId>Aptabase.Avalonia</PackageId>
+		<Version>0.4.0</Version>
+		<AssemblyVersion>$(Version)</AssemblyVersion>
+		<FileVersion>$(Version)</FileVersion>
+		<TargetFramework>net10.0</TargetFramework>
+		<Description>Avalonia SDK for Aptabase (.NET 10): Open Source, Privacy-First Analytics and Crash Reporting for Desktop Apps (Windows, macOS, Linux)</Description>
+		<Authors>Aptabase Team</Authors>
+		<Company>Aptabase</Company>
+		<PackageProjectUrl>https://aptabase.com</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/aptabase/aptabase-avalonia</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>analytics;privacy;avalonia;sdk;telemetry;desktop;dotnet10;csharp13</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<LangVersion>latest</LangVersion>
+
+		<!-- Suppressed Analyzer Warnings -->
+		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08;S3776;S4136;S101;CA1711;MC8000</NoWarn>
+
+		<!-- Recommended Roslyn Analyzers & Code Analysis Settings -->
+		<EnableNETAnalyzers>true</EnableNETAnalyzers>
+		<AnalysisLevel>latest-recommended</AnalysisLevel>
+		<AnalysisMode>Recommended</AnalysisMode>
+		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Avalonia" Version="12.1.1" />
+		<PackageReference Include="DotNext.Threading" Version="6.6.5" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+	</ItemGroup>
+
+</Project>

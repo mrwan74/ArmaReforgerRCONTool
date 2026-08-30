@@ -103,12 +103,19 @@ public partial class PlayersTabView : UserControl
 
     private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
     {
-        e.Handled = true;
-        var tag = e.Column.Tag?.ToString() ?? "";
-        if (DataContext is PlayersViewModel vm)
+        try
         {
-            vm.CycleColumnSort(tag);
-            UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+            e.Handled = true;
+            var tag = e.Column.Tag?.ToString() ?? "";
+            if (DataContext is PlayersViewModel vm)
+            {
+                vm.CycleColumnSort(tag);
+                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[PlayersTabView] Error in OnDataGridSorting.", ex);
         }
     }
 

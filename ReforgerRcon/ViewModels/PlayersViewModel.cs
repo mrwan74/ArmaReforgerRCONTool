@@ -17,6 +17,8 @@ namespace ReforgerRcon.ViewModels;
 public partial class PlayersViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
     public const string DefaultSortKey = "Default";
+    private const string DialogOpenedEvent = "dialog_opened";
+    private const string DialogKey = "dialog";
 
     private readonly IRconService _rconService = rconService;
     private readonly DashboardViewModel _dashboard = dashboard;
@@ -343,6 +345,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 return;
             }
             AppLogger.Info($"[PlayersViewModel] Opening details dialog for player '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
+            AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "PlayerDetailDialog" });
             _dashboard.ShowDialog(new PlayerDetailViewModel(player, _rconService, this));
         });
     }
@@ -355,6 +358,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null) return;
             AppLogger.Info($"[PlayersViewModel] Opening kick dialog for '{player.Name}' (ID: #{player.Id}).");
+            AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "KickDialog" });
             _dashboard.ShowDialog(new KickDialogViewModel([player], _rconService, this));
         });
     }
@@ -367,6 +371,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null) return;
             AppLogger.Info($"[PlayersViewModel] Opening ban dialog for '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
+            AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BanDialog" });
             _dashboard.ShowDialog(new BanDialogViewModel([player], _rconService, this));
         });
     }
@@ -428,6 +433,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null) return;
             AppLogger.Debug($"[PlayersViewModel] Opening set comment dialog for '{player.Name}'.");
+            AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "SetCommentDialog" });
             _dashboard.ShowDialog(new SetCommentDialogViewModel(player.Name, player.Uid, player.Comment, _rconService, _dashboard));
         });
     }
@@ -504,6 +510,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             var selected = Players.Where(p => p.IsSelected).ToList();
             if (selected.Count == 0) return;
             AppLogger.Info($"[PlayersViewModel] Opening batch kick dialog for {selected.Count} player(s).");
+            AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BatchKickDialog", ["count"] = selected.Count });
             _dashboard.ShowDialog(new KickDialogViewModel(selected, _rconService, this));
         });
     }
@@ -516,6 +523,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             var selected = Players.Where(p => p.IsSelected).ToList();
             if (selected.Count == 0) return;
             AppLogger.Info($"[PlayersViewModel] Opening batch ban dialog for {selected.Count} player(s).");
+            AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BatchBanDialog", ["count"] = selected.Count });
             _dashboard.ShowDialog(new BanDialogViewModel(selected, _rconService, this));
         });
     }
@@ -555,6 +563,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     public Task<bool> RestartServerAsync() => ExecuteSafeAsync(async () =>
     {
         AppLogger.Info("[PlayersViewModel] Dispatching restart server command...");
+        AppLogger.TrackEvent("server_restart_dispatched");
         await _rconService.RestartServerAsync();
         ToastNotificationService.Instance.ShowToast("Server Restart", "Restart command sent.", "#restart");
     });
@@ -580,6 +589,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     public Task<bool> ShutdownServerAsync() => ExecuteSafeAsync(async () =>
     {
         AppLogger.Info("[PlayersViewModel] Dispatching shutdown server command...");
+        AppLogger.TrackEvent("server_shutdown_dispatched");
         await _rconService.ShutdownServerAsync();
         ToastNotificationService.Instance.ShowToast("Server Shutdown", "Shutdown command sent.", "#shutdown");
     });

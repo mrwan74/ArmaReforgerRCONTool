@@ -1,0 +1,31 @@
+root = true
+
+[*.cs]
+# Spell-checking rules
+dotnet_diagnostic.CRRSP01.severity = none
+dotnet_diagnostic.CRRSP02.severity = none
+dotnet_diagnostic.CRRSP03.severity = none
+dotnet_diagnostic.CRRSP04.severity = none
+dotnet_diagnostic.CRRSP05.severity = none
+dotnet_diagnostic.CRRSP06.severity = none
+dotnet_diagnostic.CRRSP07.severity = none
+dotnet_diagnostic.CRRSP08.severity = none
+
+# Cognitive Complexity rule (S3776)
+dotnet_diagnostic.S3776.severity = none
+
+# Overload ordering rule (S4136)
+dotnet_diagnostic.S4136.severity = none
+
+# Naming convention / Acronym casing rule (S101)
+dotnet_diagnostic.S101.severity = none
+
+# Delegate / Type name suffix convention rule (CA1711)
+dotnet_diagnostic.CA1711.severity = none
+
+# XAML namespace declaration message (MC8000)
+dotnet_diagnostic.MC8000.severity = none
+
+[*.axaml]
+# Unnecessary XAML namespace messages
+dotnet_diagnostic.MC8000.severity = none

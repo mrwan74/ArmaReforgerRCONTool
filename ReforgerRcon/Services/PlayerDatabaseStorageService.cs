@@ -61,6 +61,8 @@ public static class PlayerDatabaseStorageService
         {
             if (_isInitialized) return;
 
+            SQLitePCL.Batteries_V2.Init();
+
             using var timing = AppLogger.Measure("PlayerDatabaseStorageService.InitializeAsync");
             using var op = Operation.Begin("Initialize SQLite Database Engine at {DatabaseFile}", DatabaseFile);
             var transaction = SentrySdk.StartTransaction("InitSqliteDb", "db.sqlite.init");
@@ -181,15 +183,29 @@ public static class PlayerDatabaseStorageService
         {
             return JsonSerializer.Deserialize<List<string>>(rawJson) ?? [];
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            AppLogger.Debug($"[PlayerDatabase] JSON alias parse fallback for '{rawJson}': {ex.Message}");
             return [.. rawJson.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[PlayerDatabase] Unexpected error parsing player aliases '{rawJson}': {ex.Message}", ex);
+            return [];
         }
     }
 
     private static string SerializeAliases(IEnumerable<string> aliases)
     {
-        return JsonSerializer.Serialize(aliases.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+        try
+        {
+            return JsonSerializer.Serialize(aliases.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[PlayerDatabase] Failed serializing player aliases: {ex.Message}", ex);
+            return "[]";
+        }
     }
 
     public static async Task RecordSeenPlayersAsync(IEnumerable<PlayerModel> activePlayers, RconProtocol protocol)
@@ -370,7 +386,7 @@ public static class PlayerDatabaseStorageService
                         }
                     }
                 }
-                else // ReforgerBuiltIn Protocol
+                else
                 {
                     foreach (var player in playersList)
                     {
@@ -636,7 +652,7 @@ public static class PlayerDatabaseStorageService
                     result.Add(playerModel);
                 }
             }
-            else // Reforger Protocol
+            else
             {
                 const string queryReforgerSql = @"
                     SELECT 

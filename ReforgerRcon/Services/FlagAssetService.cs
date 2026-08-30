@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using SkiaSharp;
@@ -13,7 +16,38 @@ namespace ReforgerRcon.Services;
 public static class FlagAssetService
 {
     private const string FlagUriPrefix = "avares://ReforgerRcon/Assets/flags/";
+    private static readonly string[] CommonCountryCodes = ["xx", "un", "us", "de", "gb", "fr", "ca", "au", "ru", "il", "pl", "cz", "nl", "se", "no", "fi", "es", "it", "br", "jp", "kr", "cn"];
     private static readonly ConcurrentDictionary<string, Bitmap?> FlagCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Lock RasterizeLock = new();
+    private static bool _isPrewarmed;
+
+    public static void PrewarmCache()
+    {
+        if (_isPrewarmed) return;
+        _isPrewarmed = true;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                foreach (var code in CommonCountryCodes)
+                {
+                    GetFlag(code);
+                }
+                sw.Stop();
+                AppLogger.Debug($"[FlagAssetService] Background SVG engine and flag pre-warming completed in {sw.ElapsedMilliseconds} ms ({FlagCache.Count} flags cached).");
+            }
+            catch (InvalidOperationException ex)
+            {
+                AppLogger.Debug($"[FlagAssetService] Asset loader not ready during prewarm: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Debug($"[FlagAssetService] Background warmup notice: {ex.Message}");
+            }
+        }, CancellationToken.None);
+    }
 
     public static Bitmap? GetFlag(string? countryCode)
     {
@@ -44,70 +78,82 @@ public static class FlagAssetService
 
     private static Bitmap? LoadSvgToBitmap(string code)
     {
-        var primaryUri = GetFlagUri(code);
-        if (AssetLoader.Exists(primaryUri))
-        {
-            return RasterizeSvgUri(primaryUri, code);
-        }
-
-        var fallbackXxUri = GetFlagUri("xx");
-        if (AssetLoader.Exists(fallbackXxUri))
-        {
-            AppLogger.Trace($"[FlagAssetService] Flag asset '{code}.svg' not found. Falling back to unknown flag 'xx.svg'.");
-            return RasterizeSvgUri(fallbackXxUri, "xx");
-        }
-
-        var fallbackUnUri = GetFlagUri("un");
-        if (AssetLoader.Exists(fallbackUnUri))
-        {
-            AppLogger.Trace($"[FlagAssetService] Flag asset '{code}.svg' and 'xx.svg' not found. Secondary fallback to 'un.svg'.");
-            return RasterizeSvgUri(fallbackUnUri, "un");
-        }
-
-        AppLogger.Warn($"[FlagAssetService] Unable to locate flag asset for code '{code}' or default fallback.");
-        return null;
-    }
-
-    private static Bitmap? RasterizeSvgUri(Uri uri, string code)
-    {
         try
         {
-            using var stream = AssetLoader.Open(uri);
-            using var svg = new SKSvg();
-            var picture = svg.Load(stream);
-
-            if (picture == null || picture.CullRect.Width <= 0 || picture.CullRect.Height <= 0)
+            var primaryUri = GetFlagUri(code);
+            if (AssetLoader.Exists(primaryUri))
             {
-                AppLogger.Warn($"[FlagAssetService] Loaded SVG picture is empty for '{code}'.");
-                return null;
+                return RasterizeSvgUri(primaryUri);
             }
 
-            const int targetWidth = 128;
-            const int targetHeight = 88;
-
-            using var skBitmap = new SKBitmap(targetWidth, targetHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-            using (var canvas = new SKCanvas(skBitmap))
+            var fallbackXxUri = GetFlagUri("xx");
+            if (AssetLoader.Exists(fallbackXxUri))
             {
-                canvas.Clear(SKColors.Transparent);
-                var scaleX = (float)targetWidth / picture.CullRect.Width;
-                var scaleY = (float)targetHeight / picture.CullRect.Height;
-                canvas.Scale(scaleX, scaleY);
-                canvas.DrawPicture(picture);
+                return RasterizeSvgUri(fallbackXxUri);
             }
 
-            using var skImage = SKImage.FromBitmap(skBitmap);
-            using var data = skImage.Encode(SKEncodedImageFormat.Png, 100);
-            using var memStream = new MemoryStream(data.ToArray());
-
-            var avaloniaBitmap = new Bitmap(memStream);
-            AppLogger.Trace($"[FlagAssetService] Rasterized and cached SVG flag for '{code}' ({targetWidth}x{targetHeight} px).");
-            return avaloniaBitmap;
+            var fallbackUnUri = GetFlagUri("un");
+            if (AssetLoader.Exists(fallbackUnUri))
+            {
+                return RasterizeSvgUri(fallbackUnUri);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // AssetLoader is not yet registered by Avalonia framework
+            return null;
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[FlagAssetService] Error rasterizing SVG flag for '{code}' from '{uri}': {ex.Message}", ex);
+            AppLogger.Debug($"[FlagAssetService] Failed loading SVG for code '{code}': {ex.Message}");
         }
 
         return null;
+    }
+
+    private static Bitmap? RasterizeSvgUri(Uri uri)
+    {
+        lock (RasterizeLock)
+        {
+            try
+            {
+                using var stream = AssetLoader.Open(uri);
+                using var svg = new SKSvg();
+                var picture = svg.Load(stream);
+
+                if (picture == null || picture.CullRect.Width <= 0 || picture.CullRect.Height <= 0)
+                {
+                    return null;
+                }
+
+                const int targetWidth = 64;
+                const int targetHeight = 44;
+
+                using var skBitmap = new SKBitmap(targetWidth, targetHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+                using (var canvas = new SKCanvas(skBitmap))
+                {
+                    canvas.Clear(SKColors.Transparent);
+                    var scaleX = (float)targetWidth / picture.CullRect.Width;
+                    var scaleY = (float)targetHeight / picture.CullRect.Height;
+                    canvas.Scale(scaleX, scaleY);
+                    canvas.DrawPicture(picture);
+                }
+
+                using var skImage = SKImage.FromBitmap(skBitmap);
+                using var data = skImage.Encode(SKEncodedImageFormat.Png, 90);
+                using var memStream = new MemoryStream(data.ToArray());
+
+                return new Bitmap(memStream);
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[FlagAssetService] Rasterize notice for '{uri}': {ex.Message}");
+                return null;
+            }
+        }
     }
 }

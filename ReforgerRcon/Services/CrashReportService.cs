@@ -8,6 +8,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Aptabase.Avalonia;
 using Avalonia.Threading;
 using Microsoft.Win32.SafeHandles;
 using ReforgerRcon.Models;
@@ -74,6 +75,10 @@ public static partial class CrashReportService
         {
             SafeLogAppError("Access denied creating crash report directory.", ex);
         }
+        catch (Exception ex)
+        {
+            SafeLogAppError("Unexpected fault during crash directory creation.", ex);
+        }
     }
 
     public static void HandleFatalException(string source, Exception ex, bool isTerminating)
@@ -99,6 +104,28 @@ public static partial class CrashReportService
             var uptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime.ToUniversalTime();
             var ramMb = Environment.WorkingSet / (1024.0 * 1024.0);
 
+            if (AppSettings.IsCrashReportingEnabled() && AptabaseExtensions.IsInitialized)
+            {
+                try
+                {
+                    _ = AptabaseExtensions.Instance.TrackError(demystifiedEx, fatal: isTerminating);
+                    AppLogger.TrackEvent("fatal_crash_captured", new Dictionary<string, object>
+                    {
+                        ["crash_id"] = crashId,
+                        ["installation_id"] = AppLogger.InstallationId,
+                        ["source"] = source,
+                        ["is_terminating"] = isTerminating,
+                        ["dump_generated"] = dumpGenerated,
+                        ["ram_mb"] = Math.Round(ramMb, 1),
+                        ["uptime_seconds"] = (int)uptime.TotalSeconds
+                    });
+                }
+                catch (Exception aptaEx)
+                {
+                    SafeLogAppWarn($"[CrashReportService] Aptabase dispatch notice: {aptaEx.Message}");
+                }
+            }
+
             try
             {
                 SentrySdk.Metrics.EmitCounter("app_faults", 1,
@@ -113,6 +140,7 @@ public static partial class CrashReportService
                 {
                     scope.Level = isTerminating ? SentryLevel.Fatal : SentryLevel.Error;
                     scope.SetTag("crash_id", crashId);
+                    scope.SetTag("installation_id", AppLogger.InstallationId);
                     scope.SetTag("fault_source", source);
                     scope.SetTag("os_platform", RuntimeInformation.OSDescription);
                     scope.SetTag("is_terminating", isTerminating.ToString(CultureInfo.InvariantCulture));
@@ -138,13 +166,14 @@ public static partial class CrashReportService
             }
             else
             {
-                memoryDumpStatus = "Windows Minidump Native Only (Linux Text Dump Captured)";
+                memoryDumpStatus = "Windows Minidump Native Only (Cross-Platform Text Snapshot Captured)";
             }
 
             var sb = new StringBuilder();
             sb.AppendLine("================================================================================");
             sb.AppendLine("ARMA REFORGER RCON MANAGEMENT STUDIO - CRASH DIAGNOSTIC SNAPSHOT");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Crash ID:        {crashId}");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Installation ID: {AppLogger.InstallationId}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Timestamp (UTC): {timestamp:O}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Source Handler:  {source}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Terminating:     {isTerminating}");
@@ -154,6 +183,7 @@ public static partial class CrashReportService
             sb.AppendLine("================================================================================");
             sb.AppendLine();
             sb.AppendLine("--- SYSTEM ENVIRONMENT & RUNTIME SNAPSHOT ---");
+            sb.AppendLine(CultureInfo.InvariantCulture, $"Installation ID: {AppLogger.InstallationId}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"OS Description:  {RuntimeInformation.OSDescription}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"OS Architecture: {RuntimeInformation.OSArchitecture}");
             sb.AppendLine(CultureInfo.InvariantCulture, $"Process Arch:    {RuntimeInformation.ProcessArchitecture}");
@@ -187,6 +217,7 @@ public static partial class CrashReportService
             var report = new ErrorReportModel
             {
                 ErrorId = crashId,
+                InstallationId = AppLogger.InstallationId,
                 Source = source,
                 Timestamp = timestamp,
                 ExceptionType = demystifiedEx.GetType().FullName ?? "UnknownException",
@@ -207,7 +238,7 @@ public static partial class CrashReportService
                 FullReportText = fullReportText
             };
 
-            SafeLogAppFatal(string.Create(CultureInfo.InvariantCulture, $"CRITICAL ERROR [{source}] (CrashId: {crashId}, Terminating: {isTerminating}, OS: {RuntimeInformation.OSDescription})"), demystifiedEx);
+            SafeLogAppFatal(string.Create(CultureInfo.InvariantCulture, $"CRITICAL ERROR [{source}] (CrashId: {crashId}, InstallId: {AppLogger.InstallationId}, Terminating: {isTerminating}, OS: {RuntimeInformation.OSDescription})"), demystifiedEx);
 
             try
             {
@@ -253,18 +284,22 @@ public static partial class CrashReportService
                         : "The application will attempt to continue running.";
 
                     var dialogMessage = string.Create(CultureInfo.InvariantCulture,
-                        $"A critical application fault occurred:\n\nSource: {source}\nException: {demystifiedEx.GetType().Name}\nMessage: {demystifiedEx.Message}\n\nCrash ID: #{crashId}\nDiagnostic Report: {textFilePath}\nMemory Dump: {(dumpGenerated ? dumpFilePath : "Unavailable")}\n\n{outcomeText}");
+                        $"A critical application fault occurred:\n\nSource: {source}\nException: {demystifiedEx.GetType().Name}\nMessage: {demystifiedEx.Message}\n\nCrash ID: #{crashId}\nInstallation ID: {AppLogger.InstallationId}\nDiagnostic Report: {textFilePath}\nMemory Dump: {(dumpGenerated ? dumpFilePath : "Unavailable")}\n\n{outcomeText}");
 
                     MessageBox(IntPtr.Zero, dialogMessage, isTerminating ? "ARMA Reforger RCON - Fatal Error" : "ARMA Reforger RCON - System Fault", MbIconError);
                 }
                 else
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
-                    Console.Error.WriteLine($"[CRITICAL FAULT] {source} -> {demystifiedEx.GetType().Name}: {demystifiedEx.Message}");
+                    Console.Error.WriteLine($"[CRITICAL FAULT] {source} (Install ID: {AppLogger.InstallationId}) -> {demystifiedEx.GetType().Name}: {demystifiedEx.Message}");
                     Console.Error.WriteLine($"Report written to: {textFilePath}");
                     Console.ResetColor();
                 }
             }
+        }
+        catch (Exception unhandled)
+        {
+            SafeLogAppFatal("Crash reporter encountered an internal crash.", unhandled);
         }
         finally
         {

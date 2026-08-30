@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="Aptabase.Avalonia/Aptabase.Avalonia.csproj" />
   <Project Path="ReforgerRcon/ReforgerRcon.csproj" />
 </Solution>

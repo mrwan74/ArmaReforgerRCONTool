@@ -1,4 +1,11 @@
-﻿using System;
+﻿using Aptabase.Avalonia;
+using Sentry;
+using Serilog;
+using Serilog.Context;
+using Serilog.Events;
+using Serilog.ExceptionalLogContext;
+using Serilog.Exceptions;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -10,12 +17,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using Sentry;
-using Serilog;
-using Serilog.Context;
-using Serilog.Events;
-using Serilog.ExceptionalLogContext;
-using Serilog.Exceptions;
+using ReforgerRcon.Models;
 
 namespace ReforgerRcon.Services;
 
@@ -29,15 +31,17 @@ public enum LogLevel
     Fatal
 }
 
-[SuppressMessage("Major Code Smell", "S3963:Static constructor is required to guarantee thread initialization order", Justification = "Guarantees Serilog pipeline and Sentry integration are configured before background operations start")]
+[SuppressMessage("Major Code Smell", "S3963:Static constructor is required to guarantee thread initialization order", Justification = "Guarantees Serilog pipeline, Sentry and Aptabase integration are configured before background operations start")]
 public static partial class AppLogger
 {
+    private const string SerilogMessageTemplate = "{Message}";
     private static readonly string LogDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "logs");
     private static readonly ConcurrentQueue<string> Breadcrumbs = new();
-    private const int MaxBreadcrumbs = 500;
+    private const int MaxBreadcrumbs = 1000;
     private static readonly Serilog.ILogger Logger;
 
     public static string SessionId { get; } = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+    public static string InstallationId { get; } = HardwareIdentityService.GetOrCreateHardwareId();
     public static string CurrentLogFilePath { get; }
 
     [GeneratedRegex(@"(?:password|pwd|rconpassword|#login)\s+([^\s\r\n\t]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
@@ -64,8 +68,59 @@ public static partial class AppLogger
         {
             return "[CONTENT_TRUNCATED_DUE_TO_PARSING]";
         }
+        catch (Exception)
+        {
+            return "[CONTENT_REDACTED_DUE_TO_EXCEPTION]";
+        }
 
         return sanitized;
+    }
+
+    public static string ResolveAptabaseAppKey()
+    {
+        try
+        {
+            var embedded = TelemetrySecrets.GetEmbeddedAppKey();
+            if (!string.IsNullOrWhiteSpace(embedded))
+            {
+                return embedded.Trim();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Embedded Aptabase key notice: {ex.Message}");
+        }
+
+        var envKey = Environment.GetEnvironmentVariable("APTABASE_APP_KEY");
+        if (!string.IsNullOrWhiteSpace(envKey))
+        {
+            return envKey.Trim();
+        }
+
+        var candidateFiles = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "appdata", "aptabase_app_key.txt"),
+            Path.Combine(AppContext.BaseDirectory, "Assets", "aptabase_app_key.txt"),
+            Path.Combine(AppContext.BaseDirectory, "aptabase_app_key.txt")
+        };
+
+        foreach (var file in candidateFiles)
+        {
+            try
+            {
+                if (File.Exists(file))
+                {
+                    var fileKey = File.ReadAllText(file).Trim();
+                    if (!string.IsNullOrWhiteSpace(fileKey)) return fileKey;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AppLogger] Non-fatal Aptabase key file inspection notice for '{file}': {ex.Message}");
+            }
+        }
+
+        return "A-EU-3982497621";
     }
 
     public static string ResolveSentryDsn()
@@ -89,33 +144,27 @@ public static partial class AppLogger
             return envDsn.Trim();
         }
 
-        var appDataFile = Path.Combine(AppContext.BaseDirectory, "appdata", "sentry_dsn.txt");
-        var assetFile = Path.Combine(AppContext.BaseDirectory, "Assets", "sentry_dsn.txt");
-        var rootFile = Path.Combine(AppContext.BaseDirectory, "sentry_dsn.txt");
-
-        try
+        var candidateFiles = new[]
         {
-            if (File.Exists(appDataFile))
-            {
-                var fileDsn = File.ReadAllText(appDataFile).Trim();
-                if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
-            }
+            Path.Combine(AppContext.BaseDirectory, "appdata", "sentry_dsn.txt"),
+            Path.Combine(AppContext.BaseDirectory, "Assets", "sentry_dsn.txt"),
+            Path.Combine(AppContext.BaseDirectory, "sentry_dsn.txt")
+        };
 
-            if (File.Exists(assetFile))
-            {
-                var fileDsn = File.ReadAllText(assetFile).Trim();
-                if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
-            }
-
-            if (File.Exists(rootFile))
-            {
-                var fileDsn = File.ReadAllText(rootFile).Trim();
-                if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
-            }
-        }
-        catch (Exception ex)
+        foreach (var file in candidateFiles)
         {
-            System.Diagnostics.Debug.WriteLine($"[AppLogger] Non-fatal Sentry DSN file inspection notice: {ex.Message}");
+            try
+            {
+                if (File.Exists(file))
+                {
+                    var fileDsn = File.ReadAllText(file).Trim();
+                    if (!string.IsNullOrWhiteSpace(fileDsn)) return fileDsn;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AppLogger] Non-fatal Sentry DSN file inspection notice for '{file}': {ex.Message}");
+            }
         }
 
         return string.Empty;
@@ -161,7 +210,9 @@ public static partial class AppLogger
                 .WriteTo.Async(a => a.File(
                     CurrentLogFilePath,
                     outputTemplate: fileOutputTemplate,
-                    formatProvider: CultureInfo.InvariantCulture
+                    formatProvider: CultureInfo.InvariantCulture,
+                    fileSizeLimitBytes: 104857600,
+                    rollOnFileSizeLimit: true
                 ))
                 .WriteTo.Debug(
                     outputTemplate: debugOutputTemplate,
@@ -193,7 +244,111 @@ public static partial class AppLogger
             Logger = Log.Logger;
         }
 
+        AptabaseLogging.OnLogMessage += entry =>
+        {
+            try
+            {
+                var cleanMsg = SanitizeSensitiveData(entry.Message);
+                var caller = $"Aptabase:{entry.Category}";
+                var crumb = $"[{entry.Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{entry.Level,-5}] [T{entry.ThreadId:D2}] [{caller}] {cleanMsg}";
+
+                Breadcrumbs.Enqueue(crumb);
+                while (Breadcrumbs.Count > MaxBreadcrumbs)
+                {
+                    Breadcrumbs.TryDequeue(out _);
+                }
+
+                var serilogLevel = entry.Level switch
+                {
+                    Microsoft.Extensions.Logging.LogLevel.Trace => LogEventLevel.Verbose,
+                    Microsoft.Extensions.Logging.LogLevel.Debug => LogEventLevel.Debug,
+                    Microsoft.Extensions.Logging.LogLevel.Information => LogEventLevel.Information,
+                    Microsoft.Extensions.Logging.LogLevel.Warning => LogEventLevel.Warning,
+                    Microsoft.Extensions.Logging.LogLevel.Error => LogEventLevel.Error,
+                    Microsoft.Extensions.Logging.LogLevel.Critical => LogEventLevel.Fatal,
+                    _ => LogEventLevel.Information
+                };
+
+                using (LogContext.PushProperty("CallerContext", caller))
+                {
+                    if (entry.Exception != null)
+                    {
+                        Logger.Write(serilogLevel, entry.Exception, SerilogMessageTemplate, cleanMsg);
+                    }
+                    else
+                    {
+                        Logger.Write(serilogLevel, SerilogMessageTemplate, cleanMsg);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AppLogger] Aptabase log hook failure: {ex.Message}");
+            }
+        };
+
         LogEnvironmentDiagnostics();
+    }
+
+    public static void TrackEvent(string eventName, Dictionary<string, object>? props = null)
+    {
+        if (!Models.AppSettings.IsCrashReportingEnabled())
+        {
+            return;
+        }
+
+        try
+        {
+            if (AptabaseExtensions.IsInitialized)
+            {
+                var sanitizedProps = new Dictionary<string, object>
+                {
+                    ["installation_id"] = InstallationId
+                };
+
+                if (props != null)
+                {
+                    foreach (var (k, v) in props)
+                    {
+                        if (v is string s)
+                        {
+                            sanitizedProps[k] = SanitizeSensitiveData(s);
+                        }
+                        else
+                        {
+                            sanitizedProps[k] = v;
+                        }
+                    }
+                }
+
+                _ = AptabaseExtensions.Instance.TrackEvent(eventName, sanitizedProps);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Aptabase TrackEvent notice: {ex.Message}");
+        }
+    }
+
+    public static void TrackError(Exception exception, bool fatal = false)
+    {
+        if (!Models.AppSettings.IsCrashReportingEnabled())
+        {
+            return;
+        }
+
+        try
+        {
+            if (AptabaseExtensions.IsInitialized)
+            {
+                var demystified = exception.Demystify();
+                _ = AptabaseExtensions.Instance.TrackError(demystified, fatal);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Aptabase TrackError notice: {ex.Message}");
+        }
     }
 
     private static void CleanupOldSessionLogs()
@@ -237,6 +392,7 @@ public static partial class AppLogger
         Info("================================================================================");
         Info("APPLICATION INITIALIZATION: ARMA Reforger RCON Management Tool (ARRT)");
         Info(string.Create(CultureInfo.InvariantCulture, $"Timestamp (UTC):     {DateTime.UtcNow:O}"));
+        Info(string.Create(CultureInfo.InvariantCulture, $"Hardware Identity:   {InstallationId}"));
         Info(string.Create(CultureInfo.InvariantCulture, $"Session Log File:    {CurrentLogFilePath}"));
         Info(string.Create(CultureInfo.InvariantCulture, $"OS Description:      {RuntimeInformation.OSDescription}"));
         Info(string.Create(CultureInfo.InvariantCulture, $"OS Architecture:     {RuntimeInformation.OSArchitecture}"));
@@ -293,106 +449,126 @@ public static partial class AppLogger
 
     private static void Dispatch(LogLevel level, string message, Exception? ex, IReadOnlyDictionary<string, object?>? context, string member, string path, int line)
     {
-        var cleanMessage = SanitizeSensitiveData(message);
-        var demystifiedEx = ex?.Demystify();
-        var file = Path.GetFileName(path);
-        var threadId = Environment.CurrentManagedThreadId;
-        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
-
-        var callerContext = $"{file}:{line} -> {member}()";
-        var crumb = string.Create(CultureInfo.InvariantCulture, $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{callerContext}] {cleanMessage}");
-        Breadcrumbs.Enqueue(crumb);
-        while (Breadcrumbs.Count > MaxBreadcrumbs)
+        try
         {
-            Breadcrumbs.TryDequeue(out _);
-        }
+            var cleanMessage = SanitizeSensitiveData(message);
+            var demystifiedEx = ex?.Demystify();
+            var file = Path.GetFileName(path);
+            var threadId = Environment.CurrentManagedThreadId;
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
-        var sentryBreadcrumbLevel = level switch
-        {
-            LogLevel.Trace or LogLevel.Debug => BreadcrumbLevel.Debug,
-            LogLevel.Info => BreadcrumbLevel.Info,
-            LogLevel.Warn => BreadcrumbLevel.Warning,
-            LogLevel.Error or LogLevel.Fatal => BreadcrumbLevel.Error,
-            _ => BreadcrumbLevel.Info
-        };
-
-        Dictionary<string, string>? sentryData = null;
-        if (context != null)
-        {
-            sentryData = [];
-            foreach (var kvp in context)
+            var callerContext = $"{file}:{line} -> {member}()";
+            var crumb = string.Create(CultureInfo.InvariantCulture, $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{callerContext}] {cleanMessage}");
+            Breadcrumbs.Enqueue(crumb);
+            while (Breadcrumbs.Count > MaxBreadcrumbs)
             {
-                sentryData[kvp.Key] = SanitizeSensitiveData(kvp.Value?.ToString() ?? "null");
+                Breadcrumbs.TryDequeue(out _);
             }
-        }
 
-        SentrySdk.AddBreadcrumb(
-            message: cleanMessage,
-            category: member,
-            type: null,
-            data: sentryData,
-            level: sentryBreadcrumbLevel
-        );
-
-        SentrySdk.Metrics.EmitCounter("app_logs_count", 1,
-        [
-            new KeyValuePair<string, object>("level", level.ToString()),
-            new KeyValuePair<string, object>("member", member)
-        ]);
-
-        List<IDisposable> disposables = [LogContext.PushProperty("CallerContext", callerContext)];
-
-        if (context?.Count > 0)
-        {
-            foreach (var kvp in context)
+            var sentryBreadcrumbLevel = level switch
             {
-                disposables.Add(LogContext.PushProperty(kvp.Key, kvp.Value));
-            }
-        }
-
-        using (new CompositeDisposable(disposables))
-        {
-            var serilogLevel = level switch
-            {
-                LogLevel.Trace => LogEventLevel.Verbose,
-                LogLevel.Debug => LogEventLevel.Debug,
-                LogLevel.Info => LogEventLevel.Information,
-                LogLevel.Warn => LogEventLevel.Warning,
-                LogLevel.Error => LogEventLevel.Error,
-                LogLevel.Fatal => LogEventLevel.Fatal,
-                _ => LogEventLevel.Information
+                LogLevel.Trace or LogLevel.Debug => BreadcrumbLevel.Debug,
+                LogLevel.Info => BreadcrumbLevel.Info,
+                LogLevel.Warn => BreadcrumbLevel.Warning,
+                LogLevel.Error or LogLevel.Fatal => BreadcrumbLevel.Error,
+                _ => BreadcrumbLevel.Info
             };
 
-            if (demystifiedEx != null)
+            Dictionary<string, string>? sentryData = null;
+            if (context != null)
             {
-                Logger.Write(serilogLevel, demystifiedEx, "{Message}", cleanMessage);
-
-                if (level is LogLevel.Error or LogLevel.Fatal)
+                sentryData = [];
+                foreach (var kvp in context)
                 {
-                    SentrySdk.CaptureException(demystifiedEx, scope =>
+                    sentryData[kvp.Key] = SanitizeSensitiveData(kvp.Value?.ToString() ?? "null");
+                }
+            }
+
+            SentrySdk.AddBreadcrumb(
+                message: cleanMessage,
+                category: member,
+                type: null,
+                data: sentryData,
+                level: sentryBreadcrumbLevel
+            );
+
+            SentrySdk.Metrics.EmitCounter("app_logs_count", 1,
+            [
+                new KeyValuePair<string, object>("level", level.ToString()),
+                new KeyValuePair<string, object>("member", member)
+            ]);
+
+            List<IDisposable> disposables = [LogContext.PushProperty("CallerContext", callerContext)];
+
+            if (context?.Count > 0)
+            {
+                foreach (var kvp in context)
+                {
+                    disposables.Add(LogContext.PushProperty(kvp.Key, kvp.Value));
+                }
+            }
+
+            using (new CompositeDisposable(disposables))
+            {
+                var serilogLevel = level switch
+                {
+                    LogLevel.Trace => LogEventLevel.Verbose,
+                    LogLevel.Debug => LogEventLevel.Debug,
+                    LogLevel.Info => LogEventLevel.Information,
+                    LogLevel.Warn => LogEventLevel.Warning,
+                    LogLevel.Error => LogEventLevel.Error,
+                    LogLevel.Fatal => LogEventLevel.Fatal,
+                    _ => LogEventLevel.Information
+                };
+
+                if (demystifiedEx != null)
+                {
+                    Logger.Write(serilogLevel, demystifiedEx, SerilogMessageTemplate, cleanMessage);
+
+                    if (level is LogLevel.Error or LogLevel.Fatal)
                     {
-                        scope.SetTag("caller_member", member);
-                        scope.SetTag("caller_file", file);
-                        scope.SetTag("caller_line", line.ToString(CultureInfo.InvariantCulture));
-                        if (context != null)
+                        if (Models.AppSettings.IsCrashReportingEnabled() && AptabaseExtensions.IsInitialized)
                         {
-                            foreach (var kvp in context)
+                            try
                             {
-                                scope.SetExtra(kvp.Key, kvp.Value);
+                                _ = AptabaseExtensions.Instance.TrackError(demystifiedEx, fatal: level == LogLevel.Fatal);
+                            }
+                            catch (Exception aptaEx)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[AppLogger] Aptabase TrackError notice: {aptaEx.Message}");
                             }
                         }
-                    });
-                }
-            }
-            else
-            {
-                Logger.Write(serilogLevel, "{Message}", cleanMessage);
 
-                if (level == LogLevel.Fatal)
+                        SentrySdk.CaptureException(demystifiedEx, scope =>
+                        {
+                            scope.SetTag("caller_member", member);
+                            scope.SetTag("caller_file", file);
+                            scope.SetTag("caller_line", line.ToString(CultureInfo.InvariantCulture));
+                            scope.SetTag("installation_id", InstallationId);
+                            if (context != null)
+                            {
+                                foreach (var kvp in context)
+                                {
+                                    scope.SetExtra(kvp.Key, kvp.Value);
+                                }
+                            }
+                        });
+                    }
+                }
+                else
                 {
-                    SentrySdk.CaptureMessage(cleanMessage, SentryLevel.Fatal);
+                    Logger.Write(serilogLevel, SerilogMessageTemplate, cleanMessage);
+
+                    if (level == LogLevel.Fatal)
+                    {
+                        SentrySdk.CaptureMessage(cleanMessage, SentryLevel.Fatal);
+                    }
                 }
             }
+        }
+        catch (Exception dispatchEx)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger:DispatchFailure] {dispatchEx.Message}");
         }
     }
 
@@ -400,14 +576,36 @@ public static partial class AppLogger
 
     public static void Flush()
     {
-        Log.CloseAndFlush();
-        SentrySdk.FlushAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        try
+        {
+            Log.CloseAndFlush();
+            SentrySdk.FlushAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            // Flush canceled cleanly
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Flush notice: {ex.Message}");
+        }
     }
 
     public static void Shutdown()
     {
-        Log.CloseAndFlush();
-        SentrySdk.Close();
+        try
+        {
+            Log.CloseAndFlush();
+            SentrySdk.Close();
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown cancellation handled cleanly
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Shutdown notice: {ex.Message}");
+        }
     }
 
     public sealed class TimingScope : IDisposable
@@ -436,11 +634,18 @@ public static partial class AppLogger
             if (_isDisposed) return;
             _isDisposed = true;
 
-            var elapsed = Stopwatch.GetElapsedTime(_startTimestamp);
-            var memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - _initialMemory;
-            var memFormatted = memoryAllocated >= 1024 ? $"{memoryAllocated / 1024.0:F1} KB" : $"{memoryAllocated} B";
+            try
+            {
+                var elapsed = Stopwatch.GetElapsedTime(_startTimestamp);
+                var memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - _initialMemory;
+                var memFormatted = memoryAllocated >= 1024 ? $"{memoryAllocated / 1024.0:F1} KB" : $"{memoryAllocated} B";
 
-            Dispatch(LogLevel.Debug, $"[TIMING:COMPLETED] {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted})", null, null, _member, _path, _line);
+                Dispatch(LogLevel.Debug, $"[TIMING:COMPLETED] {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted})", null, null, _member, _path, _line);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TimingScope] Disposal notice: {ex.Message}");
+            }
         }
     }
 
@@ -452,7 +657,14 @@ public static partial class AppLogger
         {
             foreach (var d in _disposables)
             {
-                d.Dispose();
+                try
+                {
+                    d.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[CompositeDisposable] Element disposal notice: {ex.Message}");
+                }
             }
         }
     }

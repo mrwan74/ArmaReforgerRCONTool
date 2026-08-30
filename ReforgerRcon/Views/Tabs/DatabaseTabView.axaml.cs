@@ -23,8 +23,20 @@ public partial class DatabaseTabView : UserControl
             {
                 if (DataContext is DatabaseViewModel vm)
                 {
-                    AppLogger.Debug("[DatabaseTabView] Tab Loaded event triggered: refreshing SQLite database records...");
-                    await vm.LoadDbAsync();
+                    try
+                    {
+                        AppLogger.Debug("[DatabaseTabView] Tab Loaded event triggered: refreshing SQLite database records...");
+                        await vm.LoadDbAsync().ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException opEx)
+                    {
+                        AppLogger.Debug($"[DatabaseTabView] Database load operation canceled on load: {opEx.Message}");
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error("[DatabaseTabView] Failed loading database records on tab loaded event.", ex);
+                        ToastNotificationService.Instance.ShowError("Database Load Error", "Failed retrieving historical records from database.");
+                    }
                 }
             };
 
@@ -42,12 +54,19 @@ public partial class DatabaseTabView : UserControl
 
                         vm.PropertyChanged += (s, e) =>
                         {
-                            if (e.PropertyName is nameof(DatabaseViewModel.IsMultiSelectMode) or
-                                                 nameof(DatabaseViewModel.IsReforgerProtocol) or
-                                                 nameof(DatabaseViewModel.IsBattlEyeProtocol))
+                            try
                             {
-                                UpdateColumnVisibilities();
-                                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+                                if (e.PropertyName is nameof(DatabaseViewModel.IsMultiSelectMode) or
+                                                     nameof(DatabaseViewModel.IsReforgerProtocol) or
+                                                     nameof(DatabaseViewModel.IsBattlEyeProtocol))
+                                {
+                                    UpdateColumnVisibilities();
+                                    UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+                                }
+                            }
+                            catch (Exception propEx)
+                            {
+                                AppLogger.Error("[DatabaseTabView] Error handling property change event for database grid layout.", propEx);
                             }
                         };
                     }
@@ -63,17 +82,30 @@ public partial class DatabaseTabView : UserControl
         catch (Exception ex)
         {
             AppLogger.Error("Failed during DatabaseTabView constructor initialization.", ex);
+            CrashReportService.HandleFatalException("DatabaseTabView.Constructor", ex, isTerminating: false);
         }
     }
 
     private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
     {
-        e.Handled = true;
-        var tag = e.Column.Tag?.ToString() ?? "";
-        if (DataContext is DatabaseViewModel vm)
+        try
         {
-            vm.CycleColumnSort(tag);
-            UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+            e.Handled = true;
+            var tag = e.Column.Tag?.ToString() ?? string.Empty;
+            if (DataContext is DatabaseViewModel vm)
+            {
+                vm.CycleColumnSort(tag);
+                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+            }
+        }
+        catch (ArgumentException argEx)
+        {
+            AppLogger.Warn($"[DatabaseTabView] Invalid column sorting parameter: {argEx.Message}", argEx);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[DatabaseTabView] Unexpected exception in OnDataGridSorting.", ex);
+            ToastNotificationService.Instance.ShowWarning("Sort Error", "Unable to cycle sort for selected column.");
         }
     }
 
@@ -89,7 +121,7 @@ public partial class DatabaseTabView : UserControl
         {
             foreach (var col in DatabaseGrid.Columns)
             {
-                var tag = col.Tag?.ToString() ?? "";
+                var tag = col.Tag?.ToString() ?? string.Empty;
                 var field = DatabaseViewModel.MapColumnTagToSortField(tag);
                 var cleanHeader = GetCleanHeader(col);
 
@@ -171,9 +203,13 @@ public partial class DatabaseTabView : UserControl
                 }
             }
         }
+        catch (InvalidOperationException invOpEx)
+        {
+            AppLogger.Trace($"[DatabaseTabView] Visual ancestor lookup invalid state on pointer press: {invOpEx.Message}");
+        }
         catch (Exception ex)
         {
-            AppLogger.Trace($"OnGridPointerPressed handled non-fatal visual lookup: {ex.Message}");
+            AppLogger.Trace($"[DatabaseTabView] OnGridPointerPressed handled visual lookup notice: {ex.Message}");
         }
     }
 
@@ -194,9 +230,14 @@ public partial class DatabaseTabView : UserControl
             DatabaseGrid.SelectedItem = null;
             e.Handled = true;
         }
+        catch (InvalidOperationException invOpEx)
+        {
+            AppLogger.Trace($"[DatabaseTabView] Visual ancestor lookup invalid state on context request: {invOpEx.Message}");
+            e.Handled = true;
+        }
         catch (Exception ex)
         {
-            AppLogger.Trace($"OnGridContextRequested handled non-fatal visual lookup: {ex.Message}");
+            AppLogger.Trace($"[DatabaseTabView] OnGridContextRequested handled visual lookup notice: {ex.Message}");
             e.Handled = true;
         }
     }
@@ -216,9 +257,14 @@ public partial class DatabaseTabView : UserControl
                 e.Handled = true;
             }
         }
+        catch (InvalidOperationException invOpEx)
+        {
+            AppLogger.Warn($"[DatabaseTabView] Double tap action invalid in current visual state: {invOpEx.Message}", invOpEx);
+        }
         catch (Exception ex)
         {
             AppLogger.Error("Error handling DatabaseGrid double tap event.", ex);
+            ToastNotificationService.Instance.ShowError("Dialog Error", "Failed to open player details dialog.");
         }
     }
 }

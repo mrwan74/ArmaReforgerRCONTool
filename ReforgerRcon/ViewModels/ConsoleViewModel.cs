@@ -176,14 +176,14 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task SendCommandAsync()
+    private Task<bool> SendCommandAsync() => ExecuteSafeAsync(async () =>
     {
         if (string.IsNullOrWhiteSpace(CommandInput)) return;
         var cmd = CommandInput.Trim();
         CommandInput = string.Empty;
         AppLogger.Info($"[ConsoleViewModel] Operator submitted manual console command: '{cmd}'");
-        await _rconService.SendCommandAsync(cmd);
-    }
+        await _rconService.SendCommandAsync(cmd).ConfigureAwait(false);
+    });
 
     [RelayCommand]
     private void ToggleFullscreen()
@@ -216,11 +216,11 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task CopyLogsAsync()
+    private Task<bool> CopyLogsAsync() => ExecuteSafeAsync(async () =>
     {
         var text = string.Join(Environment.NewLine, FilteredLogs.Select(l => $"[{l.FormattedTime}] [{l.BadgeText}] {l.Message}"));
-        await ClipboardService.SetTextAsync(text);
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
         AppLogger.Info($"[ConsoleViewModel] Copied {FilteredLogs.Count} console entries ({text.Length} chars) to clipboard.");
         ToastNotificationService.Instance.ShowToast("Logs Copied", "Copied terminal buffer to clipboard.");
-    }
+    });
 }

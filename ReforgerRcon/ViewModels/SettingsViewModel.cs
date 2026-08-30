@@ -6,11 +6,9 @@ using LuminaUI.Controls;
 using Material.Icons;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
-using Sentry;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
@@ -28,16 +26,18 @@ public partial class SettingsViewModel : ViewModelBase
     private static readonly Lock FileLock = new();
 
     [ObservableProperty] public partial AppSettings Settings { get; set; } = new();
+    [ObservableProperty] public partial string InstallationId { get; set; } = HardwareIdentityService.GetOrCreateHardwareId();
     [ObservableProperty] public partial bool IsGeoIpUpdating { get; set; }
-    [ObservableProperty] public partial string GeoIpCityStatusText { get; set; } = "Not Loaded";
-    [ObservableProperty] public partial string GeoIpCountryStatusText { get; set; } = "Not Loaded";
-    [ObservableProperty] public partial string GeoIpLastUpdatedText { get; set; } = "Never";
+    [ObservableProperty] public partial string GeoIpCityStatusText { get; set; } = "Active (Pre-bundled GeoLite2-City.mmdb)";
+    [ObservableProperty] public partial string GeoIpCountryStatusText { get; set; } = "Active (Pre-bundled GeoLite2-Country.mmdb)";
+    [ObservableProperty] public partial string GeoIpLastUpdatedText { get; set; } = "Bundled / Initial";
     [ObservableProperty] public partial bool IsLicenseKeyRevealed { get; set; }
 
     [ObservableProperty] public partial string DatabaseEngineText { get; set; } = "SQLite 3 (WAL Mode Active)";
-    [ObservableProperty] public partial string DatabaseSizeText { get; set; } = "Calculating...";
-    [ObservableProperty] public partial string DatabaseRecordsText { get; set; } = "Calculating...";
+    [ObservableProperty] public partial string DatabaseSizeText { get; set; } = "Ready";
+    [ObservableProperty] public partial string DatabaseRecordsText { get; set; } = "Ready";
 
+    public ObservableCollection<string> ThemeOptions { get; } = ["System Default", "Dark Mode", "Light Mode"];
     public ObservableCollection<string> PlayersSortOptions { get; } = ["Default", "Status", "Country", "Name", "BattlEye GUID", "IP:Port", "Ping", "Comment"];
     public ObservableCollection<string> BansSortOptions { get; } = ["Default", "GUID / IP Address", "Minutes Left", "Reason"];
     public ObservableCollection<string> DatabaseSortOptions { get; } = ["Default", "Status", "Country", "Name", "BattlEye GUID", "IP:Port", "Ping", "Comment"];
@@ -49,10 +49,7 @@ public partial class SettingsViewModel : ViewModelBase
     public SettingsViewModel(DashboardViewModel? dashboard = null)
     {
         _dashboard = dashboard;
-        LoadSettings();
-        GeoIpService.DatabasesUpdated += RefreshGeoIpStatus;
-        RefreshGeoIpStatus();
-        _ = RefreshDatabaseStatsAsync();
+        LoadSettingsFast();
     }
 
     public static void ApplyWindowGlassState(bool enableWindowGlass)
@@ -61,52 +58,79 @@ public partial class SettingsViewModel : ViewModelBase
         {
             if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
-                int count = 0;
                 foreach (var window in desktop.Windows)
                 {
                     if (window is LuminaWindow luminaWin)
                     {
                         luminaWin.UseWindowGlass = enableWindowGlass;
-                        count++;
                     }
                 }
-                AppLogger.Info($"[SettingsViewModel] Applied WindowGlass/Blur setting (Enabled: {enableWindowGlass}) across {count} active LuminaWindow instance(s).");
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"[SettingsViewModel] Error applying window glass setting to visual tree: {ex.Message}");
+            AppLogger.Trace($"[SettingsViewModel] ApplyWindowGlassState notice: {ex.Message}");
         }
     }
 
-    private void LoadSettings()
+    private void LoadSettingsFast()
+    {
+        if (!File.Exists(SettingsFile))
+        {
+            var (acc, key) = GeoIpService.ResolveCredentials();
+            Settings.MaxMindAccountId = acc;
+            Settings.MaxMindLicenseKey = key;
+            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
+            return;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(SettingsFile);
+            Settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            InstallationId = !string.IsNullOrWhiteSpace(Settings.InstallationId) ? Settings.InstallationId : HardwareIdentityService.GetOrCreateHardwareId();
+        }
+        catch (JsonException jsonEx)
+        {
+            AppLogger.Warn($"[SettingsViewModel] Settings JSON format warning: {jsonEx.Message}. Restoring defaults.", jsonEx);
+            Settings = new AppSettings();
+            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
+        }
+        catch (IOException ioEx)
+        {
+            AppLogger.Warn($"[SettingsViewModel] Disk I/O warning reading settings: {ioEx.Message}", ioEx);
+            Settings = new AppSettings();
+            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            AppLogger.Warn($"[SettingsViewModel] Access denied reading settings: {authEx.Message}", authEx);
+            Settings = new AppSettings();
+            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
+        }
+    }
+
+    public void OnThemeSettingChanged(string selectedOption)
     {
         ExecuteSafe(() =>
         {
-            using var timing = AppLogger.Measure("SettingsViewModel.LoadSettings");
-            if (File.Exists(SettingsFile))
+            var mode = selectedOption switch
             {
-                var json = File.ReadAllText(SettingsFile);
-                Settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
-                AppLogger.Info($"[SettingsViewModel] Loaded settings from '{SettingsFile}' ({json.Length} chars).");
-            }
-            else
-            {
-                var (acc, key) = GeoIpService.ResolveCredentials();
-                Settings.MaxMindAccountId = acc;
-                Settings.MaxMindLicenseKey = key;
-                AppLogger.Info("[SettingsViewModel] Initialized default application settings (Telemetry default: disabled).");
-            }
+                "Dark Mode" => "Dark",
+                "Light Mode" => "Light",
+                _ => "System"
+            };
 
-            ApplyWindowGlassState(Settings.EnableWindowGlass);
-        }, "Failed to load application settings from disk.");
+            Settings.ThemeMode = mode;
+            AppSettings.ApplyThemeMode(mode);
+            _ = SaveSettingsAsync();
+        });
     }
 
     public void OnSortSettingChanged()
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Debug("[SettingsViewModel] Sort settings modified. Refreshing active tab filters...");
             _dashboard?.PlayersTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard?.BansTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard?.DatabaseTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
@@ -114,22 +138,24 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    public Task<bool> CopyInstallationIdAsync() => ExecuteSafeAsync(async () =>
+    {
+        await ClipboardService.SetTextAsync(InstallationId).ConfigureAwait(false);
+        ToastNotificationService.Instance.ShowToast("Copied Hardware ID", $"Hardware identity copied: {InstallationId}");
+    });
+
+    [RelayCommand]
     public Task<bool> RefreshDatabaseStatsAsync() => ExecuteSafeAsync(async () =>
     {
-        using var timing = AppLogger.Measure("SettingsViewModel.RefreshDatabaseStatsAsync");
-        var transaction = SentrySdk.StartTransaction("RefreshDatabaseStats", "settings.db_stats");
-        AppLogger.Debug("[SettingsViewModel] Refreshing SQLite database telemetry statistics...");
+        var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync().ConfigureAwait(false);
+        var sizeText = $"{stats.DatabaseSizeBytes / (1024.0 * 1024.0):F2} MB (WAL: {stats.WalSizeBytes / 1024.0:F1} KB)";
+        var recordsText = $"{stats.TotalReforgerPlayers:N0} Reforger / {stats.TotalBattlEyePlayers:N0} BattlEye Players";
 
-        var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync();
-        DatabaseSizeText = $"{stats.DatabaseSizeBytes / (1024.0 * 1024.0):F2} MB (WAL: {stats.WalSizeBytes / 1024.0:F1} KB)";
-        DatabaseRecordsText = $"{stats.TotalReforgerPlayers:N0} Reforger / {stats.TotalBattlEyePlayers:N0} BattlEye Players";
-
-        SentrySdk.Metrics.EmitGauge("db_reforger_players", stats.TotalReforgerPlayers, MeasurementUnit.None);
-        SentrySdk.Metrics.EmitGauge("db_battleye_players", stats.TotalBattlEyePlayers, MeasurementUnit.None);
-        SentrySdk.Metrics.EmitGauge("db_file_size_bytes", stats.DatabaseSizeBytes, MeasurementUnit.Information.Byte);
-
-        transaction.Finish(SpanStatus.Ok);
-        AppLogger.Info($"[SettingsViewModel] Refreshed database stats: {DatabaseRecordsText}, Size: {DatabaseSizeText}");
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            DatabaseSizeText = sizeText;
+            DatabaseRecordsText = recordsText;
+        });
     }, "Failed to query SQLite database telemetry stats.");
 
     [RelayCommand]
@@ -140,7 +166,6 @@ public partial class SettingsViewModel : ViewModelBase
             IsLicenseKeyRevealed = !IsLicenseKeyRevealed;
             OnPropertyChanged(nameof(LicenseKeyMaskChar));
             OnPropertyChanged(nameof(LicenseKeyIconKind));
-            AppLogger.Trace($"[SettingsViewModel] Toggled MaxMind License Key mask: IsRevealed={IsLicenseKeyRevealed}");
         });
     }
 
@@ -149,18 +174,15 @@ public partial class SettingsViewModel : ViewModelBase
     {
         return ExecuteSafeAsync(async () =>
         {
-            using var timing = AppLogger.Measure("SettingsViewModel.SaveSettingsAsync");
-            var transaction = SentrySdk.StartTransaction("SaveSettings", "settings.save");
-
             var dir = Path.GetDirectoryName(SettingsFile);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
             }
 
+            Settings.InstallationId = InstallationId;
             var json = JsonSerializer.Serialize(Settings, JsonOptions);
 
-            var writeSpan = transaction.StartChild("fs.write", "Save settings to disk");
             lock (FileLock)
             {
                 File.WriteAllText(TempSettingsFile, json);
@@ -170,86 +192,47 @@ public partial class SettingsViewModel : ViewModelBase
                 }
                 File.Move(TempSettingsFile, SettingsFile, overwrite: true);
             }
-            writeSpan.Finish(SpanStatus.Ok);
 
+            AppSettings.ApplyThemeMode(Settings.ThemeMode);
             ApplyWindowGlassState(Settings.EnableWindowGlass);
             OnSortSettingChanged();
 
-            SentrySdk.Metrics.EmitCounter("settings_saved", 1,
-            [
-                new KeyValuePair<string, object>("telemetry_enabled", Settings.SendAnonymousCrashReports.ToString())
-            ]);
-            transaction.Finish(SpanStatus.Ok);
-
-            AppLogger.Info($"[SettingsViewModel] Settings saved to '{SettingsFile}' (Telemetry enabled: {Settings.SendAnonymousCrashReports}).");
-            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences, appearance, privacy, and sorting updated.");
-            RefreshGeoIpStatus();
-        });
-    }
-
-    private void RefreshGeoIpStatus()
-    {
-        ExecuteSafe(() =>
-        {
-            var hasCreds = GeoIpService.HasCustomCredentials;
-
-            if (GeoIpService.IsCityDbLoaded)
-            {
-                GeoIpCityStatusText = hasCreds
-                    ? "Active (GeoLite2-City.mmdb)"
-                    : "Active (Pre-bundled GeoLite2-City.mmdb)";
-            }
-            else
-            {
-                GeoIpCityStatusText = "Missing / Not Available";
-            }
-
-            if (GeoIpService.IsCountryDbLoaded)
-            {
-                GeoIpCountryStatusText = hasCreds
-                    ? "Active (GeoLite2-Country.mmdb)"
-                    : "Active (Pre-bundled GeoLite2-Country.mmdb)";
-            }
-            else
-            {
-                GeoIpCountryStatusText = "Missing / Not Available";
-            }
-
-            var lastMod = GeoIpService.CityDbLastModified ?? GeoIpService.CountryDbLastModified;
-            GeoIpLastUpdatedText = lastMod.HasValue ? lastMod.Value.ToString("yyyy-MM-dd HH:mm UTC", CultureInfo.InvariantCulture) : "Bundled / Initial";
-            IsGeoIpUpdating = GeoIpService.IsUpdating;
-
-            AppLogger.Debug($"[SettingsViewModel] Refreshed GeoIP status UI: City='{GeoIpCityStatusText}', Country='{GeoIpCountryStatusText}', Date='{GeoIpLastUpdatedText}'");
+            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences and sorting updated.");
         });
     }
 
     [RelayCommand]
-    private Task<bool> UpdateGeoIpDatabasesAsync()
+    public Task<bool> UpdateGeoIpDatabasesAsync()
     {
         return ExecuteSafeAsync(async () =>
         {
             if (string.IsNullOrWhiteSpace(Settings.MaxMindAccountId) || string.IsNullOrWhiteSpace(Settings.MaxMindLicenseKey))
             {
-                AppLogger.Info("[SettingsViewModel] Manual GeoIP update requested without credentials configured.");
                 ToastNotificationService.Instance.ShowToast(
                     "Credentials Required for Updates",
-                    "Currently using offline pre-bundled databases. To download newer updates, enter your MaxMind Account ID & License Key.",
+                    "Enter your MaxMind Account ID & License Key in Settings to update.",
                     "GEOIP_NOTICE"
                 );
                 return;
             }
 
-            await SaveSettingsAsync();
-            IsGeoIpUpdating = true;
-            AppLogger.Info("[SettingsViewModel] Initiating forced GeoIP database download from MaxMind...");
-            try
+            await SaveSettingsAsync().ConfigureAwait(false);
+
+            if (_dashboard != null)
             {
-                await GeoIpService.UpdateDatabasesAsync(force: true);
+                _dashboard.ShowDialog(new GeoIpUpdateDialogViewModel(() => _dashboard.CloseDialog()));
             }
-            finally
+            else
             {
-                IsGeoIpUpdating = false;
-                RefreshGeoIpStatus();
+                IsGeoIpUpdating = true;
+                try
+                {
+                    await GeoIpService.UpdateDatabasesAsync(force: true).ConfigureAwait(false);
+                }
+                finally
+                {
+                    IsGeoIpUpdating = false;
+                }
             }
         });
     }
@@ -259,8 +242,6 @@ public partial class SettingsViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Info("[SettingsViewModel] Prompting confirmation for SQLite database purge...");
-
             _dashboard?.ShowDialog(new ConfirmDialogViewModel(
                 "Clear SQLite Database",
                 "Are you sure you want to permanently clear all historical player records from both Reforger and BattlEye tables?",
@@ -268,11 +249,8 @@ public partial class SettingsViewModel : ViewModelBase
                 true,
                 async () =>
                 {
-                    AppLogger.Warn("[SettingsViewModel] Confirmed SQLite database purge. Purging data tables...");
-                    var transaction = SentrySdk.StartTransaction("PurgeDatabase", "db.sqlite.purge_full");
-                    await PlayerDatabaseStorageService.ClearDatabaseAsync(null);
-                    await RefreshDatabaseStatsAsync();
-                    transaction.Finish(SpanStatus.Ok);
+                    await PlayerDatabaseStorageService.ClearDatabaseAsync(null).ConfigureAwait(false);
+                    await RefreshDatabaseStatsAsync().ConfigureAwait(false);
                     ToastNotificationService.Instance.ShowToast("Database Cleared", "SQLite historical database purged.");
                 },
                 () => _dashboard.CloseDialog()

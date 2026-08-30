@@ -39,7 +39,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         using var timing = AppLogger.Measure("BansViewModel.RefreshBansAsync");
         AppLogger.Debug("[BansViewModel] Fetching active ban records from server...");
 
-        _allBans = await _rconService.GetBansAsync();
+        _allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
 
         _dashboard.ActiveBansCount = _allBans.Count;
@@ -254,7 +254,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         using var timing = AppLogger.Measure($"BansViewModel.ExecuteRemoveBanAsync(#{ban.BanNumber})");
         AppLogger.Info($"[BansViewModel] Dispatching remove ban command for #{ban.BanNumber} ({ban.IdentityId})...");
 
-        bool isSuccess = await _rconService.RemoveBanAsync(ban);
+        bool isSuccess = await _rconService.RemoveBanAsync(ban).ConfigureAwait(false);
 
         if (isSuccess)
         {
@@ -268,8 +268,8 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             ToastNotificationService.Instance.ShowSuccess("Ban Removed", $"Removed ban for {ban.BannedName}", cmd, async () =>
             {
                 AppLogger.Info($"[BansViewModel] Undo triggered for ban removal: {ban.IdentityId}. Reinstating...");
-                await _rconService.OfflineBanAsync(ban.IdentityId, ban.DurationSeconds, ban.Reason, false);
-                await RefreshBansAsync();
+                await _rconService.OfflineBanAsync(ban.IdentityId, ban.DurationSeconds, ban.Reason, false).ConfigureAwait(false);
+                await RefreshBansAsync().ConfigureAwait(false);
             });
         }
         else
@@ -316,7 +316,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             var b = selected[i];
             AppLogger.Info($"[BansViewModel] Processing batch removal {i + 1}/{total}: {b.BannedName} (#{b.BanNumber}, {b.IdentityId})...");
 
-            bool isSuccess = await _rconService.RemoveBanAsync(b);
+            bool isSuccess = await _rconService.RemoveBanAsync(b).ConfigureAwait(false);
             if (isSuccess)
             {
                 successCount++;
@@ -341,7 +341,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             ToastNotificationService.Instance.ShowWarning("Batch Ban Removal", $"Completed: {successCount} removed, {failedCount} failed.");
         }
 
-        await RefreshBansAsync();
+        await RefreshBansAsync().ConfigureAwait(false);
     }
 
     private string FormatBanInfo(BanModel b)
@@ -364,7 +364,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         ban ??= SelectedBan;
         if (ban == null) return;
         var text = FormatBanInfo(ban);
-        await ClipboardService.SetTextAsync(text);
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
         AppLogger.Debug($"[BansViewModel] Copied ban info for '{ban.BannedName}' ({ban.IdentityId}) to clipboard.");
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied ban info for {ban.BannedName}");
     });
@@ -378,7 +378,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         var formattedEntries = selected.Select(FormatBanInfo);
         var text = string.Join("\n\n", formattedEntries);
 
-        await ClipboardService.SetTextAsync(text);
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
         AppLogger.Info($"[BansViewModel] Copied {selected.Count} ban entries to clipboard.");
         ToastNotificationService.Instance.ShowToast("Clipboard", "Copied ban list to clipboard.");
     });
@@ -387,7 +387,8 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     private Task<bool> LoadBans() => ExecuteSafeAsync(async () =>
     {
         AppLogger.Info("[BansViewModel] Dispatching 'loadBans' command to reload bans.txt...");
-        await _rconService.SendCommandAsync("loadBans");
+        AppLogger.TrackEvent("battleye_load_bans_dispatched");
+        await _rconService.SendCommandAsync("loadBans").ConfigureAwait(false);
         ToastNotificationService.Instance.ShowToast("Load Bans", "Reloaded bans from bans.txt", "loadBans");
     });
 
@@ -395,7 +396,8 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     private Task<bool> WriteBans() => ExecuteSafeAsync(async () =>
     {
         AppLogger.Info("[BansViewModel] Dispatching 'writeBans' command to persist bans.txt...");
-        await _rconService.SendCommandAsync("writeBans");
+        AppLogger.TrackEvent("battleye_write_bans_dispatched");
+        await _rconService.SendCommandAsync("writeBans").ConfigureAwait(false);
         ToastNotificationService.Instance.ShowToast("Write Bans", "Saved bans to bans.txt", "writeBans");
     });
 }

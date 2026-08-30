@@ -4,8 +4,8 @@
              xmlns:dataGrid="clr-namespace:LuminaUI.DataGrid;assembly=LuminaUI.DataGrid"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              x:Class="ReforgerRcon.App"
-             Name="ARMA REFORGER RCON TOOL (ARRT) V0.6.2"
-             RequestedThemeVariant="Dark">
+             Name="ARMA REFORGER RCON TOOL (ARRT) V0.8.53"
+             RequestedThemeVariant="Default">
   <Application.Styles>
     <FluentTheme />
     <lumina:LuminaTheme />

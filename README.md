@@ -3,7 +3,7 @@
 [![AI Assisted](https://img.shields.io/badge/Development-AI--Assisted-8A2BE2?style=flat&logo=openai&logoColor=white)](#)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat&logo=dotnet)](https://dotnet.microsoft.com/)
 [![Avalonia 12](https://img.shields.io/badge/Avalonia-12-8A2BE2?style=flat&logo=avalonia)](https://avaloniaui.net/)
-[![Release](https://img.shields.io/badge/Version-v0.8.53-blue?style=flat)](https://github.com/)
+[![Release](https://img.shields.io/badge/Version-v0.8.60-blue?style=flat)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078D6?style=flat)](https://github.com/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
@@ -12,8 +12,8 @@
 
 ---
 
-> ### 📦 Latest Release: `v0.8.53-alpha`
-> **Released on:** Aug 26, 2026, 03:45 PM (UTC) 
+> ### 📦 Latest Release: `v0.8.60-alpha`
+> **Released on:** Aug 30, 2026, 04:22 PM (UTC) 
 
 The Arma Reforger RCON Tool (ARRT) is a desktop administration tool for arma reforger developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
 <img width="1696" height="937" alt="ReforgerRcon_vS2DqXgTRv" src="https://github.com/user-attachments/assets/84a3deca-fd85-4175-8a37-0090701cf3ce" />
@@ -168,8 +168,10 @@ Special thanks to the authors of the open-source projects and libraries used in 
 * **[MaxMind GeoIP2](https://github.com/maxmind/GeoIP2-dotnet)** by **[@maxmind](https://github.com/maxmind)** – IP Geolocation engine.
 * **[Serilog](https://github.com/serilog/serilog)** by **[@serilog](https://github.com/serilog)** – Structured logging framework.
 * **[Sentry .NET SDK](https://github.com/getsentry/sentry-dotnet)** by **[@getsentry](https://github.com/getsentry)** – Application diagnostics and crash analytics.
-* **[flags-icons](https://github.com/lipis/flag-icons)** by **[@lipis](https://github.com/lipis/flag-icons)** – Country flags
-
+* **[flags-icons](https://github.com/lipis/flag-icons)** by **[@lipis](https://github.com/lipis)** – Country flags
+* **[Aptabase](https://github.com/aptabase/aptabase)** by **[aptabase](https://github.com/aptabase)** – Open Source, Privacy-First and Simple Analytics for Mobile, Desktop and Web Apps.
+* **[Aptabase](https://aptabase.com)** by **[@aptabase](https://github.com/aptabase)** — Open Source, Privacy-First Analytics for Mobile, Desktop, and Web Apps.
+* The `Aptabase.Avalonia` client included in this repository is directly adapted and ported from Aptabase's official [.NET MAUI SDK](https://github.com/aptabase/aptabase-maui) to support Avalonia. All original SDK architecture and code remain the intellectual property of the Aptabase team and are used under the **MIT License**.
 ...among many others.
 
 ---

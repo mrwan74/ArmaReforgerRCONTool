@@ -30,11 +30,11 @@ public sealed class RconService : IRconService
     private readonly ConcurrentDictionary<string, long> _recentlyAnnouncedLeaves = new(StringComparer.OrdinalIgnoreCase);
     private readonly StringBuilder _aggregatedBuffer = new();
     private readonly Lock _bufferLock = new();
-    private readonly SemaphoreSlim _commandExecutionLock = new(1, 1);
     private DateTime _lastMessageChunkUtc = DateTime.UtcNow;
     private int _messageChunksCount;
     private bool _isDisposed;
     private volatile bool _hasInitialPlayerSnapshot;
+    private volatile bool _isInitialConnectPhase;
 
     private readonly System.Net.NetworkInformation.Ping _icmpPingSender = new();
     private readonly Queue<int> _pingSamples = new();
@@ -58,53 +58,89 @@ public sealed class RconService : IRconService
     private readonly List<PlayerModel> _lastKnownPlayers = [];
     private readonly Lock _playersLock = new();
 
-    private void RaiseOutputReceived(string message) => OutputReceived?.Invoke(this, message);
+    private void RaiseOutputReceived(string message)
+    {
+        try
+        {
+            OutputReceived?.Invoke(this, message);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[RconService] Error dispatching OutputReceived event: {ex.Message}", ex);
+        }
+    }
 
     private void RaisePlayerJoined(PlayerModel player)
     {
-        var key = $"{player.Id}_{player.Name.Trim()}";
-        var now = Stopwatch.GetTimestamp();
-
-        if (_recentlyAnnouncedJoins.TryGetValue(key, out var lastAnnounced))
+        try
         {
-            var elapsedSec = Stopwatch.GetElapsedTime(lastAnnounced).TotalSeconds;
-            if (elapsedSec < 6.0)
+            if (!_hasInitialPlayerSnapshot || _isInitialConnectPhase) return;
+
+            var key = $"{player.Id}_{player.Name.Trim()}";
+            var now = Stopwatch.GetTimestamp();
+
+            if (_recentlyAnnouncedJoins.TryGetValue(key, out var lastAnnounced))
             {
-                AppLogger.Debug($"[RconService] Suppressed duplicate PlayerJoined notification for '{player.Name}' (ID: #{player.Id}, Elapsed: {elapsedSec:F1}s).");
-                return;
+                var elapsedSec = Stopwatch.GetElapsedTime(lastAnnounced).TotalSeconds;
+                if (elapsedSec < 6.0)
+                {
+                    return;
+                }
             }
+
+            _recentlyAnnouncedJoins[key] = now;
+            _recentlyAnnouncedLeaves.TryRemove(key, out _);
+
+            AppLogger.Info($"[RconService] Dispatching PlayerJoined event for '{player.Name}' (ID: #{player.Id}, GUID: '{player.Guid}', Location: '{player.DisplayLocation}').");
+            PlayerJoined?.Invoke(this, player);
         }
-
-        _recentlyAnnouncedJoins[key] = now;
-        _recentlyAnnouncedLeaves.TryRemove(key, out _);
-
-        AppLogger.Info($"[RconService] Dispatching PlayerJoined event for '{player.Name}' (ID: #{player.Id}, GUID: '{player.Guid}', Location: '{player.DisplayLocation}').");
-        PlayerJoined?.Invoke(this, player);
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[RconService] Error dispatching PlayerJoined: {ex.Message}", ex);
+        }
     }
 
     private void RaisePlayerLeft(PlayerModel player)
     {
-        var key = $"{player.Id}_{player.Name.Trim()}";
-        var now = Stopwatch.GetTimestamp();
-
-        if (_recentlyAnnouncedLeaves.TryGetValue(key, out var lastAnnounced))
+        try
         {
-            var elapsedSec = Stopwatch.GetElapsedTime(lastAnnounced).TotalSeconds;
-            if (elapsedSec < 6.0)
+            if (!_hasInitialPlayerSnapshot || _isInitialConnectPhase) return;
+
+            var key = $"{player.Id}_{player.Name.Trim()}";
+            var now = Stopwatch.GetTimestamp();
+
+            if (_recentlyAnnouncedLeaves.TryGetValue(key, out var lastAnnounced))
             {
-                AppLogger.Debug($"[RconService] Suppressed duplicate PlayerLeft notification for '{player.Name}' (ID: #{player.Id}, Elapsed: {elapsedSec:F1}s).");
-                return;
+                var elapsedSec = Stopwatch.GetElapsedTime(lastAnnounced).TotalSeconds;
+                if (elapsedSec < 6.0)
+                {
+                    return;
+                }
             }
+
+            _recentlyAnnouncedLeaves[key] = now;
+            _recentlyAnnouncedJoins.TryRemove(key, out _);
+
+            AppLogger.Info($"[RconService] Dispatching PlayerLeft event for '{player.Name}' (ID: #{player.Id}).");
+            PlayerLeft?.Invoke(this, player);
         }
-
-        _recentlyAnnouncedLeaves[key] = now;
-        _recentlyAnnouncedJoins.TryRemove(key, out _);
-
-        AppLogger.Info($"[RconService] Dispatching PlayerLeft event for '{player.Name}' (ID: #{player.Id}).");
-        PlayerLeft?.Invoke(this, player);
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[RconService] Error dispatching PlayerLeft: {ex.Message}", ex);
+        }
     }
 
-    private void RaiseConnectionLost(string reason) => ConnectionLost?.Invoke(this, reason);
+    private void RaiseConnectionLost(string reason)
+    {
+        try
+        {
+            ConnectionLost?.Invoke(this, reason);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[RconService] Error in ConnectionLost handler: {ex.Message}", ex);
+        }
+    }
 
     public async Task<bool> ConnectAsync(ServerProfile profile)
     {
@@ -114,6 +150,7 @@ public sealed class RconService : IRconService
         using var timing = AppLogger.Measure($"RconService.ConnectAsync({profile.ServerIp}:{profile.Port})");
         _currentProfile = profile;
         _hasInitialPlayerSnapshot = false;
+        _isInitialConnectPhase = true;
         _recentlyAnnouncedJoins.Clear();
         _recentlyAnnouncedLeaves.Clear();
 
@@ -125,10 +162,11 @@ public sealed class RconService : IRconService
         var transaction = SentrySdk.StartTransaction("RCON Connect", "network.rcon.connect");
         using var op = Operation.Begin("Connect RCON to {ServerIp}:{Port} ({Protocol})", profile.ServerIp, profile.Port, profile.Protocol);
 
-        SentrySdk.Metrics.EmitCounter("rcon_connect_attempts", 1,
-        [
-            new KeyValuePair<string, object>(ProtocolMetricKey, profile.Protocol.ToString())
-        ]);
+        AppLogger.TrackEvent("rcon_connect_attempt", new Dictionary<string, object>
+        {
+            [ProtocolMetricKey] = profile.Protocol.ToString(),
+            ["port"] = profile.Port
+        });
 
         try
         {
@@ -139,18 +177,16 @@ public sealed class RconService : IRconService
             }
             else
             {
-                AppLogger.Debug($"[RconService] Resolving DNS hostname for '{profile.ServerIp}'...");
-                var addresses = await Dns.GetHostAddressesAsync(profile.ServerIp, CancellationToken.None);
+                var addresses = await Dns.GetHostAddressesAsync(profile.ServerIp, CancellationToken.None).ConfigureAwait(false);
                 if (addresses.Length > 0)
                 {
                     ip = addresses[0];
-                    AppLogger.Info($"[RconService] Hostname '{profile.ServerIp}' resolved to IP: {ip}");
                 }
             }
 
             if (ip == null)
             {
-                AppLogger.Error($"[RconService] Unable to resolve hostname: '{profile.ServerIp}'");
+                AppLogger.Error($"[RconService] Host resolution failed for address '{profile.ServerIp}'.");
                 transaction.Finish(SpanStatus.InvalidArgument);
                 return false;
             }
@@ -160,20 +196,17 @@ public sealed class RconService : IRconService
 
             var connectTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            _client.BattlEyeConnected += args =>
-            {
-                AppLogger.Info($"[RconService] Handshake result received: {args.ConnectionResult} ('{args.Message}')");
-                connectTcs.TrySetResult(args.ConnectionResult == BattlEyeConnectionResult.Success);
-            };
+            _client.BattlEyeConnected += args => connectTcs.TrySetResult(args.ConnectionResult == BattlEyeConnectionResult.Success);
 
             _client.BattlEyeDisconnected += async args =>
             {
-                AppLogger.Warn($"[RconService] Connection dropped: Type={args.DisconnectionType}, Message='{args.Message}'");
+                AppLogger.Warn($"[RconService] Socket disconnect notification: Type={args.DisconnectionType}, Message='{args.Message}'");
                 RaiseOutputReceived($"[SYSTEM] Disconnected: {args.Message}");
 
                 StopBackgroundPingMonitor();
                 _hasInitialPlayerSnapshot = false;
-                await PlayerDatabaseStorageService.SetAllOfflineAsync(_currentProfile?.Protocol);
+                _isInitialConnectPhase = false;
+                await PlayerDatabaseStorageService.SetAllOfflineAsync(_currentProfile?.Protocol).ConfigureAwait(false);
 
                 lock (_playersLock)
                 {
@@ -190,33 +223,38 @@ public sealed class RconService : IRconService
 
             _client.BattlEyeMessageReceived += OnBattlEyeMessageReceived;
 
-            _ = _client.ConnectAsync(CancellationToken.None);
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2.4));
             cts.Token.Register(() => connectTcs.TrySetResult(false));
 
-            bool success = await connectTcs.Task;
+            _ = _client.ConnectAsync(cts.Token);
+
+            bool success = await connectTcs.Task.ConfigureAwait(false);
             if (success)
             {
                 LastPacketTime = DateTime.UtcNow;
-                _hasInitialPlayerSnapshot = true;
                 RaiseOutputReceived($"[SYSTEM] Connected successfully to {profile.ServerIp}:{profile.Port}");
-                AppLogger.Info($"[RconService] Verified live connection to {profile.ServerIp}:{profile.Port} via {profile.Protocol}.");
+                AppLogger.Info($"[RconService] Live connection verified to {profile.ServerIp}:{profile.Port} via {profile.Protocol}.");
 
                 StartBackgroundPingMonitor(ip);
 
                 op.Complete();
                 transaction.Finish(SpanStatus.Ok);
 
-                SentrySdk.Metrics.EmitCounter("rcon_connect_success", 1,
-                [
-                    new KeyValuePair<string, object>(ProtocolMetricKey, profile.Protocol.ToString())
-                ]);
+                AppLogger.TrackEvent("rcon_connect_success", new Dictionary<string, object>
+                {
+                    [ProtocolMetricKey] = profile.Protocol.ToString(),
+                    ["ping_ms"] = PingMs
+                });
             }
             else
             {
-                AppLogger.Warn($"[RconService] Connection attempt timed out or failed for {profile.ServerIp}:{profile.Port}");
+                AppLogger.Warn($"[RconService] Connection attempt timed out or handshake was rejected for {profile.ServerIp}:{profile.Port}");
                 transaction.Finish(SpanStatus.DeadlineExceeded);
+
+                AppLogger.TrackEvent("rcon_connect_failed", new Dictionary<string, object>
+                {
+                    [ProtocolMetricKey] = profile.Protocol.ToString()
+                });
             }
 
             return success;
@@ -224,20 +262,19 @@ public sealed class RconService : IRconService
         catch (SocketException sockEx)
         {
             transaction.Finish(SpanStatus.Unavailable);
-            AppLogger.Error($"[RconService] Socket error during connection: {sockEx.SocketErrorCode}", sockEx.Demystify());
+            AppLogger.Error($"[RconService] Socket error during connection to {profile.ServerIp}:{profile.Port}: {sockEx.SocketErrorCode}", sockEx);
             return false;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException opEx)
         {
-            op.Cancel();
             transaction.Finish(SpanStatus.Cancelled);
-            AppLogger.Warn($"[RconService] Connection attempt to {profile.ServerIp}:{profile.Port} was cancelled.");
+            AppLogger.Trace($"[RconService] ConnectAsync canceled: {opEx.Message}");
             return false;
         }
-        catch (ArgumentException argEx)
+        catch (Exception ex)
         {
-            transaction.Finish(SpanStatus.InvalidArgument);
-            AppLogger.Error($"[RconService] Invalid argument during connection: {argEx.Message}", argEx.Demystify());
+            transaction.Finish(SpanStatus.InternalError);
+            AppLogger.Error($"[RconService] Unexpected error connecting to {profile.ServerIp}:{profile.Port}: {ex.Message}", ex);
             return false;
         }
     }
@@ -245,29 +282,41 @@ public sealed class RconService : IRconService
     public async Task DisconnectAsync()
     {
         using var timing = AppLogger.Measure("RconService.DisconnectAsync");
-        AppLogger.Info("[RconService] Executing graceful disconnection sequence...");
+        AppLogger.Info("[RconService] Disconnecting session...");
         StopBackgroundPingMonitor();
         _hasInitialPlayerSnapshot = false;
+        _isInitialConnectPhase = false;
+
+        AppLogger.TrackEvent("rcon_disconnect", new Dictionary<string, object>
+        {
+            [ProtocolMetricKey] = CurrentProtocol.ToString()
+        });
 
         if (_client is { Connected: true } && CurrentProtocol == RconProtocol.ReforgerBuiltIn)
         {
             try
             {
-                AppLogger.Info("[RconService] Sending '@logout' command to release server session slot...");
                 _client.SendCommand("@logout", log: false);
-                await Task.Delay(100, CancellationToken.None);
+                await Task.Delay(40, CancellationToken.None).ConfigureAwait(false);
             }
             catch (SocketException sockEx)
             {
-                AppLogger.Debug($"[RconService] Socket notice while sending '@logout': {sockEx.Message}");
+                AppLogger.Debug($"[RconService] Socket error during @logout: {sockEx.SocketErrorCode}");
             }
             catch (ObjectDisposedException dispEx)
             {
-                AppLogger.Debug($"[RconService] Socket disposed prior to '@logout': {dispEx.Message}");
+                AppLogger.Debug($"[RconService] Socket disposed during @logout: {dispEx.Message}");
             }
         }
 
-        await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol);
+        try
+        {
+            await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[RconService] Failed setting players offline during disconnect.", ex);
+        }
 
         lock (_playersLock)
         {
@@ -292,25 +341,34 @@ public sealed class RconService : IRconService
 
         _ = Task.Run(async () =>
         {
-            using var periodicTimer = new PeriodicTimer(TimeSpan.FromSeconds(1.5));
-            try
-            {
-                await SampleNetworkPingAsync(ip, token);
+            await SampleNetworkPingAsync(ip, token).ConfigureAwait(false);
 
-                while (!token.IsCancellationRequested && await periodicTimer.WaitForNextTickAsync(token))
+            while (!token.IsCancellationRequested)
+            {
+                await SafeDelayAsync(2000, token).ConfigureAwait(false);
+
+                if (token.IsCancellationRequested)
                 {
-                    await SampleNetworkPingAsync(ip, token);
+                    break;
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                AppLogger.Debug("[RconService] Background ICMP ping monitor stopped cleanly.");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn($"[RconService] Background ping monitor notice: {ex.Message}");
+
+                await SampleNetworkPingAsync(ip, token).ConfigureAwait(false);
             }
         }, token);
+    }
+
+    private static async Task SafeDelayAsync(int millisecondsDelay, CancellationToken cancellationToken)
+    {
+        if (millisecondsDelay <= 0 || cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using (cancellationToken.Register(static state => ((TaskCompletionSource?)state)?.TrySetResult(), tcs).ConfigureAwait(false))
+        {
+            await Task.WhenAny(Task.Delay(millisecondsDelay, CancellationToken.None), tcs.Task).ConfigureAwait(false);
+        }
     }
 
     private void StopBackgroundPingMonitor()
@@ -322,9 +380,9 @@ public sealed class RconService : IRconService
                 _pingLoopCts.Cancel();
                 _pingLoopCts.Dispose();
             }
-            catch (ObjectDisposedException dispEx)
+            catch (ObjectDisposedException)
             {
-                AppLogger.Trace($"[RconService] Ping monitor CTS already disposed: {dispEx.Message}");
+                // Disposed cleanly
             }
             _pingLoopCts = null;
         }
@@ -338,33 +396,33 @@ public sealed class RconService : IRconService
 
     private async Task SampleNetworkPingAsync(IPAddress ip, CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
+        if (ct.IsCancellationRequested) return;
 
         try
         {
-            var reply = await _icmpPingSender.SendPingAsync(ip, 1200);
+            var reply = await _icmpPingSender.SendPingAsync(ip, 800).ConfigureAwait(false);
             if (reply.Status == IPStatus.Success && reply.RoundtripTime > 0)
             {
-                RecordPingMeasurement((int)reply.RoundtripTime, isIcmp: true);
+                RecordPingMeasurement((int)reply.RoundtripTime);
                 return;
             }
         }
         catch (PingException pingEx)
         {
-            AppLogger.Trace($"[RconService] ICMP ping fallback notice: {pingEx.Message}");
+            AppLogger.Trace($"[RconService] ICMP ping exception: {pingEx.Message}");
         }
         catch (SocketException sockEx)
         {
-            AppLogger.Trace($"[RconService] ICMP socket notice: {sockEx.Message}");
+            AppLogger.Trace($"[RconService] ICMP socket exception: {sockEx.SocketErrorCode}");
         }
 
         if (_client is { Connected: true, LastPingMs: > 0 })
         {
-            RecordPingMeasurement(_client.LastPingMs, isIcmp: false);
+            RecordPingMeasurement(_client.LastPingMs);
         }
     }
 
-    private void RecordPingMeasurement(int sampleMs, bool isIcmp)
+    private void RecordPingMeasurement(int sampleMs)
     {
         if (sampleMs <= 0) sampleMs = 1;
 
@@ -389,29 +447,34 @@ public sealed class RconService : IRconService
                 _smoothedPingMs = (int)Math.Round((_smoothedPingMs * 0.75) + (median * 0.25));
             }
         }
-
-        AppLogger.Trace($"[RconService] Network Ping Measurement: {sampleMs} ms (ICMP: {isIcmp}, Filtered: {_smoothedPingMs} ms)");
     }
 
     private void OnBattlEyeMessageReceived(BattlEyeMessageEventArgs args)
     {
-        LastPacketTime = DateTime.UtcNow;
-        var message = args.Message;
-
-        lock (_bufferLock)
+        try
         {
-            _aggregatedBuffer.Append(message);
-            _lastMessageChunkUtc = DateTime.UtcNow;
-            _messageChunksCount++;
-        }
+            LastPacketTime = DateTime.UtcNow;
+            var message = args.Message;
 
-        if (args.Id != 256 && _pendingCommands.TryRemove(args.Id, out var tcs))
+            lock (_bufferLock)
+            {
+                _aggregatedBuffer.Append(message);
+                _lastMessageChunkUtc = DateTime.UtcNow;
+                _messageChunksCount++;
+            }
+
+            if (args.Id != 256 && _pendingCommands.TryRemove(args.Id, out var tcs))
+            {
+                tcs.TrySetResult(message);
+            }
+
+            ProcessLiveStreamEvent(message);
+            RaiseOutputReceived($"[RCON IN] {message}");
+        }
+        catch (Exception ex)
         {
-            tcs.TrySetResult(message);
+            AppLogger.Error($"[RconService] Error processing incoming BattlEye message: {ex.Message}", ex);
         }
-
-        ProcessLiveStreamEvent(message);
-        RaiseOutputReceived($"[RCON IN] {message}");
     }
 
     private void ProcessLiveStreamEvent(string message)
@@ -422,8 +485,6 @@ public sealed class RconService : IRconService
             if (disconnMatch.Success && int.TryParse(disconnMatch.Groups[1].Value, out int discId))
             {
                 var name = disconnMatch.Groups[2].Value.Trim();
-                AppLogger.Info($"[RconService:Stream] Player disconnected event: #{discId} '{name}'");
-
                 PlayerModel matched;
                 lock (_playersLock)
                 {
@@ -444,8 +505,6 @@ public sealed class RconService : IRconService
             {
                 var name = guidMatch.Groups[2].Value.Trim();
                 var guid = guidMatch.Groups[3].Value.Trim();
-                AppLogger.Info($"[RconService:Stream] Player GUID resolved: #{guidPlayerId} '{name}' -> GUID: {guid}");
-
                 PlayerModel matched;
                 bool isNew = false;
 
@@ -487,7 +546,6 @@ public sealed class RconService : IRconService
                 var name = banMatch.Groups[2].Value.Trim();
                 var guid = banMatch.Groups[3].Value.Trim();
                 var reason = banMatch.Groups[4].Success ? banMatch.Groups[4].Value.Trim() : "Admin Ban";
-                AppLogger.Info($"[RconService:Stream] Player banned event: #{banId} '{name}' ({guid}) - Reason: '{reason}'");
 
                 PlayerModel matched;
                 lock (_playersLock)
@@ -512,7 +570,6 @@ public sealed class RconService : IRconService
                 var name = kickMatch.Groups[2].Value.Trim();
                 var guid = kickMatch.Groups[3].Value.Trim();
                 var reason = kickMatch.Groups[4].Success ? kickMatch.Groups[4].Value.Trim() : "Admin Kick";
-                AppLogger.Info($"[RconService:Stream] Player kicked event: #{kickId} '{name}' ({guid}) - Reason: '{reason}'");
 
                 PlayerModel matched;
                 lock (_playersLock)
@@ -539,7 +596,6 @@ public sealed class RconService : IRconService
                 int port = int.TryParse(connMatch.Groups[4].Value, out int p) ? p : 2304;
                 var geo = GeoIpService.GetLocation(ip);
 
-                AppLogger.Info($"[RconService:Stream] Player connected event: #{connId} '{name}' ({ip}:{port}) -> {geo.NaturalLocation}");
                 var newPlayer = new PlayerModel
                 {
                     Id = connId,
@@ -568,13 +624,15 @@ public sealed class RconService : IRconService
             if (adminMatch.Success && int.TryParse(adminMatch.Groups[1].Value, out int adminId))
             {
                 var endpoint = adminMatch.Groups[2].Value.Trim();
-                AppLogger.Info($"[RconService:Stream] RCon admin logged in: Admin #{adminId} ({endpoint})");
-                AdminConnectedStream?.Invoke(this, (adminId, endpoint));
+                if (!_isInitialConnectPhase)
+                {
+                    AdminConnectedStream?.Invoke(this, (adminId, endpoint));
+                }
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[RconService] Stream dispatch notice: {ex.Message}");
+            AppLogger.Debug($"[RconService] Error parsing live event stream: {ex.Message}");
         }
     }
 
@@ -603,37 +661,17 @@ public sealed class RconService : IRconService
     {
         if (_client is not { Connected: true }) return [];
 
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var queryToken = linkedCts.Token;
-
         var sw = Stopwatch.StartNew();
-        var transaction = SentrySdk.StartTransaction("GetPlayers", "rcon.query.players");
-        using var op = Operation.Begin("Query active players list ({Protocol})", CurrentProtocol);
         try
         {
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#players" : "players";
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(1.0), cancellationToken).ConfigureAwait(false);
 
-            AppLogger.Debug($"[RconService:Timing] Requesting player list via '{command}'...");
-
-            var networkSpan = transaction.StartChild("network.rcon.command", $"Execute '{command}'");
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(4.0), queryToken);
-            networkSpan.Finish(SpanStatus.Ok);
-
-            queryToken.ThrowIfCancellationRequested();
-
-            var parseSpan = transaction.StartChild("parser.players", $"Parse {CurrentProtocol} player buffer");
             List<PlayerModel> currentPlayers = CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? ReforgerResponseParser.ParsePlayers(rawResponse)
                 : BattlEyeResponseParser.ParsePlayers(rawResponse);
-            parseSpan.Finish(SpanStatus.Ok);
 
-            queryToken.ThrowIfCancellationRequested();
-
-            var dbSpan = transaction.StartChild("db.sqlite.record", "Record seen active players");
-            await PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol);
-            dbSpan.Finish(SpanStatus.Ok);
-
-            queryToken.ThrowIfCancellationRequested();
+            _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol);
 
             lock (_playersLock)
             {
@@ -648,8 +686,6 @@ public sealed class RconService : IRconService
                         var key = $"{p.Id}_{p.Name.Trim()}";
                         _recentlyAnnouncedJoins[key] = Stopwatch.GetTimestamp();
                     }
-
-                    AppLogger.Info($"[RconService] Baseline player snapshot initialized with {currentPlayers.Count} player(s).");
                 }
                 else
                 {
@@ -666,32 +702,26 @@ public sealed class RconService : IRconService
                     _lastKnownPlayers.Clear();
                     _lastKnownPlayers.AddRange(currentPlayers);
                 }
+
+                _isInitialConnectPhase = false;
             }
 
             sw.Stop();
-            AppLogger.Info($"[RconService:Timing] Player query completed in {sw.ElapsedMilliseconds} ms (Total Players: {currentPlayers.Count}).");
-
-            op.Complete("PlayerCount", currentPlayers.Count);
-            transaction.Finish(SpanStatus.Ok);
-
-            SentrySdk.Metrics.EmitGauge("rcon_online_players", currentPlayers.Count, MeasurementUnit.None,
-            [
-                new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-            ]);
-
+            AppLogger.Debug($"[RconService:Timing] Player query completed in {sw.ElapsedMilliseconds} ms (Total Players: {currentPlayers.Count}).");
             return currentPlayers;
         }
         catch (OperationCanceledException)
         {
-            op.Cancel();
-            transaction.Finish(SpanStatus.Cancelled);
-            AppLogger.Debug("[RconService] In-flight GetPlayers query was cancelled.");
             return [];
         }
         catch (SocketException sockEx)
         {
-            transaction.Finish(SpanStatus.Unavailable);
-            AppLogger.Error($"[RconService] Socket error querying players: {sockEx.SocketErrorCode}", sockEx.Demystify());
+            AppLogger.Error($"[RconService] Socket error during player query: {sockEx.SocketErrorCode}", sockEx);
+            return [];
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[RconService] Error querying players: {ex.Message}", ex);
             return [];
         }
     }
@@ -700,54 +730,32 @@ public sealed class RconService : IRconService
     {
         if (_client is not { Connected: true }) return [];
 
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var queryToken = linkedCts.Token;
-
         var sw = Stopwatch.StartNew();
-        var transaction = SentrySdk.StartTransaction("GetBans", "rcon.query.bans");
-        using var op = Operation.Begin("Query server bans ({Protocol})", CurrentProtocol);
         try
         {
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#ban list" : "bans";
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(1.0), cancellationToken).ConfigureAwait(false);
 
-            AppLogger.Debug($"[RconService:Timing] Fetching ban list via '{command}'...");
-
-            var networkSpan = transaction.StartChild("network.rcon.command", $"Execute '{command}'");
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(4.0), queryToken);
-            networkSpan.Finish(SpanStatus.Ok);
-
-            queryToken.ThrowIfCancellationRequested();
-
-            var parseSpan = transaction.StartChild("parser.bans", $"Parse {CurrentProtocol} ban buffer");
             var bans = CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? ReforgerResponseParser.ParseBans(rawResponse)
                 : BattlEyeResponseParser.ParseBans(rawResponse);
-            parseSpan.Finish(SpanStatus.Ok);
+
             sw.Stop();
-
-            AppLogger.Info($"[RconService:Timing] Ban query completed in {sw.ElapsedMilliseconds} ms (Total Bans: {bans.Count}).");
-
-            op.Complete("BanCount", bans.Count);
-            transaction.Finish(SpanStatus.Ok);
-
-            SentrySdk.Metrics.EmitGauge("rcon_active_bans", bans.Count, MeasurementUnit.None,
-            [
-                new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-            ]);
-
+            AppLogger.Debug($"[RconService:Timing] Ban query completed in {sw.ElapsedMilliseconds} ms (Total Bans: {bans.Count}).");
             return bans;
         }
         catch (OperationCanceledException)
         {
-            op.Cancel();
-            transaction.Finish(SpanStatus.Cancelled);
-            AppLogger.Debug("[RconService] In-flight GetBans query was cancelled.");
             return [];
         }
         catch (SocketException sockEx)
         {
-            transaction.Finish(SpanStatus.Unavailable);
-            AppLogger.Error($"[RconService] Socket error querying bans: {sockEx.SocketErrorCode}", sockEx.Demystify());
+            AppLogger.Error($"[RconService] Socket error during ban query: {sockEx.SocketErrorCode}", sockEx);
+            return [];
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[RconService] Error querying bans: {ex.Message}", ex);
             return [];
         }
     }
@@ -756,18 +764,23 @@ public sealed class RconService : IRconService
     {
         if (_client is not { Connected: true }) return [];
 
-        var transaction = SentrySdk.StartTransaction("GetAdmins", "rcon.query.admins");
         try
         {
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("admins", TimeSpan.FromSeconds(3.0), cancellationToken);
-            var admins = BattlEyeResponseParser.ParseAdmins(rawResponse);
-            transaction.Finish(SpanStatus.Ok);
-            return admins;
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("admins", TimeSpan.FromSeconds(0.8), cancellationToken).ConfigureAwait(false);
+            return BattlEyeResponseParser.ParseAdmins(rawResponse);
+        }
+        catch (OperationCanceledException)
+        {
+            return [];
+        }
+        catch (SocketException sockEx)
+        {
+            AppLogger.Error($"[RconService] Socket error querying admins: {sockEx.SocketErrorCode}", sockEx);
+            return [];
         }
         catch (Exception ex)
         {
-            transaction.Finish(SpanStatus.UnknownError);
-            AppLogger.Error($"[RconService] Failed querying connected admins: {ex.Message}", ex.Demystify());
+            AppLogger.Error($"[RconService] Failed querying connected admins: {ex.Message}", ex);
             return [];
         }
     }
@@ -784,31 +797,18 @@ public sealed class RconService : IRconService
     {
         ArgumentNullException.ThrowIfNull(player);
 
-        var transaction = SentrySdk.StartTransaction("KickPlayer", "rcon.moderation.kick");
         string cleanReason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
         string cmd = BuildKickCommand(player.Id, cleanReason, CurrentProtocol);
 
-        SentrySdk.Metrics.EmitCounter("player_kicks", 1,
-        [
-            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-        ]);
-        AppLogger.Info($"[RconService] Executing kick command for '{player.Name}' (ID: #{player.Id})...");
-
-        string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
-
-        bool isSuccess = VerifyModerationSuccess(response, ["kicked!", "Admin Kick", ProcessingCommandToken]);
-        if (isSuccess)
+        AppLogger.TrackEvent("moderation_kick", new Dictionary<string, object>
         {
-            AppLogger.Info($"[RconService] Server confirmed kick for '{player.Name}'.");
-            transaction.Finish(SpanStatus.Ok);
-        }
-        else
-        {
-            AppLogger.Warn($"[RconService] Kick command for '{player.Name}' returned unverified response: '{response}'.");
-            transaction.Finish(SpanStatus.UnknownError);
-        }
+            [ProtocolMetricKey] = CurrentProtocol.ToString(),
+            ["player_id"] = player.Id,
+            ["has_reason"] = !string.IsNullOrEmpty(cleanReason)
+        });
 
-        return isSuccess;
+        string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
+        return VerifyModerationSuccess(response, ["kicked!", "Admin Kick", ProcessingCommandToken]);
     }
 
     public Task<bool> BanPlayerAsync(PlayerModel player, long durationSeconds, string reason, CancellationToken cancellationToken = default)
@@ -841,42 +841,36 @@ public sealed class RconService : IRconService
     {
         ArgumentNullException.ThrowIfNull(player);
 
-        var transaction = SentrySdk.StartTransaction("BanPlayer", "rcon.moderation.ban");
         long beMinutes = durationSeconds <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(durationSeconds / 60.0));
         string cleanReason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
 
-        SentrySdk.Metrics.EmitCounter("player_bans", 1,
-        [
-            new KeyValuePair<string, object>("permanent", (durationSeconds <= 0).ToString(CultureInfo.InvariantCulture)),
-            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-        ]);
+        AppLogger.TrackEvent("moderation_ban", new Dictionary<string, object>
+        {
+            [ProtocolMetricKey] = CurrentProtocol.ToString(),
+            ["duration_seconds"] = durationSeconds,
+            ["is_permanent"] = durationSeconds <= 0,
+            ["ban_ip"] = banIp
+        });
 
         if (CurrentProtocol == RconProtocol.ReforgerBuiltIn)
         {
             string cmd = BuildReforgerBanCommand(player.Id, durationSeconds, cleanReason);
-            AppLogger.Info($"[RconService] Executing Reforger ban for '{player.Name}' (Duration: {durationSeconds}s)...");
-            string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
-            bool verified = VerifyModerationSuccess(response, ["ban created!", "banned!"]);
-            transaction.Finish(verified ? SpanStatus.Ok : SpanStatus.UnknownError);
-            return verified;
+            string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
+            return VerifyModerationSuccess(response, ["ban created!", "banned!"]);
         }
 
         string beCmd = BuildBattlEyeBanCommand(player.Id, beMinutes, cleanReason);
-        AppLogger.Info($"[RconService] Executing BattlEye player ban for '{player.Name}' (ID: #{player.Id}, Minutes: {beMinutes})...");
-        string beResponse = await ExecuteCommandWithAggregateResponseAsync(beCmd, TimeSpan.FromSeconds(3.5), cancellationToken);
-
+        string beResponse = await ExecuteCommandWithAggregateResponseAsync(beCmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
         bool banSuccess = VerifyModerationSuccess(beResponse, ["Admin Ban", "kicked by BattlEye"]);
 
         if (banIp && !string.IsNullOrWhiteSpace(player.Ip) && !player.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) && IPAddress.TryParse(player.Ip, out _))
         {
             string addBanIpCmd = BuildBattlEyeAddBanIpCommand(player.Ip, beMinutes, cleanReason);
-            AppLogger.Info($"[RconService] Executing supplementary BattlEye IP ban for '{player.Ip}'...");
-            await SendCommandAsync(addBanIpCmd);
-            await Task.Delay(100, cancellationToken);
-            await SendCommandAsync("loadBans");
+            await SendCommandAsync(addBanIpCmd).ConfigureAwait(false);
+            await Task.Delay(30, cancellationToken).ConfigureAwait(false);
+            await SendCommandAsync("loadBans").ConfigureAwait(false);
         }
 
-        transaction.Finish(banSuccess ? SpanStatus.Ok : SpanStatus.UnknownError);
         return banSuccess;
     }
 
@@ -884,16 +878,15 @@ public sealed class RconService : IRconService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(identity);
 
-        var transaction = SentrySdk.StartTransaction("OfflineBan", "rcon.moderation.offline_ban");
         long beMinutes = durationSeconds <= 0 ? 0 : Math.Max(1, (long)Math.Ceiling(durationSeconds / 60.0));
         string cleanReason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
 
-        SentrySdk.Metrics.EmitCounter("offline_bans", 1,
-        [
-            new KeyValuePair<string, object>("is_ip", isIp.ToString(CultureInfo.InvariantCulture)),
-            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-        ]);
-        AppLogger.Info($"[RconService] Executing offline ban command for '{identity}' (Duration: {durationSeconds}s)...");
+        AppLogger.TrackEvent("moderation_offline_ban", new Dictionary<string, object>
+        {
+            [ProtocolMetricKey] = CurrentProtocol.ToString(),
+            ["is_ip"] = isIp,
+            ["duration_seconds"] = durationSeconds
+        });
 
         if (CurrentProtocol == RconProtocol.ReforgerBuiltIn)
         {
@@ -901,20 +894,17 @@ public sealed class RconService : IRconService
                 ? $"#ban create {identity} {durationSeconds}"
                 : $"#ban create {identity} {durationSeconds} {cleanReason}";
 
-            string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
-            bool verified = VerifyModerationSuccess(response, ["ban created!", "banned!"]);
-            transaction.Finish(verified ? SpanStatus.Ok : SpanStatus.UnknownError);
-            return verified;
+            string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
+            return VerifyModerationSuccess(response, ["ban created!", "banned!"]);
         }
 
         string beAddCmd = string.IsNullOrEmpty(cleanReason)
             ? $"addBan {identity} {beMinutes}"
             : $"addBan {identity} {beMinutes} {cleanReason}";
 
-        await SendCommandAsync(beAddCmd);
-        await Task.Delay(100, cancellationToken);
-        await SendCommandAsync("loadBans");
-        transaction.Finish(SpanStatus.Ok);
+        await SendCommandAsync(beAddCmd).ConfigureAwait(false);
+        await Task.Delay(30, cancellationToken).ConfigureAwait(false);
+        await SendCommandAsync("loadBans").ConfigureAwait(false);
         return true;
     }
 
@@ -922,39 +912,26 @@ public sealed class RconService : IRconService
     {
         ArgumentNullException.ThrowIfNull(ban);
 
-        var transaction = SentrySdk.StartTransaction("RemoveBan", "rcon.moderation.remove_ban");
         string cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn
             ? $"#ban remove {ban.IdentityId}"
             : $"removeBan {ban.BanNumber}";
 
-        SentrySdk.Metrics.EmitCounter("ban_removals", 1,
-        [
-            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-        ]);
-        AppLogger.Info($"[RconService] Executing ban removal for '{ban.IdentityId}' (#{ban.BanNumber})...");
-        string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(3.5), cancellationToken);
+        AppLogger.TrackEvent("moderation_remove_ban", new Dictionary<string, object>
+        {
+            [ProtocolMetricKey] = CurrentProtocol.ToString(),
+            ["ban_number"] = ban.BanNumber
+        });
+
+        string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
 
         if (CurrentProtocol == RconProtocol.BattlEye)
         {
-            await Task.Delay(100, cancellationToken);
-            await SendCommandAsync("writeBans");
-            transaction.Finish(SpanStatus.Ok);
+            await Task.Delay(30, cancellationToken).ConfigureAwait(false);
+            await SendCommandAsync("writeBans").ConfigureAwait(false);
             return true;
         }
 
-        bool isSuccess = VerifyModerationSuccess(response, ["ban removed!"]);
-        if (isSuccess)
-        {
-            AppLogger.Info($"[RconService] Server confirmed ban removal for '{ban.IdentityId}'.");
-            transaction.Finish(SpanStatus.Ok);
-        }
-        else
-        {
-            AppLogger.Warn($"[RconService] Ban removal for '{ban.IdentityId}' returned unverified response: '{response}'.");
-            transaction.Finish(SpanStatus.UnknownError);
-        }
-
-        return isSuccess;
+        return VerifyModerationSuccess(response, ["ban removed!"]);
     }
 
     private static bool VerifyModerationSuccess(string response, string[] expectedTokens)
@@ -986,10 +963,11 @@ public sealed class RconService : IRconService
             return Task.CompletedTask;
         }
 
-        SentrySdk.Metrics.EmitCounter("rcon_commands_dispatched", 1,
-        [
-            new KeyValuePair<string, object>(ProtocolMetricKey, CurrentProtocol.ToString())
-        ]);
+        AppLogger.TrackEvent("rcon_command_dispatched", new Dictionary<string, object>
+        {
+            [ProtocolMetricKey] = CurrentProtocol.ToString(),
+            ["command_head"] = rawCommand.Split(' ')[0]
+        });
 
         RaiseOutputReceived($"[RCON OUT] {rawCommand}");
         _client.SendCommand(rawCommand);
@@ -1022,77 +1000,67 @@ public sealed class RconService : IRconService
     {
         if (_client == null) return string.Empty;
 
-        await _commandExecutionLock.WaitAsync(cancellationToken);
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+        RaiseOutputReceived($"[RCON OUT] {command}");
+
+        string directResponse = await _client.SendCommandWithResponseAsync(command, TimeSpan.FromMilliseconds(400), cancellationToken).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(directResponse) && !directResponse.StartsWith('\0'))
+        {
+            AppLogger.Debug($"[RconService:Timing] Direct response received for '{command}' ({directResponse.Length} chars).");
+            return directResponse;
+        }
+
+        ResetAggregateBuffer();
+
+        bool isBanList = command.StartsWith("#ban list", StringComparison.OrdinalIgnoreCase) || command.Equals("bans", StringComparison.OrdinalIgnoreCase) || command.Equals("ban list", StringComparison.OrdinalIgnoreCase);
+        bool isPlayerList = command.StartsWith("#players", StringComparison.OrdinalIgnoreCase) || command.Equals("players", StringComparison.OrdinalIgnoreCase);
+        bool isKick = command.StartsWith("#kick", StringComparison.OrdinalIgnoreCase) || command.StartsWith("kick", StringComparison.OrdinalIgnoreCase);
+        bool isBanCreate = command.StartsWith("#ban create", StringComparison.OrdinalIgnoreCase) || command.StartsWith("ban ", StringComparison.OrdinalIgnoreCase) || command.StartsWith("addBan", StringComparison.OrdinalIgnoreCase);
+        bool isBanRemove = command.StartsWith("#ban remove", StringComparison.OrdinalIgnoreCase) || command.StartsWith("removeBan", StringComparison.OrdinalIgnoreCase);
+
+        var quietThreshold = TimeSpan.FromMilliseconds(20);
+        var timeoutLimit = DateTime.UtcNow.Add(maxTimeout);
+        var startTime = DateTime.UtcNow;
+
+        while (DateTime.UtcNow < timeoutLimit)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RaiseOutputReceived($"[RCON OUT] {command}");
-
-            string directResponse = await _client.SendCommandWithResponseAsync(command, TimeSpan.FromMilliseconds(400), cancellationToken);
-
-            if (CurrentProtocol == RconProtocol.BattlEye && !string.IsNullOrWhiteSpace(directResponse) && !directResponse.StartsWith('\0'))
-            {
-                AppLogger.Debug($"[RconService:Timing] BattlEye direct response received for '{command}'.");
-                return directResponse;
-            }
-
-            ResetAggregateBuffer();
-
-            bool isBanList = command.StartsWith("#ban list", StringComparison.OrdinalIgnoreCase) || command.Equals("bans", StringComparison.OrdinalIgnoreCase) || command.Equals("ban list", StringComparison.OrdinalIgnoreCase);
-            bool isPlayerList = command.StartsWith("#players", StringComparison.OrdinalIgnoreCase) || command.Equals("players", StringComparison.OrdinalIgnoreCase);
-            bool isKick = command.StartsWith("#kick", StringComparison.OrdinalIgnoreCase) || command.StartsWith("kick", StringComparison.OrdinalIgnoreCase);
-            bool isBanCreate = command.StartsWith("#ban create", StringComparison.OrdinalIgnoreCase) || command.StartsWith("ban ", StringComparison.OrdinalIgnoreCase) || command.StartsWith("addBan", StringComparison.OrdinalIgnoreCase);
-            bool isBanRemove = command.StartsWith("#ban remove", StringComparison.OrdinalIgnoreCase) || command.StartsWith("removeBan", StringComparison.OrdinalIgnoreCase);
-
-            var quietThreshold = TimeSpan.FromMilliseconds(400);
-            var timeoutLimit = DateTime.UtcNow.Add(maxTimeout);
-            var startTime = DateTime.UtcNow;
-
-            while (DateTime.UtcNow < timeoutLimit)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(20, cancellationToken);
-
-                lock (_bufferLock)
-                {
-                    var timeSinceLastChunk = DateTime.UtcNow - _lastMessageChunkUtc;
-                    var chunksCount = _messageChunksCount;
-                    var currentText = _aggregatedBuffer.ToString();
-
-                    if (CheckUniversalErrorTokens(command, currentText))
-                    {
-                        break;
-                    }
-
-                    if (CheckCommandSpecificTerminalTokens(command, isBanList, isKick, isBanCreate, isBanRemove, currentText))
-                    {
-                        break;
-                    }
-
-                    bool hasActualPayload = DeterminePayloadPresence(isPlayerList, isBanList, currentText, chunksCount);
-
-                    if (hasActualPayload && timeSinceLastChunk >= quietThreshold)
-                    {
-                        AppLogger.Debug($"[RconService:Timing] Stream collection completed: {chunksCount} chunk(s) collected for '{command}' (Quiet window: {timeSinceLastChunk.TotalMilliseconds:F0} ms).");
-                        break;
-                    }
-
-                    if (chunksCount == 0 && (DateTime.UtcNow - startTime).TotalMilliseconds >= 1200)
-                    {
-                        AppLogger.Debug($"[RconService:Timing] No server chunks received for '{command}' within initial 1200ms window.");
-                        break;
-                    }
-                }
-            }
+            await Task.Delay(5, cancellationToken).ConfigureAwait(false);
 
             lock (_bufferLock)
             {
-                return _aggregatedBuffer.ToString();
+                var timeSinceLastChunk = DateTime.UtcNow - _lastMessageChunkUtc;
+                var chunksCount = _messageChunksCount;
+                var currentText = _aggregatedBuffer.ToString();
+
+                if (CheckUniversalErrorTokens(currentText))
+                {
+                    break;
+                }
+
+                if (CheckCommandSpecificTerminalTokens(isBanList, isKick, isBanCreate, isBanRemove, currentText))
+                {
+                    break;
+                }
+
+                bool hasActualPayload = DeterminePayloadPresence(isPlayerList, isBanList, currentText, chunksCount);
+
+                if (hasActualPayload && timeSinceLastChunk >= quietThreshold)
+                {
+                    break;
+                }
+
+                if (chunksCount == 0 && (DateTime.UtcNow - startTime).TotalMilliseconds >= 150)
+                {
+                    break;
+                }
             }
         }
-        finally
+
+        lock (_bufferLock)
         {
-            _commandExecutionLock.Release();
+            return _aggregatedBuffer.ToString();
         }
     }
 
@@ -1106,40 +1074,31 @@ public sealed class RconService : IRconService
         }
     }
 
-    private static bool CheckUniversalErrorTokens(string command, string currentText)
+    private static bool CheckUniversalErrorTokens(string currentText)
     {
-        if (currentText.Contains("unknown command", StringComparison.OrdinalIgnoreCase) ||
-            currentText.Contains("Help for ban command.", StringComparison.OrdinalIgnoreCase))
-        {
-            AppLogger.Debug($"[RconService:Timing] Terminal error/help token observed for '{command}'. Completing stream.");
-            return true;
-        }
-        return false;
+        return currentText.Contains("unknown command", StringComparison.OrdinalIgnoreCase) ||
+               currentText.Contains("Help for ban command.", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool CheckCommandSpecificTerminalTokens(string command, bool isBanList, bool isKick, bool isBanCreate, bool isBanRemove, string currentText)
+    private static bool CheckCommandSpecificTerminalTokens(bool isBanList, bool isKick, bool isBanCreate, bool isBanRemove, string currentText)
     {
-        if (isBanList && currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase))
+        if (isBanList && (currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) || currentText.Contains("IP Address] [Minutes left] [Reason]", StringComparison.OrdinalIgnoreCase)))
         {
-            AppLogger.Debug($"[RconService:Timing] Empty ban list token detected for '{command}'.");
             return true;
         }
 
         if (isKick && (currentText.Contains("kicked!", StringComparison.OrdinalIgnoreCase) || currentText.Contains("Admin Kick", StringComparison.OrdinalIgnoreCase) || currentText.Contains("not found", StringComparison.OrdinalIgnoreCase)))
         {
-            AppLogger.Debug($"[RconService:Timing] Kick completion token detected for '{command}'.");
             return true;
         }
 
         if (isBanCreate && (currentText.Contains("banned!", StringComparison.OrdinalIgnoreCase) || currentText.Contains("Admin Ban", StringComparison.OrdinalIgnoreCase) || currentText.Contains("Ban created!", StringComparison.OrdinalIgnoreCase) || currentText.Contains("invalid", StringComparison.OrdinalIgnoreCase)))
         {
-            AppLogger.Debug($"[RconService:Timing] Ban creation token detected for '{command}'.");
             return true;
         }
 
         if (isBanRemove && (currentText.Contains("Ban removed!", StringComparison.OrdinalIgnoreCase) || currentText.Contains("not found", StringComparison.OrdinalIgnoreCase)))
         {
-            AppLogger.Debug($"[RconService:Timing] Ban removal token detected for '{command}'.");
             return true;
         }
 
@@ -1150,12 +1109,12 @@ public sealed class RconService : IRconService
     {
         if (isPlayerList)
         {
-            return currentText.Contains("Players on server:", StringComparison.OrdinalIgnoreCase);
+            return currentText.Contains("Players on server:", StringComparison.OrdinalIgnoreCase) || currentText.Contains("players in total", StringComparison.OrdinalIgnoreCase);
         }
 
         if (isBanList)
         {
-            return currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) || currentText.Contains("GUID Bans:", StringComparison.OrdinalIgnoreCase);
+            return currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) || currentText.Contains("IP Bans:", StringComparison.OrdinalIgnoreCase);
         }
 
         return chunksCount > 0;
@@ -1172,6 +1131,5 @@ public sealed class RconService : IRconService
         _client = null;
 
         _icmpPingSender.Dispose();
-        _commandExecutionLock.Dispose();
     }
 }

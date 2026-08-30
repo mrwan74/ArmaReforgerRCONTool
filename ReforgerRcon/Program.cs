@@ -1,11 +1,12 @@
+using Aptabase.Avalonia;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Logging;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
 using Sentry;
-using Sentry.Profiling;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -14,6 +15,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using TimeZoneConverter;
 
 namespace ReforgerRcon;
 
@@ -32,6 +34,20 @@ internal static partial class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                SQLitePCL.Batteries_V2.Init();
+                _ = PlayerDatabaseStorageService.InitializeAsync();
+                _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Program] Background warmup notice: {ex.Message}");
+            }
+        }, CancellationToken.None);
+
         if (!TryAcquireDirectoryLock(out var instanceLockHandle))
         {
             var runningDir = AppContext.BaseDirectory;
@@ -60,62 +76,78 @@ internal static partial class Program
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             {
                 var ex = e.ExceptionObject as Exception ?? new InvalidOperationException(string.Create(CultureInfo.InvariantCulture, $"Non-exception domain object: {e.ExceptionObject}"));
+                AppLogger.Fatal($"[AppDomain.UnhandledException] Terminating={e.IsTerminating}: {ex.Message}", ex);
                 HandleEmergencyStartupCrash("AppDomain.UnhandledException", ex, e.IsTerminating);
             };
 
             TaskScheduler.UnobservedTaskException += (_, e) =>
             {
+                AppLogger.Error("[TaskScheduler.UnobservedTaskException] Unobserved background task exception captured on finalizer thread.", e.Exception);
                 HandleEmergencyStartupCrash("TaskScheduler.UnobservedTaskException", e.Exception, isTerminating: false);
                 e.SetObserved();
             };
 
             var dsn = AppLogger.ResolveSentryDsn();
-            var telemetryAllowed = AppSettings.IsCrashReportingEnabled();
             IDisposable? sentrySdk = null;
 
-            if (!string.IsNullOrWhiteSpace(dsn) && telemetryAllowed)
+            if (!string.IsNullOrWhiteSpace(dsn))
             {
-                sentrySdk = SentrySdk.Init(options =>
+                try
                 {
-                    options.Dsn = dsn;
-                    options.Debug = false;
-                    options.AutoSessionTracking = true;
-                    options.TracesSampleRate = 1.0;
-                    options.ProfilesSampleRate = 1.0;
-                    options.AddIntegration(new ProfilingIntegration(TimeSpan.FromMilliseconds(500)));
-                    options.EnableLogs = true;
-                    options.AttachStacktrace = true;
-                    options.SendDefaultPii = false;
-                    options.Environment = "production";
-                    options.Release = "ReforgerRcon@0.8.49";
-
-                    // Pre-Send PII & Privacy Enforcement Hook
-                    options.SetBeforeSend((sentryEvent, _) =>
+                    sentrySdk = SentrySdk.Init(options =>
                     {
-                        if (!AppSettings.IsCrashReportingEnabled())
-                        {
-                            return null; // Drop event if user opted out in Settings
-                        }
+                        options.Dsn = dsn;
+                        options.Debug = false;
+                        options.AutoSessionTracking = true;
+                        options.TracesSampleRate = 0.2;
+                        options.EnableLogs = true;
+                        options.AttachStacktrace = true;
+                        options.SendDefaultPii = false;
+                        options.Environment = "production";
+                        options.Release = "ReforgerRcon@0.8.53";
 
-                        if (sentryEvent.Message?.Formatted != null)
+                        options.SetBeforeSend((sentryEvent, _) =>
                         {
-                            sentryEvent.Message = AppLogger.SanitizeSensitiveData(sentryEvent.Message.Formatted);
-                        }
+                            if (!AppSettings.IsCrashReportingEnabled())
+                            {
+                                return null;
+                            }
 
-                        return sentryEvent;
+                            if (sentryEvent.Message?.Formatted != null)
+                            {
+                                sentryEvent.Message = AppLogger.SanitizeSensitiveData(sentryEvent.Message.Formatted);
+                            }
+
+                            return sentryEvent;
+                        });
+
+                        options.SetBeforeSendTransaction((transaction, _) =>
+                        {
+                            if (!AppSettings.IsCrashReportingEnabled())
+                            {
+                                return null;
+                            }
+
+                            return transaction;
+                        });
                     });
 
-                    // Pre-Send Transaction Trace Privacy Hook
-                    options.SetBeforeSendTransaction((transaction, _) =>
+                    SentrySdk.ConfigureScope(scope =>
                     {
-                        if (!AppSettings.IsCrashReportingEnabled())
+                        scope.User = new SentryUser
                         {
-                            return null; // Drop transaction if user opted out in Settings
-                        }
-
-                        return transaction;
+                            Id = AppLogger.InstallationId
+                        };
+                        scope.SetTag("installation_id", AppLogger.InstallationId);
                     });
-                });
+
+                    AppLogger.Info($"[Program] Sentry SDK initialized for installation {AppLogger.InstallationId} (Live Telemetry Allowed: {AppSettings.IsCrashReportingEnabled()}).");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"[Program] Sentry SDK initialization skipped: {ex.Message}", ex);
+                    sentrySdk = null;
+                }
             }
 
             try
@@ -127,6 +159,24 @@ internal static partial class Program
 
                     BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
 
+                    if (AptabaseExtensions.IsInitialized)
+                    {
+                        try
+                        {
+                            var disposeTask = AptabaseExtensions.Instance.DisposeAsync().AsTask();
+                            Task.WaitAny([disposeTask], 300);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Clean cancellation on exit
+                        }
+                        catch (Exception aptaEx)
+                        {
+                            AppLogger.Trace($"[Program] Aptabase shutdown flush notice: {aptaEx.Message}");
+                        }
+                    }
+
+                    GeoIpService.Shutdown();
                     AppLogger.Info("Process shutting down cleanly. Flushing telemetry and log buffers.");
                     AppLogger.Shutdown();
                 }
@@ -149,7 +199,10 @@ internal static partial class Program
                 .ToUpperInvariant();
 
             var directoryHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedDirectory)));
-            var mutexName = $"Local\\ReforgerRcon_DirLock_{directoryHash}";
+
+            var mutexName = OperatingSystem.IsWindows()
+                ? $"Local\\ReforgerRcon_DirLock_{directoryHash}"
+                : $"ReforgerRcon_DirLock_{directoryHash}";
 
             _directoryMutex = new Mutex(true, mutexName, out bool createdNew);
             if (!createdNew)
@@ -169,14 +222,22 @@ internal static partial class Program
             lockHandle = new DirectoryLockDisposable(_directoryMutex, _directoryLockStream);
             return true;
         }
-        catch
+        catch (IOException ioEx)
         {
+            Debug.WriteLine($"[Program] Lock acquisition IO collision: {ioEx.Message}");
             _directoryLockStream?.Dispose();
             _directoryLockStream = null;
-
             _directoryMutex?.Dispose();
             _directoryMutex = null;
-
+            return false;
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            Debug.WriteLine($"[Program] Lock acquisition permission error: {authEx.Message}");
+            _directoryLockStream?.Dispose();
+            _directoryLockStream = null;
+            _directoryMutex?.Dispose();
+            _directoryMutex = null;
             return false;
         }
     }
@@ -186,6 +247,55 @@ internal static partial class Program
         var builder = AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont();
+
+        var aptabaseKey = AppLogger.ResolveAptabaseAppKey();
+        if (!string.IsNullOrWhiteSpace(aptabaseKey))
+        {
+            try
+            {
+                var storagePath = Path.Combine(AppContext.BaseDirectory, "appdata", "analytics");
+                if (!Directory.Exists(storagePath))
+                {
+                    Directory.CreateDirectory(storagePath);
+                }
+
+                builder.UseAptabase(aptabaseKey, new AptabaseOptions
+                {
+                    EnablePersistence = true,
+                    EnableCrashReporting = true,
+                    CaptureAvaloniaFrameworkLogs = true,
+                    AvaloniaLogEventLevel = LogEventLevel.Warning,
+                    StoragePath = storagePath,
+                    SuppressUIThreadCrashes = true,
+                    ConsentCheck = AppSettings.IsCrashReportingEnabled,
+                    ContextInjector = () =>
+                    {
+                        var settings = AppSettings.LoadFromDisk();
+                        return new Dictionary<string, object>
+                        {
+                            ["installation_id"] = AppLogger.InstallationId,
+                            ["theme_mode"] = settings.ThemeMode,
+                            ["glass_enabled"] = settings.EnableWindowGlass,
+                            ["geoip_city_ready"] = GeoIpService.IsCityDbLoaded,
+                            ["geoip_country_ready"] = GeoIpService.IsCountryDbLoaded
+                        };
+                    },
+                    OnUserFacingNotification = (_, _, fatal) =>
+                    {
+                        if (fatal)
+                        {
+                            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+                        }
+                    }
+                });
+
+                AppLogger.Info($"[Program] Aptabase SDK attached to AppBuilder (Key: {aptabaseKey[..7]}..., Persistence: Active).");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"[Program] Aptabase initialization warning: {ex.Message}", ex);
+            }
+        }
 
         Logger.Sink = new AvaloniaLogSink(LogEventLevel.Warning);
         return builder;
@@ -204,7 +314,7 @@ internal static partial class Program
                 var crashDir = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
                 Directory.CreateDirectory(crashDir);
                 var crashFile = Path.Combine(crashDir, string.Create(CultureInfo.InvariantCulture, $"emergency_crash_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt"));
-                var report = string.Create(CultureInfo.InvariantCulture, $"FATAL STARTUP CRASH\nOS: {RuntimeInformation.OSDescription}\nArchitecture: {RuntimeInformation.ProcessArchitecture}\nSource: {source}\nException: {ex.GetType().FullName}: {ex.Message}\nStackTrace:\n{ex.StackTrace}\n\nHandler Fault: {fallbackEx.Message}");
+                var report = string.Create(CultureInfo.InvariantCulture, $"FATAL STARTUP CRASH\nInstallation ID: {AppLogger.InstallationId}\nOS: {RuntimeInformation.OSDescription}\nArchitecture: {RuntimeInformation.ProcessArchitecture}\nSource: {source}\nException: {ex.GetType().FullName}: {ex.Message}\nStackTrace:\n{ex.StackTrace}\n\nHandler Fault: {fallbackEx.Message}");
                 File.WriteAllText(crashFile, report);
 
                 if (OperatingSystem.IsWindows())
@@ -216,9 +326,10 @@ internal static partial class Program
                     Console.ForegroundColor = ConsoleColor.Red;
                     Console.Error.WriteLine(LogSeparatorLine);
                     Console.Error.WriteLine("FATAL APPLICATION STARTUP ERROR");
-                    Console.Error.WriteLine($"Source:    {source}");
-                    Console.Error.WriteLine($"Exception: {ex.GetType().FullName}: {ex.Message}");
-                    Console.Error.WriteLine($"Report:    {crashFile}");
+                    Console.Error.WriteLine($"Installation ID: {AppLogger.InstallationId}");
+                    Console.Error.WriteLine($"Source:          {source}");
+                    Console.Error.WriteLine($"Exception:       {ex.GetType().FullName}: {ex.Message}");
+                    Console.Error.WriteLine($"Report:          {crashFile}");
                     Console.Error.WriteLine(LogSeparatorLine);
                     Console.ResetColor();
                 }

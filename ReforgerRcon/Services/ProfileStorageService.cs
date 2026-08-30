@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text.Json;
@@ -16,93 +15,108 @@ public static class ProfileStorageService
     private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
     private static readonly string FilePath = Path.Combine(StorageDirectory, "profiles.json");
     private static readonly string TempFilePath = Path.Combine(StorageDirectory, "profiles.json.tmp");
-    private static readonly SemaphoreSlim SaveSemaphore = new(1, 1);
+    private static readonly Lock SyncLock = new();
+    private static List<ServerProfile>? _cachedProfiles;
 
-    public static async Task<List<ServerProfile>> LoadProfilesAsync()
+    public static List<ServerProfile> LoadProfilesFast()
     {
-        var sw = Stopwatch.StartNew();
-        try
+        lock (SyncLock)
         {
+            if (_cachedProfiles != null)
+            {
+                return _cachedProfiles;
+            }
+
             if (!File.Exists(FilePath))
             {
-                AppLogger.Info("[ProfileStorageService] No profile configuration file found. Generating default connection profiles.");
                 var defaults = GetDefaultProfiles();
-                await SaveProfilesAsync(defaults);
-                sw.Stop();
+                _cachedProfiles = defaults;
+                SaveProfilesFast(defaults);
                 return defaults;
             }
 
-            var json = await File.ReadAllTextAsync(FilePath);
-            var profiles = JsonSerializer.Deserialize<List<ServerProfile>>(json) ?? GetDefaultProfiles();
-            sw.Stop();
-            AppLogger.Info($"[ProfileStorageService] Loaded {profiles.Count} server profile(s) from '{FilePath}' in {sw.ElapsedMilliseconds} ms.");
-            return profiles;
-        }
-        catch (JsonException jsonEx)
-        {
-            sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Corrupted profiles JSON in '{FilePath}': {jsonEx.Message}. Reverting to defaults.", jsonEx);
-            ToastNotificationService.Instance.ShowWarning("Profile Warning", "Saved profiles were corrupted. Using default configurations.");
-            return GetDefaultProfiles();
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Permission denied accessing profiles file '{FilePath}': {authEx.Message}", authEx);
-            ToastNotificationService.Instance.ShowError("Access Denied", "Unable to read profiles configuration due to OS permissions.");
-            return GetDefaultProfiles();
-        }
-        catch (IOException ioEx)
-        {
-            sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Disk I/O error reading '{FilePath}': {ioEx.Message}", ioEx);
-            ToastNotificationService.Instance.ShowWarning("Disk Error", "Failed reading profiles configuration from disk.");
-            return GetDefaultProfiles();
+            try
+            {
+                var json = File.ReadAllText(FilePath);
+                var profiles = JsonSerializer.Deserialize<List<ServerProfile>>(json, CachedSerializerOptions) ?? GetDefaultProfiles();
+                _cachedProfiles = profiles;
+                return profiles;
+            }
+            catch (JsonException jsonEx)
+            {
+                AppLogger.Error($"[ProfileStorageService] JSON corruption in profiles file '{FilePath}': {jsonEx.Message}. Restoring default profiles.", jsonEx);
+                ToastNotificationService.Instance.ShowWarning("Profiles Corrupted", "Server profiles configuration was invalid. Restored default profiles.");
+                var defaults = GetDefaultProfiles();
+                _cachedProfiles = defaults;
+                SaveProfilesFast(defaults);
+                return defaults;
+            }
+            catch (IOException ioEx)
+            {
+                AppLogger.Error($"[ProfileStorageService] Disk I/O failure reading profiles from '{FilePath}': {ioEx.Message}", ioEx);
+                ToastNotificationService.Instance.ShowError("Profile Load Error", "Unable to read profile configuration from disk.");
+                var defaults = GetDefaultProfiles();
+                _cachedProfiles = defaults;
+                return defaults;
+            }
+            catch (UnauthorizedAccessException authEx)
+            {
+                AppLogger.Error($"[ProfileStorageService] Access denied reading profiles at '{FilePath}': {authEx.Message}", authEx);
+                ToastNotificationService.Instance.ShowError("Access Denied", "Operating system denied read permissions to profile file.");
+                var defaults = GetDefaultProfiles();
+                _cachedProfiles = defaults;
+                return defaults;
+            }
         }
     }
 
-    public static async Task SaveProfilesAsync(List<ServerProfile> profiles)
+    public static Task<List<ServerProfile>> LoadProfilesAsync() => Task.FromResult(LoadProfilesFast());
+
+    public static void SaveProfilesFast(List<ServerProfile> profiles)
     {
         ArgumentNullException.ThrowIfNull(profiles);
 
-        var sw = Stopwatch.StartNew();
-        await SaveSemaphore.WaitAsync();
-        try
+        lock (SyncLock)
         {
-            if (!Directory.Exists(StorageDirectory))
+            _cachedProfiles = profiles;
+            try
             {
-                Directory.CreateDirectory(StorageDirectory);
-                AppLogger.Debug($"[ProfileStorageService] Created storage directory: {StorageDirectory}");
+                if (!Directory.Exists(StorageDirectory))
+                {
+                    Directory.CreateDirectory(StorageDirectory);
+                }
+
+                var json = JsonSerializer.Serialize(profiles, CachedSerializerOptions);
+                File.WriteAllText(TempFilePath, json);
+                if (File.Exists(FilePath))
+                {
+                    File.Delete(FilePath);
+                }
+                File.Move(TempFilePath, FilePath, overwrite: true);
+                AppLogger.Debug($"[ProfileStorageService] Persisted {profiles.Count} server profile(s) atomically.");
             }
-
-            var json = JsonSerializer.Serialize(profiles, CachedSerializerOptions);
-
-            await File.WriteAllTextAsync(TempFilePath, json);
-            if (File.Exists(FilePath))
+            catch (JsonException jsonEx)
             {
-                File.Delete(FilePath);
+                AppLogger.Error($"[ProfileStorageService] Serialization error saving profiles: {jsonEx.Message}", jsonEx);
+                ToastNotificationService.Instance.ShowError("Profile Save Error", "Failed to serialize server profiles.");
             }
-            File.Move(TempFilePath, FilePath, overwrite: true);
+            catch (IOException ioEx)
+            {
+                AppLogger.Error($"[ProfileStorageService] Disk I/O error writing profiles to '{FilePath}': {ioEx.Message}", ioEx);
+                ToastNotificationService.Instance.ShowError("Profile Save Error", "Disk I/O failure while saving server profiles.");
+            }
+            catch (UnauthorizedAccessException authEx)
+            {
+                AppLogger.Error($"[ProfileStorageService] Access denied writing profiles to '{FilePath}': {authEx.Message}", authEx);
+                ToastNotificationService.Instance.ShowError("Access Denied", "Operating system denied write permissions to save profiles.");
+            }
+        }
+    }
 
-            sw.Stop();
-            AppLogger.Debug($"[ProfileStorageService] Persisted {profiles.Count} server profile(s) to '{FilePath}' in {sw.ElapsedMilliseconds} ms.");
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Access denied saving profiles to '{FilePath}': {authEx.Message}", authEx);
-            ToastNotificationService.Instance.ShowError("Profile Save Failed", "Permission denied writing profiles configuration.");
-        }
-        catch (IOException ioEx)
-        {
-            sw.Stop();
-            AppLogger.Error($"[ProfileStorageService] Disk I/O error saving profiles to '{FilePath}': {ioEx.Message}", ioEx);
-            ToastNotificationService.Instance.ShowError("Disk I/O Error", "Could not persist connection profiles: " + ioEx.Message);
-        }
-        finally
-        {
-            SaveSemaphore.Release();
-        }
+    public static Task SaveProfilesAsync(List<ServerProfile> profiles)
+    {
+        SaveProfilesFast(profiles);
+        return Task.CompletedTask;
     }
 
     [SuppressMessage("Security", "S1313:Hardcoded IP address", Justification = "Default localhost profile placeholders")]

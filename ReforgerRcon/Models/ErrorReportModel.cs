@@ -7,6 +7,7 @@ namespace ReforgerRcon.Models;
 public class ErrorReportModel
 {
     public string ErrorId { get; set; } = string.Empty;
+    public string InstallationId { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string ExceptionType { get; set; } = string.Empty;

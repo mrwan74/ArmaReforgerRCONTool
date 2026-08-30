@@ -1,6 +1,5 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:tabs="using:ReforgerRcon.Views.Tabs"
@@ -183,6 +182,9 @@
           </DataTemplate>
           <DataTemplate DataType="{x:Type vm:AdminsDialogViewModel}">
             <dialogs:AdminsDialog />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:GeoIpUpdateDialogViewModel}">
+            <dialogs:GeoIpUpdateDialog />
           </DataTemplate>
         </ContentControl.DataTemplates>
       </ContentControl>

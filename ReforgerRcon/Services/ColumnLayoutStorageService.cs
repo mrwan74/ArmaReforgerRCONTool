@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -31,44 +30,37 @@ public static class ColumnLayoutStorageService
     private static Dictionary<string, Dictionary<string, ColumnState>> _cache = [];
     private static bool _isLoaded;
     private static readonly HashSet<DataGrid> RestoringGrids = [];
+    private static readonly HashSet<DataGrid> BoundGrids = [];
 
     private static void EnsureLoaded()
     {
         if (_isLoaded) return;
         _isLoaded = true;
-        var sw = Stopwatch.StartNew();
+
+        if (!File.Exists(StorageFile))
+        {
+            _cache = GetDefaultColumnMap();
+            return;
+        }
 
         try
         {
-            if (File.Exists(StorageFile))
-            {
-                var json = File.ReadAllText(StorageFile);
-                _cache = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, ColumnState>>>(json) ?? GetDefaultColumnMap();
-                sw.Stop();
-                AppLogger.Info($"[ColumnLayoutStorage] Loaded column layouts from '{StorageFile}' ({_cache.Count} table configurations in {sw.ElapsedMilliseconds} ms).");
-            }
-            else
-            {
-                AppLogger.Info("[ColumnLayoutStorage] No existing column layout file found. Initializing default column dimensions.");
-                _cache = GetDefaultColumnMap();
-            }
+            var json = File.ReadAllText(StorageFile);
+            _cache = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, ColumnState>>>(json, JsonOptions) ?? GetDefaultColumnMap();
         }
         catch (JsonException jsonEx)
         {
-            sw.Stop();
-            AppLogger.Warn($"[ColumnLayoutStorage] Corrupted JSON in '{StorageFile}': {jsonEx.Message}. Reverting to defaults.");
+            AppLogger.Warn($"[ColumnLayoutStorage] JSON deserialization notice for '{StorageFile}': {jsonEx.Message}. Using default columns.", jsonEx);
             _cache = GetDefaultColumnMap();
         }
         catch (IOException ioEx)
         {
-            sw.Stop();
-            AppLogger.Warn($"[ColumnLayoutStorage] Disk I/O error reading '{StorageFile}': {ioEx.Message}. Reverting to defaults.");
+            AppLogger.Warn($"[ColumnLayoutStorage] I/O error reading column configuration: {ioEx.Message}", ioEx);
             _cache = GetDefaultColumnMap();
         }
         catch (UnauthorizedAccessException authEx)
         {
-            sw.Stop();
-            AppLogger.Warn($"[ColumnLayoutStorage] Access denied reading '{StorageFile}': {authEx.Message}. Reverting to defaults.");
+            AppLogger.Warn($"[ColumnLayoutStorage] Permission denied reading column configuration: {authEx.Message}", authEx);
             _cache = GetDefaultColumnMap();
         }
     }
@@ -77,7 +69,7 @@ public static class ColumnLayoutStorageService
     {
         ["PlayersGrid_BattlEye"] = new(StringComparer.OrdinalIgnoreCase)
         {
-            [ColStatusKey] = new() { Width = 95, DisplayIndex = 1 },
+            [ColStatusKey] = new() { Width = 114, DisplayIndex = 1 },
             [ColReforgerIdKey] = new() { Width = 110, DisplayIndex = 2 },
             [ColReforgerNameKey] = new() { Width = 256, DisplayIndex = 3 },
             [ColReforgerUidKey] = new() { Width = 396, DisplayIndex = 4 },
@@ -148,65 +140,38 @@ public static class ColumnLayoutStorageService
 
         if (RestoringGrids.Contains(dataGrid)) return;
 
-        try
+        EnsureLoaded();
+
+        if (!_cache.TryGetValue(gridKey, out var columnMap))
         {
-            EnsureLoaded();
+            columnMap = new Dictionary<string, ColumnState>(StringComparer.OrdinalIgnoreCase);
+            _cache[gridKey] = columnMap;
+        }
 
-            if (!_cache.TryGetValue(gridKey, out var columnMap))
+        foreach (var col in dataGrid.Columns)
+        {
+            var key = GetColumnKey(col);
+            if (key == ColSelectKey) continue;
+
+            double newWidth = ResolveColumnWidth(col);
+            int newIndex = col.DisplayIndex;
+
+            if (columnMap.TryGetValue(key, out var previousState))
             {
-                columnMap = new Dictionary<string, ColumnState>(StringComparer.OrdinalIgnoreCase);
-                _cache[gridKey] = columnMap;
-            }
-
-            var changes = new List<string>();
-
-            foreach (var col in dataGrid.Columns)
-            {
-                var key = GetColumnKey(col);
-                if (key == ColSelectKey) continue;
-
-                double newWidth = ResolveColumnWidth(col);
-                int newIndex = col.DisplayIndex;
-
-                if (columnMap.TryGetValue(key, out var previousState))
-                {
-                    if (Math.Abs(previousState.Width - newWidth) > 0.5)
-                    {
-                        changes.Add($"{key}: {previousState.Width:F1}px -> {newWidth:F1}px");
-                    }
-                    previousState.Width = newWidth;
-                    previousState.DisplayIndex = newIndex;
-                }
-                else
-                {
-                    columnMap[key] = new ColumnState
-                    {
-                        Width = newWidth,
-                        DisplayIndex = newIndex
-                    };
-                    changes.Add($"{key}: New({newWidth:F1}px)");
-                }
-            }
-
-            Save();
-
-            if (changes.Count > 0)
-            {
-                AppLogger.Debug($"[ColumnLayoutStorage] Grid '{gridKey}' layout modified: [{string.Join(", ", changes)}]");
+                previousState.Width = newWidth;
+                previousState.DisplayIndex = newIndex;
             }
             else
             {
-                AppLogger.Trace($"[ColumnLayoutStorage] Saved {columnMap.Count} column layout settings for grid '{gridKey}'.");
+                columnMap[key] = new ColumnState
+                {
+                    Width = newWidth,
+                    DisplayIndex = newIndex
+                };
             }
         }
-        catch (IOException ioEx)
-        {
-            AppLogger.Error($"[ColumnLayoutStorage] Disk I/O error saving layout for grid '{gridKey}': {ioEx.Message}", ioEx);
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            AppLogger.Error($"[ColumnLayoutStorage] Access denied saving layout for grid '{gridKey}': {authEx.Message}", authEx);
-        }
+
+        Save();
     }
 
     private static double ResolveColumnWidth(DataGridColumn col)
@@ -237,11 +202,11 @@ public static class ColumnLayoutStorageService
         }
         catch (IOException ioEx)
         {
-            AppLogger.Error($"[ColumnLayoutStorage] I/O error writing column layout to disk: {ioEx.Message}", ioEx);
+            AppLogger.Error($"[ColumnLayoutStorage] Disk I/O error writing column layout to '{StorageFile}': {ioEx.Message}", ioEx);
         }
         catch (UnauthorizedAccessException authEx)
         {
-            AppLogger.Error($"[ColumnLayoutStorage] Permission error writing column layout to disk: {authEx.Message}", authEx);
+            AppLogger.Error($"[ColumnLayoutStorage] Permission denied saving column layout: {authEx.Message}", authEx);
         }
     }
 
@@ -250,26 +215,17 @@ public static class ColumnLayoutStorageService
         ArgumentNullException.ThrowIfNull(dataGrid);
         ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
 
+        if (BoundGrids.Contains(dataGrid))
+        {
+            RestoreGridState(dataGrid, gridKey);
+            return;
+        }
+
+        BoundGrids.Add(dataGrid);
         EnsureLoaded();
         RestoreGridState(dataGrid, gridKey);
 
-        dataGrid.Loaded += (_, _) => RestoreGridState(dataGrid, gridKey);
         dataGrid.Unloaded += (_, _) => SaveGridState(gridKey, dataGrid);
-        dataGrid.DetachedFromVisualTree += (_, _) => SaveGridState(gridKey, dataGrid);
-
-        foreach (var col in dataGrid.Columns)
-        {
-            col.PropertyChanged += (_, e) =>
-            {
-                if (RestoringGrids.Contains(dataGrid)) return;
-
-                if (e.Property.Name is "ActualWidth" or "Width" or "DisplayIndex")
-                {
-                    SaveGridState(gridKey, dataGrid);
-                }
-            };
-        }
-        AppLogger.Debug($"[ColumnLayoutStorage] Bound column persistence hooks for grid '{gridKey}'.");
     }
 
     public static void RestoreGridState(DataGrid dataGrid, string gridKey)
@@ -283,11 +239,8 @@ public static class ColumnLayoutStorageService
         RestoringGrids.Add(dataGrid);
         try
         {
-            var sw = Stopwatch.StartNew();
             RestoreWidths(dataGrid, columnMap);
             RestoreDisplayOrder(dataGrid, columnMap);
-            sw.Stop();
-            AppLogger.Debug($"[ColumnLayoutStorage] Restored column layout state for grid '{gridKey}' in {sw.ElapsedMilliseconds} ms.");
         }
         finally
         {
@@ -323,9 +276,9 @@ public static class ColumnLayoutStorageService
                 {
                     col.DisplayIndex = targetIdx;
                 }
-                catch (ArgumentOutOfRangeException ex)
+                catch (ArgumentOutOfRangeException argEx)
                 {
-                    AppLogger.Trace($"[ColumnLayoutStorage] Column reorder index skipped for '{GetColumnKey(col)}': {ex.Message}");
+                    AppLogger.Warn($"[ColumnLayoutStorage] Column '{GetColumnKey(col)}' index {targetIdx} out of range: {argEx.Message}");
                 }
             }
         }

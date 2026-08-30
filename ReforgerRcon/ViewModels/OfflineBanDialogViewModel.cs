@@ -153,7 +153,7 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
             {
                 if (!string.IsNullOrWhiteSpace(_uid) && !_uid.Equals("N/A", StringComparison.OrdinalIgnoreCase))
                 {
-                    bool uidSuccess = await _rconService.OfflineBanAsync(_uid, totalSec, Reason, isIp: false);
+                    bool uidSuccess = await _rconService.OfflineBanAsync(_uid, totalSec, Reason, isIp: false).ConfigureAwait(false);
                     if (!uidSuccess)
                     {
                         allSucceeded = false;
@@ -171,7 +171,7 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
 
             if (banIp && allSucceeded && !string.IsNullOrWhiteSpace(_ip) && !_ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) && IPAddress.TryParse(_ip, out _))
             {
-                bool ipSuccess = await _rconService.OfflineBanAsync(_ip, totalSec, Reason, isIp: true);
+                bool ipSuccess = await _rconService.OfflineBanAsync(_ip, totalSec, Reason, isIp: true).ConfigureAwait(false);
                 if (!ipSuccess)
                 {
                     allSucceeded = false;
@@ -190,18 +190,18 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
                     async () =>
                     {
                         AppLogger.Info($"[OfflineBanDialog] Undo action triggered for offline ban '{_uid}'. Removing ban...");
-                        var allBans = await _rconService.GetBansAsync();
+                        var allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
                         var ban = allBans.Find(b => b.IdentityId == _uid || b.IdentityId == _ip);
                         if (ban != null)
                         {
-                            await _rconService.RemoveBanAsync(ban);
-                            await _parent.RefreshAfterOfflineBanAsync();
+                            await _rconService.RemoveBanAsync(ban).ConfigureAwait(false);
+                            await _parent.RefreshAfterOfflineBanAsync().ConfigureAwait(false);
                         }
                     }
                 );
 
                 _parent.CloseDialog();
-                await _parent.RefreshAfterOfflineBanAsync();
+                await _parent.RefreshAfterOfflineBanAsync().ConfigureAwait(false);
             }
         }
         finally

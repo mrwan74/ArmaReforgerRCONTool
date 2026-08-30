@@ -15,13 +15,26 @@
 
       <!-- Appearance and Window Effects Card -->
       <lumina:LuminaCard Padding="16">
-        <StackPanel Spacing="12">
+        <StackPanel Spacing="14">
           <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
               <icons:MaterialIcon Kind="PaletteOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
-              <TextBlock Text="Appearance and Window Effects" Classes="SectionTitle" FontSize="16" />
+              <TextBlock Text="Appearance and Theme" Classes="SectionTitle" FontSize="16" />
             </StackPanel>
           </Grid>
+
+          <!-- Theme Mode Selection -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,10">
+            <Grid ColumnDefinitions="140,*" ColumnSpacing="12" VerticalAlignment="Center">
+              <TextBlock Text="Theme Mode:" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="1" 
+                        ItemsSource="{Binding ThemeOptions}" 
+                        SelectedItem="{Binding Settings.ThemeMode, Mode=OneWay}"
+                        HorizontalAlignment="Stretch"
+                        SelectionChanged="OnThemeSelectionChanged"
+                        ToolTip.Tip="System Default matches Windows / macOS / Linux OS dark/light mode automatically." />
+            </Grid>
+          </Border>
 
           <TextBlock Text="Control OS-level backdrop material transparency effects (Windows Mica / Acrylic blur). When disabled (default), windows render with crisp, solid, high-contrast theme backgrounds." Classes="Caption" />
 
@@ -31,7 +44,7 @@
         </StackPanel>
       </lumina:LuminaCard>
 
-      <!-- Privacy & Diagnostic Telemetry Card -->
+      <!-- Privacy & Diagnostic Telemetry Card (Aptabase) -->
       <lumina:LuminaCard Padding="16">
         <StackPanel Spacing="12">
           <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
@@ -41,11 +54,22 @@
             </StackPanel>
           </Grid>
 
-          <TextBlock Text="Help improve ARRT by automatically sending anonymous diagnostic crash reports and performance metrics. All server passwords, RCON secrets, and sensitive tokens are strictly redacted before sending. (Disabled by default)" Classes="Caption" />
+          <TextBlock Text="Help improve ARRT with privacy-first anonymous analytics and crash reports. All passwords, server IP addresses, and user-identifiables are strictly redacted. Disabled by default." Classes="Caption" />
 
           <ToggleSwitch Content="Send anonymous diagnostic and crash reports" 
                         IsChecked="{Binding Settings.SendAnonymousCrashReports}"
-                        ToolTip.Tip="Disabled by default. When enabled, unhandled exception logs and diagnostic metrics are sent anonymously. All passwords and server credentials are scrubbed." />
+                        ToolTip.Tip="Disabled by default. When enabled, logs, crash dumps, and performance metrics are sent anonymously. All passwords and server credentials are scrubbed." />
+
+          <!-- Persistent Anonymous Installation ID Box -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,8">
+            <Grid ColumnDefinitions="140,*,Auto" ColumnSpacing="10" VerticalAlignment="Center">
+              <TextBlock Grid.Column="0" Text="Anonymous User ID:" Classes="Caption" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="{Binding InstallationId}" FontFamily="Consolas, monospace" FontSize="12" Foreground="{DynamicResource LuminaTextSecondaryBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+              <Button Grid.Column="2" Classes="Small Ghost Icon" Command="{Binding CopyInstallationIdCommand}" ToolTip.Tip="Copy Anonymous Installation ID">
+                <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
+              </Button>
+            </Grid>
+          </Border>
         </StackPanel>
       </lumina:LuminaCard>
 

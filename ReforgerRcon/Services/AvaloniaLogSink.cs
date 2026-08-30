@@ -1,8 +1,8 @@
-﻿using System;
+﻿using Avalonia.Logging;
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.RegularExpressions;
-using Avalonia.Logging;
 
 namespace ReforgerRcon.Services;
 

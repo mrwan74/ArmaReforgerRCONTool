@@ -8,24 +8,43 @@
 		<BuiltInComInteropSupport Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</BuiltInComInteropSupport>
 		<ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
 		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08</NoWarn>
 
-		<!-- Windows Executable (.exe) Icon -->
+		<!-- Application Versioning (Read by Aptabase, Sentry, and Windows File Properties) -->
+		<Version>0.8.60</Version>
+		<AssemblyVersion>0.8.60.0</AssemblyVersion>
+		<FileVersion>0.8.60.0</FileVersion>
+		<InformationalVersion>0.8.60</InformationalVersion>
+
+		<!-- Suppressed Analyzer Warnings -->
+		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08;S3776;S4136;S101;CA1711;MC8000</NoWarn>
+
+		<!-- Recommended Roslyn Analyzers & Code Analysis Settings -->
+		<EnableNETAnalyzers>true</EnableNETAnalyzers>
+		<AnalysisLevel>latest-recommended</AnalysisLevel>
+		<AnalysisMode>Recommended</AnalysisMode>
+		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
 		<ApplicationIcon>Assets\app.ico</ApplicationIcon>
 	</PropertyGroup>
 
-	<!-- Embed Assets as Avalonia Resources for XAML loading (strictly excluding secret files) -->
+	<ItemGroup>
+		<ProjectReference Include="..\Aptabase.Avalonia\Aptabase.Avalonia.csproj" />
+	</ItemGroup>
+
 	<ItemGroup>
 		<AvaloniaResource Include="Assets\**" />
 		<AvaloniaResource Remove="Assets\sentry_dsn.txt" />
 		<AvaloniaResource Remove="Assets/sentry_dsn.txt" />
+		<AvaloniaResource Remove="Assets\aptabase_app_key.txt" />
+		<AvaloniaResource Remove="Assets/aptabase_app_key.txt" />
 	</ItemGroup>
 
-	<!-- MSBuild Task: XOR-Obfuscate and Embed Sentry DSN into C# Source during Build & Publish -->
-	<UsingTask TaskName="GenerateTelemetrySecretsTask" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+	<UsingTask TaskName="GenerateTelemetrySecretsTask" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
 		<ParameterGroup>
-			<CandidateFile ParameterType="System.String" Required="false" />
+			<CandidateDsnFile ParameterType="System.String" Required="false" />
+			<CandidateAppKeyFile ParameterType="System.String" Required="false" />
 			<EnvDsn ParameterType="System.String" Required="false" />
+			<EnvAppKey ParameterType="System.String" Required="false" />
 			<OutputFile ParameterType="System.String" Required="true" />
 		</ParameterGroup>
 		<Task>
@@ -35,24 +54,43 @@
 			<Code Type="Fragment" Language="cs">
 				<![CDATA[
 					string dsn = string.Empty;
-					if (!string.IsNullOrEmpty(CandidateFile) && File.Exists(CandidateFile))
+					if (!string.IsNullOrEmpty(CandidateDsnFile) && File.Exists(CandidateDsnFile))
 					{
-						dsn = File.ReadAllText(CandidateFile).Trim();
+						dsn = File.ReadAllText(CandidateDsnFile).Trim();
 					}
 					if (string.IsNullOrEmpty(dsn) && !string.IsNullOrEmpty(EnvDsn))
 					{
 						dsn = EnvDsn.Trim();
 					}
 
-					byte[] xorKey = new byte[] { 0x41, 0x52, 0x52, 0x54, 0x5F, 0x53, 0x45, 0x4E, 0x54, 0x52, 0x59, 0x30, 0x38 }; // "ARRT_SENTRY08"
-					byte[] rawBytes = Encoding.UTF8.GetBytes(dsn);
-					byte[] obfuscated = new byte[rawBytes.Length];
-					for (int i = 0; i < rawBytes.Length; i++)
+					string appKey = "A-EU-3982497621";
+					if (!string.IsNullOrEmpty(CandidateAppKeyFile) && File.Exists(CandidateAppKeyFile))
 					{
-						obfuscated[i] = (byte)(rawBytes[i] ^ xorKey[i % xorKey.Length]);
+						appKey = File.ReadAllText(CandidateAppKeyFile).Trim();
+					}
+					if (string.IsNullOrEmpty(appKey) && !string.IsNullOrEmpty(EnvAppKey))
+					{
+						appKey = EnvAppKey.Trim();
 					}
 
-					string hexArray = rawBytes.Length > 0 ? "new byte[] { " + string.Join(", ", obfuscated) + " }" : "System.Array.Empty<byte>()";
+					byte[] xorKey = new byte[] { 0x41, 0x52, 0x52, 0x54, 0x5F, 0x53, 0x45, 0x4E, 0x54, 0x52, 0x59, 0x30, 0x38 }; // "ARRT_SENTRY08"
+					
+					byte[] rawDsnBytes = Encoding.UTF8.GetBytes(dsn);
+					byte[] obfuscatedDsn = new byte[rawDsnBytes.Length];
+					for (int i = 0; i < rawDsnBytes.Length; i++)
+					{
+						obfuscatedDsn[i] = (byte)(rawDsnBytes[i] ^ xorKey[i % xorKey.Length]);
+					}
+
+					byte[] rawKeyBytes = Encoding.UTF8.GetBytes(appKey);
+					byte[] obfuscatedKey = new byte[rawKeyBytes.Length];
+					for (int i = 0; i < rawKeyBytes.Length; i++)
+					{
+						obfuscatedKey[i] = (byte)(rawKeyBytes[i] ^ xorKey[i % xorKey.Length]);
+					}
+
+					string hexDsnArray = rawDsnBytes.Length > 0 ? "new byte[] { " + string.Join(", ", obfuscatedDsn) + " }" : "System.Array.Empty<byte>()";
+					string hexKeyArray = rawKeyBytes.Length > 0 ? "new byte[] { " + string.Join(", ", obfuscatedKey) + " }" : "System.Array.Empty<byte>()";
 					string keyArray = "new byte[] { " + string.Join(", ", xorKey) + " }";
 
 					string code = @"// <auto-generated />
@@ -60,7 +98,8 @@ namespace ReforgerRcon.Services;
 
 internal static class TelemetrySecrets
 {
-    private static readonly byte[] ObfuscatedDsn = " + hexArray + @";
+    private static readonly byte[] ObfuscatedDsn = " + hexDsnArray + @";
+    private static readonly byte[] ObfuscatedAppKey = " + hexKeyArray + @";
     private static readonly byte[] XorKey = " + keyArray + @";
 
     public static string GetEmbeddedDsn()
@@ -70,6 +109,17 @@ internal static class TelemetrySecrets
         for (int i = 0; i < ObfuscatedDsn.Length; i++)
         {
             decoded[i] = (byte)(ObfuscatedDsn[i] ^ XorKey[i % XorKey.Length]);
+        }
+        return System.Text.Encoding.UTF8.GetString(decoded);
+    }
+
+    public static string GetEmbeddedAppKey()
+    {
+        if (ObfuscatedAppKey.Length == 0) return string.Empty;
+        byte[] decoded = new byte[ObfuscatedAppKey.Length];
+        for (int i = 0; i < ObfuscatedAppKey.Length; i++)
+        {
+            decoded[i] = (byte)(ObfuscatedAppKey[i] ^ XorKey[i % XorKey.Length]);
         }
         return System.Text.Encoding.UTF8.GetString(decoded);
     }
@@ -86,12 +136,15 @@ internal static class TelemetrySecrets
 			<_CandidateDsnFile Condition="Exists('Assets/sentry_dsn.txt')">Assets/sentry_dsn.txt</_CandidateDsnFile>
 			<_CandidateDsnFile Condition="'$(_CandidateDsnFile)' == '' and Exists('Assets\sentry_dsn.txt')">Assets\sentry_dsn.txt</_CandidateDsnFile>
 			<_CandidateDsnFile Condition="'$(_CandidateDsnFile)' == '' and Exists('sentry_dsn.txt')">sentry_dsn.txt</_CandidateDsnFile>
-			<_CandidateDsnFile Condition="'$(_CandidateDsnFile)' == '' and Exists('appdata/sentry_dsn.txt')">appdata/sentry_dsn.txt</_CandidateDsnFile>
-			<_CandidateDsnFile Condition="'$(_CandidateDsnFile)' == '' and Exists('appdata\sentry_dsn.txt')">appdata\sentry_dsn.txt</_CandidateDsnFile>
+
+			<_CandidateAppKeyFile Condition="Exists('Assets/aptabase_app_key.txt')">Assets/aptabase_app_key.txt</_CandidateAppKeyFile>
+			<_CandidateAppKeyFile Condition="'$(_CandidateAppKeyFile)' == '' and Exists('Assets\aptabase_app_key.txt')">Assets\aptabase_app_key.txt</_CandidateAppKeyFile>
+			<_CandidateAppKeyFile Condition="'$(_CandidateAppKeyFile)' == '' and Exists('aptabase_app_key.txt')">aptabase_app_key.txt</_CandidateAppKeyFile>
+
 			<_GeneratedTelemetrySecretsFile>$(IntermediateOutputPath)TelemetrySecrets.g.cs</_GeneratedTelemetrySecretsFile>
 		</PropertyGroup>
 
-		<GenerateTelemetrySecretsTask CandidateFile="$(_CandidateDsnFile)" EnvDsn="$(SENTRY_DSN)" OutputFile="$(_GeneratedTelemetrySecretsFile)" />
+		<GenerateTelemetrySecretsTask CandidateDsnFile="$(_CandidateDsnFile)" CandidateAppKeyFile="$(_CandidateAppKeyFile)" EnvDsn="$(SENTRY_DSN)" EnvAppKey="$(APTABASE_APP_KEY)" OutputFile="$(_GeneratedTelemetrySecretsFile)" />
 
 		<ItemGroup>
 			<Compile Include="$(_GeneratedTelemetrySecretsFile)" />
@@ -104,7 +157,7 @@ internal static class TelemetrySecrets
 		<PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
-		<PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.16" />
+		<PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.17" />
 		<PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
 		<PackageReference Include="Material.Icons.Avalonia" Version="3.0.2" />
@@ -113,6 +166,7 @@ internal static class TelemetrySecrets
 		<PackageReference Include="MaxMind.GeoIP2" Version="6.1.0" />
 		<PackageReference Include="TimeZoneConverter" Version="7.2.0" />
 		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
+		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="Sentry" Version="6.9.0" />
 		<PackageReference Include="Sentry.Profiling" Version="6.9.0" />
@@ -127,7 +181,6 @@ internal static class TelemetrySecrets
 		<PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
 		<PackageReference Include="Serilog.ExceptionalLogContext" Version="1.1.0" />
 		<PackageReference Include="SerilogTimings" Version="3.1.0" />
-		<PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
 	</ItemGroup>
 
 	<ItemGroup>
