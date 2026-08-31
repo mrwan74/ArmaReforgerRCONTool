@@ -1,5 +1,6 @@
 ﻿using Avalonia.Logging;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -13,7 +14,16 @@ public partial class AvaloniaLogSink(LogEventLevel minimumLevel = LogEventLevel.
     [GeneratedRegex(@"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex NamedPropertyRegex();
 
-    public bool IsEnabled(LogEventLevel level, string area) => level >= _minimumLevel;
+    public bool IsEnabled(LogEventLevel level, string area)
+    {
+        if (area.Contains("Notification", StringComparison.OrdinalIgnoreCase) ||
+            area.Contains("Labs", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return level >= _minimumLevel;
+    }
 
     [SuppressMessage("Major Code Smell", "S2629:Logging templates should be constant", Justification = "Diagnostic adapter")]
     public void Log(LogEventLevel level, string area, object? source, string messageTemplate)
@@ -38,23 +48,29 @@ public partial class AvaloniaLogSink(LogEventLevel minimumLevel = LogEventLevel.
             return;
         }
 
+        var context = new Dictionary<string, object?>
+        {
+            ["avalonia_area"] = area,
+            ["source_type"] = sourceName
+        };
+
         switch (level)
         {
             case LogEventLevel.Verbose:
-                AppLogger.Trace(msg);
+                AppLogger.Trace(msg, context);
                 break;
             case LogEventLevel.Debug:
-                AppLogger.Debug(msg);
+                AppLogger.Debug(msg, context);
                 break;
             case LogEventLevel.Information:
-                AppLogger.Info(msg);
+                AppLogger.Info(msg, context);
                 break;
             case LogEventLevel.Warning:
-                AppLogger.Warn(msg);
+                AppLogger.Warn(msg, null, context);
                 break;
             case LogEventLevel.Error:
             case LogEventLevel.Fatal:
-                AppLogger.Error(msg);
+                AppLogger.Error(msg, null, context);
                 break;
         }
     }

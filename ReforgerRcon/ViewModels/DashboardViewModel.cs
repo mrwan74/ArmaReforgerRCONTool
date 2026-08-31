@@ -92,6 +92,7 @@ public partial class DashboardViewModel : ViewModelBase
     {
         try
         {
+            AppLogger.Info($"[DashboardViewModel] Initializing parallel sync on connect for {Profile.ServerIp}:{Profile.Port} ({Profile.Protocol})...");
             var playersTask = PlayersTab.RefreshPlayersAsync();
             var bansTask = SettingsTab.Settings.AutoRefreshBans ? BansTab.RefreshBansAsync() : Task.FromResult(true);
             var adminsTask = IsBattlEyeProtocol ? _rconService.GetAdminsAsync() : Task.FromResult(new List<AdminModel>());
@@ -107,11 +108,13 @@ public partial class DashboardViewModel : ViewModelBase
                 {
                     ConnectedAdminsCount = adminsTask.Result.Count;
                 }
+                AppLogger.Info($"[DashboardViewModel] Initial sync completed: OnlinePlayers={OnlinePlayersCount}, Bans={ActiveBansCount}, Admins={ConnectedAdminsCount}");
             });
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[DashboardViewModel] Initial connection parallel refresh error.", ex);
+            AppLogger.Error($"[DashboardViewModel] Initial connection parallel refresh error: {ex.Message}", ex);
+            ToastNotificationService.Instance.ShowWarning("Sync Notice", "Some initial server statistics could not be loaded immediately.");
         }
     }
 
@@ -121,7 +124,13 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                if (string.IsNullOrWhiteSpace(player.Name)) return;
+                if (string.IsNullOrWhiteSpace(player.Name))
+                {
+                    AppLogger.Warn($"[DashboardViewModel] Received PlayerJoined event with empty player name for ID #{player.Id}.");
+                    return;
+                }
+
+                AppLogger.Debug($"[DashboardViewModel] Processing PlayerJoined event: Name='{player.Name}', ID=#{player.Id}, UID='{player.Uid}', GUID='{player.Guid}', Location='{player.DisplayLocation}', Watchlisted={player.IsWatchlisted}");
 
                 var dedupeKey = $"{player.Id}_{player.Name.Trim()}";
                 var now = Stopwatch.GetTimestamp();
@@ -133,6 +142,7 @@ public partial class DashboardViewModel : ViewModelBase
                     {
                         PlayersTab.AddOrUpdatePlayer(player);
                         OnlinePlayersCount = PlayersTab.Players.Count;
+                        AppLogger.Trace($"[DashboardViewModel] Suppressed duplicate join alert for '{player.Name}' (Elapsed: {elapsedSec:F1}s).");
                         return;
                     }
                 }
@@ -142,24 +152,64 @@ public partial class DashboardViewModel : ViewModelBase
                 PlayersTab.AddOrUpdatePlayer(player);
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
-                if (player.IsWatchlisted && SettingsTab.Settings.AlertOnWatchlistJoin)
+                var settings = SettingsTab.Settings;
+
+                if (player.IsWatchlisted)
                 {
-                    SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
-                    ToastNotificationService.Instance.ShowWarning(
-                        "Watchlist Alert",
-                        $"Watchlisted player '{player.Name}' has joined the server."
-                    );
-                }
-                else if (SettingsTab.Settings.AlertOnJoin || SettingsTab.Settings.ToastNotifications)
-                {
-                    if (SettingsTab.Settings.AudioAlerts)
+                    if (settings.AlertOnWatchlistJoin)
                     {
-                        SoundNotificationService.PlayAlert(SoundAlertType.PlayerJoined);
+                        AppLogger.Info($"[DashboardViewModel] Watchlist Join Alert triggered for '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
+
+                        if (settings.AudioAlerts)
+                        {
+                            SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
+                        }
+
+                        if (settings.ToastNotifications)
+                        {
+                            ToastNotificationService.Instance.ShowWarning(
+                                "Watchlist Alert",
+                                $"Watchlisted player '{player.Name}' has joined the server."
+                            );
+                        }
+
+                        if (settings.PushNotifications)
+                        {
+                            PushNotificationService.SendWatchlistNotification(player.Name, isJoining: true, player.DisplayLocation);
+                        }
                     }
-                    ToastNotificationService.Instance.ShowToast(
-                        "Player Connected",
-                        $"{player.Name} joined the server."
-                    );
+                }
+                else
+                {
+                    if (settings.AlertOnJoin)
+                    {
+                        AppLogger.Info($"[DashboardViewModel] Player Join Alert triggered for '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
+
+                        if (settings.AudioAlerts)
+                        {
+                            SoundNotificationService.PlayAlert(SoundAlertType.PlayerJoined);
+                        }
+
+                        if (settings.ToastNotifications)
+                        {
+                            ToastNotificationService.Instance.ShowToast(
+                                "Player Connected",
+                                $"{player.Name} joined the server."
+                            );
+                        }
+
+                        if (settings.PushNotifications)
+                        {
+                            PushNotificationService.SendPlayerJoinNotification(player.Name, player.DisplayLocation);
+                        }
+                    }
+                    else if (settings.ToastNotifications)
+                    {
+                        ToastNotificationService.Instance.ShowToast(
+                            "Player Connected",
+                            $"{player.Name} joined the server."
+                        );
+                    }
                 }
             });
         });
@@ -171,7 +221,13 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                if (string.IsNullOrWhiteSpace(player.Name)) return;
+                if (string.IsNullOrWhiteSpace(player.Name))
+                {
+                    AppLogger.Warn($"[DashboardViewModel] Received PlayerLeft event with empty player name for ID #{player.Id}.");
+                    return;
+                }
+
+                AppLogger.Debug($"[DashboardViewModel] Processing PlayerLeft event: Name='{player.Name}', ID=#{player.Id}, UID='{player.Uid}', Watchlisted={player.IsWatchlisted}");
 
                 var dedupeKey = $"{player.Id}_{player.Name.Trim()}";
                 _activeJoinToasts.TryRemove(dedupeKey, out _);
@@ -179,24 +235,64 @@ public partial class DashboardViewModel : ViewModelBase
                 PlayersTab.RemovePlayerFromList(player);
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
-                if (player.IsWatchlisted && SettingsTab.Settings.AlertOnWatchlistLeave)
+                var settings = SettingsTab.Settings;
+
+                if (player.IsWatchlisted)
                 {
-                    SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
-                    ToastNotificationService.Instance.ShowWarning(
-                        "Watchlist Alert",
-                        $"Watchlisted player '{player.Name}' has left the server."
-                    );
-                }
-                else if (SettingsTab.Settings.AlertOnLeave || SettingsTab.Settings.ToastNotifications)
-                {
-                    if (SettingsTab.Settings.AudioAlerts)
+                    if (settings.AlertOnWatchlistLeave)
                     {
-                        SoundNotificationService.PlayAlert(SoundAlertType.PlayerLeft);
+                        AppLogger.Info($"[DashboardViewModel] Watchlist Leave Alert triggered for '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
+
+                        if (settings.AudioAlerts)
+                        {
+                            SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
+                        }
+
+                        if (settings.ToastNotifications)
+                        {
+                            ToastNotificationService.Instance.ShowWarning(
+                                "Watchlist Alert",
+                                $"Watchlisted player '{player.Name}' has left the server."
+                            );
+                        }
+
+                        if (settings.PushNotifications)
+                        {
+                            PushNotificationService.SendWatchlistNotification(player.Name, isJoining: false);
+                        }
                     }
-                    ToastNotificationService.Instance.ShowToast(
-                        "Player Disconnected",
-                        $"{player.Name} left the server."
-                    );
+                }
+                else
+                {
+                    if (settings.AlertOnLeave)
+                    {
+                        AppLogger.Info($"[DashboardViewModel] Player Leave Alert triggered for '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
+
+                        if (settings.AudioAlerts)
+                        {
+                            SoundNotificationService.PlayAlert(SoundAlertType.PlayerLeft);
+                        }
+
+                        if (settings.ToastNotifications)
+                        {
+                            ToastNotificationService.Instance.ShowToast(
+                                "Player Disconnected",
+                                $"{player.Name} left the server."
+                            );
+                        }
+
+                        if (settings.PushNotifications)
+                        {
+                            PushNotificationService.SendPlayerLeaveNotification(player.Name);
+                        }
+                    }
+                    else if (settings.ToastNotifications)
+                    {
+                        ToastNotificationService.Instance.ShowToast(
+                            "Player Disconnected",
+                            $"{player.Name} left the server."
+                        );
+                    }
                 }
             });
         });
@@ -208,13 +304,22 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
+                AppLogger.Info($"[DashboardViewModel] Moderation event received: Player Kicked '{e.Name}' (ID: #{e.Id}, Reason: '{e.Reason}')");
                 PlayersTab.RemovePlayerFromList(new PlayerModel { Id = e.Id, Name = e.Name });
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
-                ToastNotificationService.Instance.ShowWarning(
-                    "Player Kicked",
-                    $"{e.Name} was kicked from the server (Reason: {e.Reason})."
-                );
+                if (SettingsTab.Settings.ToastNotifications)
+                {
+                    ToastNotificationService.Instance.ShowWarning(
+                        "Player Kicked",
+                        $"{e.Name} was kicked from the server (Reason: {e.Reason})."
+                    );
+                }
+
+                if (SettingsTab.Settings.PushNotifications)
+                {
+                    PushNotificationService.SendNotification("Player Kicked", $"{e.Name} was kicked from the server (Reason: {e.Reason}).", "system");
+                }
             });
         });
     }
@@ -225,13 +330,23 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
+                AppLogger.Info($"[DashboardViewModel] Moderation event received: Player Banned '{e.Name}' (ID: #{e.Id}, GUID: '{e.Guid}', Reason: '{e.Reason}')");
                 PlayersTab.RemovePlayerFromList(new PlayerModel { Id = e.Id, Name = e.Name, Guid = e.Guid, BattlEyeGuid = e.Guid });
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
-                ToastNotificationService.Instance.ShowError(
-                    "Player Banned",
-                    $"{e.Name} was banned from the server (Reason: {e.Reason})."
-                );
+                if (SettingsTab.Settings.ToastNotifications)
+                {
+                    ToastNotificationService.Instance.ShowError(
+                        "Player Banned",
+                        $"{e.Name} was banned from the server (Reason: {e.Reason})."
+                    );
+                }
+
+                if (SettingsTab.Settings.PushNotifications)
+                {
+                    PushNotificationService.SendNotification("Player Banned", $"{e.Name} was banned from the server (Reason: {e.Reason}).", "system");
+                }
+
                 _ = BansTab.RefreshBansAsync();
             });
         });
@@ -243,6 +358,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
+                AppLogger.Info($"[DashboardViewModel] Admin connected event received: Admin #{e.AdminId} from {e.Endpoint}");
                 if (IsBattlEyeProtocol)
                 {
                     _ = Task.Run(async () =>
@@ -254,7 +370,7 @@ public partial class DashboardViewModel : ViewModelBase
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Error("[DashboardViewModel] Error refreshing admin list on event.", ex);
+                            AppLogger.Error($"[DashboardViewModel] Error refreshing admin list on stream event: {ex.Message}", ex);
                         }
                     });
                 }
@@ -268,6 +384,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
+                AppLogger.Fatal($"[DashboardViewModel] Connection lost notice received: '{reason}' for {Profile.ServerIp}:{Profile.Port}");
                 _timer.Stop();
                 IsConnected = false;
                 IsHeartbeatVisible = false;
@@ -278,7 +395,15 @@ public partial class DashboardViewModel : ViewModelBase
                     player.Ping = 0;
                 }
 
-                SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+                if (SettingsTab.Settings.AudioAlerts)
+                {
+                    SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+                }
+
+                if (SettingsTab.Settings.PushNotifications)
+                {
+                    PushNotificationService.SendNotification("Server Connection Lost", $"RCON disconnected from {Profile.ServerIp}:{Profile.Port}.", "system");
+                }
 
                 ShowDialog(new ConnectionLostDialogViewModel(
                     Profile,
@@ -318,6 +443,7 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
+            AppLogger.Debug($"[DashboardViewModel] Displaying dialog overlay: {dialog.GetType().Name}");
             ActiveDialog = dialog;
             IsDialogVisible = true;
         });
@@ -328,6 +454,10 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
+            if (ActiveDialog != null)
+            {
+                AppLogger.Debug($"[DashboardViewModel] Dismissing active dialog overlay: {ActiveDialog.GetType().Name}");
+            }
             IsDialogVisible = false;
             ActiveDialog = null;
         });
@@ -339,6 +469,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             if (!_rconService.IsConnected && IsConnected)
             {
+                AppLogger.Warn("[DashboardViewModel] Timer detected socket disconnect state.");
                 OnConnectionLost(this, "Connection timed out (No packets received)");
                 return;
             }
@@ -364,6 +495,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             if (!_rconService.IsConnected)
             {
+                AppLogger.Trace("[DashboardViewModel] RefreshAllAsync skipped: RCON service is not connected.");
                 return;
             }
 
@@ -419,6 +551,7 @@ public partial class DashboardViewModel : ViewModelBase
         settings.ThemeMode = newMode;
         AppSettings.SaveToDisk(settings);
 
+        AppLogger.Info($"[DashboardViewModel] Theme variant switched to '{newMode}'.");
         AppLogger.TrackEvent("theme_toggled", new Dictionary<string, object>
         {
             ["theme_mode"] = newMode
@@ -432,6 +565,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             IsConsoleFullscreen = !IsConsoleFullscreen;
             ConsoleTab.IsFullscreen = IsConsoleFullscreen;
+            AppLogger.Debug($"[DashboardViewModel] Console fullscreen toggled: {IsConsoleFullscreen}");
         });
     }
 
@@ -450,6 +584,7 @@ public partial class DashboardViewModel : ViewModelBase
             ConsoleTab.IsDetached = true;
             UpdateLayoutDimensions();
 
+            AppLogger.Info("[DashboardViewModel] Console detached into standalone window.");
             AppLogger.TrackEvent("console_detached");
 
             _detachedConsoleWindow = new ConsoleWindow(ConsoleTab, () =>
@@ -458,6 +593,7 @@ public partial class DashboardViewModel : ViewModelBase
                 ConsoleTab.IsDetached = false;
                 _detachedConsoleWindow = null;
                 UpdateLayoutDimensions();
+                AppLogger.Info("[DashboardViewModel] Standalone console window closed and re-docked into main dashboard.");
             });
 
             if (Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop && desktop.MainWindow != null)
@@ -476,6 +612,7 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
+            AppLogger.Info("[DashboardViewModel] Reattach console command invoked.");
             _detachedConsoleWindow?.Close();
             _detachedConsoleWindow = null;
             IsConsoleDetached = false;
@@ -505,6 +642,7 @@ public partial class DashboardViewModel : ViewModelBase
     {
         return ExecuteSafeAsync(async () =>
         {
+            AppLogger.Info("[DashboardViewModel] Operator initiated clean disconnect...");
             _timer.Stop();
             _rconService.ConnectionLost -= OnConnectionLost;
             _rconService.PlayerJoined -= OnPlayerJoined;

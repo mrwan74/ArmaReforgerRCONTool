@@ -10,10 +10,11 @@
 		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 
 		<!-- Application Versioning (Read by Aptabase, Sentry, and Windows File Properties) -->
-		<Version>0.8.60</Version>
-		<AssemblyVersion>0.8.60.0</AssemblyVersion>
-		<FileVersion>0.8.60.0</FileVersion>
-		<InformationalVersion>0.8.60</InformationalVersion>
+		<Version>0.8.64</Version>
+		<AssemblyVersion>0.8.64.0</AssemblyVersion>
+		<FileVersion>0.8.64.0</FileVersion>
+		<InformationalVersion>0.8.64</InformationalVersion>
+		<NeutralLanguage>en</NeutralLanguage>
 
 		<!-- Suppressed Analyzer Warnings -->
 		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08;S3776;S4136;S101;CA1711;MC8000</NoWarn>
@@ -25,6 +26,11 @@
 		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
 		<ApplicationIcon>Assets\app.ico</ApplicationIcon>
+	</PropertyGroup>
+	<PropertyGroup Label="Avalonia">
+		<AvaloniaXamlCreateSourceInfo>True</AvaloniaXamlCreateSourceInfo>
+		<AvaloniaXamlIlDebuggerLaunch>False</AvaloniaXamlIlDebuggerLaunch>
+		<AvaloniaXamlVerboseExceptions>True</AvaloniaXamlVerboseExceptions>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -157,6 +163,8 @@ internal static class TelemetrySecrets
 		<PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+		<PackageReference Include="Avalonia.Labs.Notifications" Version="12.0.2" />
+		<PackageReference Include="NetCoreAudio" Version="2.0.1" />
 		<PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.17" />
 		<PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
@@ -187,5 +195,20 @@ internal static class TelemetrySecrets
 		<None Update="GeoIP/*.mmdb" CopyToOutputDirectory="PreserveNewest" />
 		<None Update="geoip/*.mmdb" CopyToOutputDirectory="PreserveNewest" />
 		<None Update="appdata/geoip/*.mmdb" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Update="Properties\Resources.Designer.cs">
+			<DesignTime>True</DesignTime>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Resources.resx</DependentUpon>
+		</Compile>
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Update="Properties\Resources.resx">
+			<Generator>ResXFileCodeGenerator</Generator>
+			<LastGenOutput>Resources.Designer.cs</LastGenOutput>
+		</EmbeddedResource>
 	</ItemGroup>
 </Project>

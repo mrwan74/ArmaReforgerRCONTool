@@ -1,5 +1,6 @@
+using System;
 using Avalonia.Controls;
-using ReforgerRcon.ViewModels;
+using ReforgerRcon.Services;
 
 namespace ReforgerRcon.Views.Tabs;
 
@@ -7,14 +8,15 @@ public partial class SettingsTabView : UserControl
 {
     public SettingsTabView()
     {
-        InitializeComponent();
-    }
-
-    private void OnThemeSelectionChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (DataContext is SettingsViewModel vm && sender is ComboBox comboBox && comboBox.SelectedItem is string selectedText)
+        try
         {
-            vm.OnThemeSettingChanged(selectedText);
+            InitializeComponent();
+            AppLogger.Debug("[SettingsTabView] SettingsTabView component initialized.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("[SettingsTabView] Component initialization failed.", ex);
+            CrashReportService.HandleFatalException("SettingsTabView.Constructor", ex, isTerminating: false);
         }
     }
 }

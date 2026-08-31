@@ -3,7 +3,7 @@
 [![AI Assisted](https://img.shields.io/badge/Development-AI--Assisted-8A2BE2?style=flat&logo=openai&logoColor=white)](#)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat&logo=dotnet)](https://dotnet.microsoft.com/)
 [![Avalonia 12](https://img.shields.io/badge/Avalonia-12-8A2BE2?style=flat&logo=avalonia)](https://avaloniaui.net/)
-[![Release](https://img.shields.io/badge/Version-v0.8.60-blue?style=flat)](https://github.com/)
+[![Release](https://img.shields.io/badge/Version-v0.8.64-blue?style=flat)](https://github.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078D6?style=flat)](https://github.com/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
@@ -12,8 +12,8 @@
 
 ---
 
-> ### 📦 Latest Release: `v0.8.60-alpha`
-> **Released on:** Aug 30, 2026, 04:22 PM (UTC) 
+> ### 📦 Latest Release: `v0.8.64-alpha`
+> **Released on:** Aug 31, 2026, 07:17 PM (UTC) 
 
 The Arma Reforger RCON Tool (ARRT) is a desktop administration tool for arma reforger developed using C# and Avalonia UI. It supports both the native ARMA Reforger Built-in RCON and the BattlEye RCON protocols and offers real-time player moderation, batch actions, an interactive live console, offline player tracking, and MaxMind GeoIP2 geolocation lookups.
 <img width="1696" height="937" alt="ReforgerRcon_vS2DqXgTRv" src="https://github.com/user-attachments/assets/84a3deca-fd85-4175-8a37-0090701cf3ce" />
@@ -188,7 +188,8 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 
 ## 🗺️ Roadmap / TODO
 
-- [ ] **Audio Alerts & Push Notifications:** Implement sound chimes and external notification channels (desktop alerts) for user-configured triggers (player joins/leaves, watchlisted player joins/leaves, server disconnection, etc.).
+
+- [x] **Audio Alerts & Push Notifications:** Implement sound chimes and external notification channels (desktop alerts) for user-configured triggers (player joins/leaves, watchlisted player joins/leaves, server disconnection, etc.).
 - [ ] **Auto App Updater:** Check for new GitHub releases directly within the app and provide a one-click download & update.
 - [ ] **Custom Commands & Plugin System:** Register custom RCON commands and mod actions as clickable toolbar buttons (for Reforger).
 - [ ] **Global Player Database Synchronization:** A cloud syncing feature enabling administrators to synchronise the player database list with a master community database.

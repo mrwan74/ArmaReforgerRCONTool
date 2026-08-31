@@ -29,9 +29,8 @@
               <TextBlock Text="Theme Mode:" FontWeight="SemiBold" VerticalAlignment="Center" />
               <ComboBox Grid.Column="1" 
                         ItemsSource="{Binding ThemeOptions}" 
-                        SelectedItem="{Binding Settings.ThemeMode, Mode=OneWay}"
+                        SelectedItem="{Binding SelectedThemeOption, Mode=TwoWay}"
                         HorizontalAlignment="Stretch"
-                        SelectionChanged="OnThemeSelectionChanged"
                         ToolTip.Tip="System Default matches Windows / macOS / Linux OS dark/light mode automatically." />
             </Grid>
           </Border>
@@ -44,13 +43,99 @@
         </StackPanel>
       </lumina:LuminaCard>
 
-      <!-- Privacy & Diagnostic Telemetry Card (Aptabase) -->
+      <!-- Notification Channels Card -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="BellRingOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="Notification Channels" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="Configure delivery mechanisms for real-time alerts. Custom audio files placed in Assets/audio/ (join.mp3/wav, leave.mp3/wav, watchlist.mp3/wav, warning.mp3/wav, error.mp3/wav) will play automatically." Classes="Caption" />
+
+          <!-- Audio Alerts Toggle and Test Button -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,8">
+            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+              <ToggleSwitch Grid.Column="0" 
+                            Content="Audio Alerts (Custom Sound Assets / System Beeps)" 
+                            IsChecked="{Binding Settings.AudioAlerts}" 
+                            VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                <Button Classes="Small Outline" Command="{Binding TestAudioAlertCommand}" CommandParameter="Join" ToolTip.Tip="Test Join sound">
+                  <StackPanel Orientation="Horizontal" Spacing="4">
+                    <icons:MaterialIcon Kind="VolumeHigh" Width="14" Height="14" />
+                    <TextBlock Text="Test Sound" />
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+            </Grid>
+          </Border>
+
+          <!-- In-App Toast Notifications Toggle -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,8">
+            <ToggleSwitch Content="Toast Notifications (Action commands, execution history, and Undo)" 
+                          IsChecked="{Binding Settings.ToastNotifications}" />
+          </Border>
+
+          <!-- Native OS Push Notifications Toggle and Test Button -->
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="12,8">
+            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+              <ToggleSwitch Grid.Column="0" 
+                            Content="Native OS Push Notifications (Windows Action Center / macOS / Linux)" 
+                            IsChecked="{Binding Settings.PushNotifications}" 
+                            VerticalAlignment="Center" />
+              <Button Grid.Column="1" Classes="Small Outline" Command="{Binding TestPushNotificationCommand}" ToolTip.Tip="Send test push notification to OS tray">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                  <icons:MaterialIcon Kind="SendOutline" Width="14" Height="14" />
+                  <TextBlock Text="Test Push" />
+                </StackPanel>
+              </Button>
+            </Grid>
+          </Border>
+        </StackPanel>
+      </lumina:LuminaCard>
+
+      <!-- Alert Triggers and Events Card -->
+      <lumina:LuminaCard Padding="16">
+        <StackPanel Spacing="12">
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="AlarmLightOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="Alert Event Triggers" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="Select which server events should dispatch alerts through your active notification channels." Classes="Caption" />
+
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,*" RowSpacing="8" ColumnSpacing="16" Margin="0,4,0,0">
+            <CheckBox Grid.Row="0" Grid.Column="0" 
+                      Content="Player Joins Server" 
+                      IsChecked="{Binding Settings.AlertOnJoin}" />
+
+            <CheckBox Grid.Row="0" Grid.Column="1" 
+                      Content="Player Leaves Server" 
+                      IsChecked="{Binding Settings.AlertOnLeave}" />
+
+            <CheckBox Grid.Row="1" Grid.Column="0" 
+                      Content="Watchlisted Player Joins Server" 
+                      IsChecked="{Binding Settings.AlertOnWatchlistJoin}" />
+
+            <CheckBox Grid.Row="1" Grid.Column="1" 
+                      Content="Watchlisted Player Leaves Server" 
+                      IsChecked="{Binding Settings.AlertOnWatchlistLeave}" />
+          </Grid>
+        </StackPanel>
+      </lumina:LuminaCard>
+
+      <!-- Privacy and Diagnostic Telemetry Card -->
       <lumina:LuminaCard Padding="16">
         <StackPanel Spacing="12">
           <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
               <icons:MaterialIcon Kind="ShieldLockOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
-              <TextBlock Text="Privacy &amp; Telemetry" Classes="SectionTitle" FontSize="16" />
+              <TextBlock Text="Privacy and Telemetry" Classes="SectionTitle" FontSize="16" />
             </StackPanel>
           </Grid>
 
@@ -73,13 +158,13 @@
         </StackPanel>
       </lumina:LuminaCard>
 
-      <!-- Table Display & Default Sorting Card -->
+      <!-- Table Display and Default Sorting Card -->
       <lumina:LuminaCard Padding="16">
         <StackPanel Spacing="14">
           <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
               <icons:MaterialIcon Kind="SortVariant" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
-              <TextBlock Text="Table Display &amp; Default Sorting" Classes="SectionTitle" FontSize="16" />
+              <TextBlock Text="Table Display and Default Sorting" Classes="SectionTitle" FontSize="16" />
             </StackPanel>
           </Grid>
 
@@ -181,7 +266,7 @@
                     Content="Update Databases" 
                     Command="{Binding UpdateGeoIpDatabasesCommand}"
                     lumina:LuminaButton.IsLoading="{Binding IsGeoIpUpdating}"
-                    ToolTip.Tip="Download latest binary MMDB updates from MaxMind (Requires Account ID &amp; License Key)" />
+                    ToolTip.Tip="Download latest binary MMDB updates from MaxMind (Requires Account ID and License Key)" />
           </Grid>
 
           <TextBlock Text="The app uses offline pre-bundled GeoLite2 binary databases out of the box. MaxMind credentials are only required if you wish to download newer weekly updates." Classes="Caption" />
@@ -227,51 +312,16 @@
         </StackPanel>
       </lumina:LuminaCard>
 
-      <!-- Notification Channels -->
-      <lumina:LuminaCard Padding="16">
-        <StackPanel Spacing="12">
-          <TextBlock Text="Notification Channels" Classes="SectionTitle" FontSize="16" />
-          
-          <ToggleSwitch Content="Audio Alerts" 
-                        IsChecked="{Binding Settings.AudioAlerts}" 
-                        IsEnabled="False" />
-
-          <ToggleSwitch Content="Toast Notifications (Action commands and undo)" 
-                        IsChecked="{Binding Settings.ToastNotifications}" />
-
-          <ToggleSwitch Content="Push Notifications" 
-                        IsChecked="{Binding Settings.PushNotifications}" 
-                        IsEnabled="False" />
-        </StackPanel>
-      </lumina:LuminaCard>
-
-      <!-- Alert Triggers -->
-      <lumina:LuminaCard Padding="16">
-        <StackPanel Spacing="10">
-          <TextBlock Text="Alert Events" Classes="SectionTitle" FontSize="16" />
-          
-          <CheckBox Content="Player Joins" 
-                    IsChecked="{Binding Settings.AlertOnJoin}" 
-                    IsEnabled="False" />
-
-          <CheckBox Content="Player Leaves" 
-                    IsChecked="{Binding Settings.AlertOnLeave}" 
-                    IsEnabled="False" />
-
-          <CheckBox Content="Watchlisted Player Joins" 
-                    IsChecked="{Binding Settings.AlertOnWatchlistJoin}" 
-                    IsEnabled="False" />
-
-          <CheckBox Content="Watchlisted Player Leaves" 
-                    IsChecked="{Binding Settings.AlertOnWatchlistLeave}" 
-                    IsEnabled="False" />
-        </StackPanel>
-      </lumina:LuminaCard>
-
       <!-- General Settings -->
       <lumina:LuminaCard Padding="16">
         <StackPanel Spacing="14">
-          <TextBlock Text="General and Background Execution" Classes="SectionTitle" FontSize="16" />
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <icons:MaterialIcon Kind="CogOutline" Width="20" Height="20" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="General and Background Execution" Classes="SectionTitle" FontSize="16" />
+            </StackPanel>
+          </Grid>
+
           <Grid ColumnDefinitions="*,120">
             <TextBlock Text="Auto-refresh Interval (Seconds)" VerticalAlignment="Center" />
             <NumericUpDown Grid.Column="1" Minimum="1" Maximum="60" Value="{Binding Settings.RefreshIntervalSeconds}" />

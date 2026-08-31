@@ -1,15 +1,19 @@
 using Aptabase.Avalonia;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Labs.Notifications;
 using Avalonia.Logging;
+using Avalonia.Platform;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
 using Sentry;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,11 +23,15 @@ using TimeZoneConverter;
 
 namespace ReforgerRcon;
 
+[SuppressMessage("Minor Code Smell", "S1075:URIs should not be hardcoded", Justification = "Avalonia internal avares resource schema paths")]
 internal static partial class Program
 {
     private const uint MbIconError = 0x00000010;
     private const uint MbIconWarning = 0x00000030;
     private const string LogSeparatorLine = "================================================================================";
+    private const string AppDataDirectoryName = "appdata";
+    private const string AppIconFileName = "app.ico";
+    private const string AppIconResourceUri = "avares://ReforgerRcon/Assets/app.ico";
 
     private static Mutex? _directoryMutex;
     private static FileStream? _directoryLockStream;
@@ -41,10 +49,11 @@ internal static partial class Program
                 SQLitePCL.Batteries_V2.Init();
                 _ = PlayerDatabaseStorageService.InitializeAsync();
                 _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
+                AppLogger.Debug("[Program] Asynchronous subsystem warm-up completed.");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Program] Background warmup notice: {ex.Message}");
+                AppLogger.Error($"[Program] Background warmup encountered a non-fatal error: {ex.Message}", ex);
             }
         }, CancellationToken.None);
 
@@ -52,6 +61,8 @@ internal static partial class Program
         {
             var runningDir = AppContext.BaseDirectory;
             var alertMessage = $"Another instance of ARMA Reforger RCON is already running from this directory:\n\n{runningDir}\n\nOnly one instance per directory is allowed. To run multiple instances simultaneously, place the application in a separate folder.";
+
+            AppLogger.Warn($"[Program] Instance collision detected for directory: {runningDir}");
 
             if (OperatingSystem.IsWindows())
             {
@@ -104,7 +115,7 @@ internal static partial class Program
                         options.AttachStacktrace = true;
                         options.SendDefaultPii = false;
                         options.Environment = "production";
-                        options.Release = "ReforgerRcon@0.8.53";
+                        options.Release = "ReforgerRcon@0.8.60";
 
                         options.SetBeforeSend((sentryEvent, _) =>
                         {
@@ -210,7 +221,7 @@ internal static partial class Program
                 return false;
             }
 
-            var appDataDir = Path.Combine(AppContext.BaseDirectory, "appdata");
+            var appDataDir = Path.Combine(AppContext.BaseDirectory, AppDataDirectoryName);
             if (!Directory.Exists(appDataDir))
             {
                 Directory.CreateDirectory(appDataDir);
@@ -224,7 +235,7 @@ internal static partial class Program
         }
         catch (IOException ioEx)
         {
-            Debug.WriteLine($"[Program] Lock acquisition IO collision: {ioEx.Message}");
+            AppLogger.Error($"[Program] Directory lock acquisition I/O collision: {ioEx.Message}", ioEx);
             _directoryLockStream?.Dispose();
             _directoryLockStream = null;
             _directoryMutex?.Dispose();
@@ -233,7 +244,16 @@ internal static partial class Program
         }
         catch (UnauthorizedAccessException authEx)
         {
-            Debug.WriteLine($"[Program] Lock acquisition permission error: {authEx.Message}");
+            AppLogger.Error($"[Program] Directory lock acquisition permission error: {authEx.Message}", authEx);
+            _directoryLockStream?.Dispose();
+            _directoryLockStream = null;
+            _directoryMutex?.Dispose();
+            _directoryMutex = null;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[Program] Unexpected error acquiring directory lock: {ex.Message}", ex);
             _directoryLockStream?.Dispose();
             _directoryLockStream = null;
             _directoryMutex?.Dispose();
@@ -242,18 +262,85 @@ internal static partial class Program
         }
     }
 
+    private static string? ResolveAppIconDiskPath()
+    {
+        try
+        {
+            var candidatePaths = new[]
+            {
+                Path.Combine(AppContext.BaseDirectory, "Assets", AppIconFileName),
+                Path.Combine(AppContext.BaseDirectory, "assets", AppIconFileName),
+                Path.Combine(AppContext.BaseDirectory, AppIconFileName),
+                Path.Combine(AppContext.BaseDirectory, AppDataDirectoryName, AppIconFileName)
+            };
+
+            var existingPath = candidatePaths.FirstOrDefault(File.Exists);
+            if (existingPath != null)
+            {
+                return existingPath;
+            }
+
+            var appDataDir = Path.Combine(AppContext.BaseDirectory, AppDataDirectoryName);
+            if (!Directory.Exists(appDataDir))
+            {
+                Directory.CreateDirectory(appDataDir);
+            }
+
+            var targetFile = Path.Combine(appDataDir, AppIconFileName);
+            var avaresUri = new Uri(AppIconResourceUri);
+            if (AssetLoader.Exists(avaresUri))
+            {
+                using var srcStream = AssetLoader.Open(avaresUri);
+                using var dstStream = File.Create(targetFile);
+                srcStream.CopyTo(dstStream);
+                return targetFile;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"[Program] App icon disk resolution notice: {ex.Message}");
+        }
+
+        return null;
+    }
+
     public static AppBuilder BuildAvaloniaApp()
     {
         var builder = AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont();
 
+        try
+        {
+            var iconPath = ResolveAppIconDiskPath();
+            AppLogger.Info($"[Program] Initializing native notifications with icon path: '{iconPath ?? "None"}'");
+
+            builder.WithAppNotifications(new AppNotificationOptions
+            {
+                AppName = "ARMA Reforger RCON Tool (ARRT)",
+                AppIcon = iconPath,
+                ClearOnAppClose = false,
+                Channels =
+                [
+                    new NotificationChannel("default", "General Notifications", NotificationPriority.Default),
+                    new NotificationChannel("players", "Player Join & Leave Alerts", NotificationPriority.High),
+                    new NotificationChannel("watchlist", "Watchlist Alerts", NotificationPriority.Max),
+                    new NotificationChannel("system", "System and Moderation Alerts", NotificationPriority.High)
+                ]
+            });
+            AppLogger.Info("[Program] Avalonia.Labs.Notifications integration successfully initialized on AppBuilder.");
+        }
+        catch (Exception notifEx)
+        {
+            AppLogger.Error($"[Program] Native notification initialization notice: {notifEx.Message}", notifEx);
+        }
+
         var aptabaseKey = AppLogger.ResolveAptabaseAppKey();
         if (!string.IsNullOrWhiteSpace(aptabaseKey))
         {
             try
             {
-                var storagePath = Path.Combine(AppContext.BaseDirectory, "appdata", "analytics");
+                var storagePath = Path.Combine(AppContext.BaseDirectory, AppDataDirectoryName, "analytics");
                 if (!Directory.Exists(storagePath))
                 {
                     Directory.CreateDirectory(storagePath);
@@ -276,15 +363,18 @@ internal static partial class Program
                             ["installation_id"] = AppLogger.InstallationId,
                             ["theme_mode"] = settings.ThemeMode,
                             ["glass_enabled"] = settings.EnableWindowGlass,
+                            ["audio_alerts_enabled"] = settings.AudioAlerts,
+                            ["push_notifications_enabled"] = settings.PushNotifications,
                             ["geoip_city_ready"] = GeoIpService.IsCityDbLoaded,
                             ["geoip_country_ready"] = GeoIpService.IsCountryDbLoaded
                         };
                     },
-                    OnUserFacingNotification = (_, _, fatal) =>
+                    OnUserFacingNotification = (msg, _, fatal) =>
                     {
                         if (fatal)
                         {
                             SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+                            ToastNotificationService.Instance.ShowError("Critical Alert", msg);
                         }
                     }
                 });
@@ -311,7 +401,7 @@ internal static partial class Program
         {
             try
             {
-                var crashDir = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
+                var crashDir = Path.Combine(AppContext.BaseDirectory, AppDataDirectoryName, "crash_reports");
                 Directory.CreateDirectory(crashDir);
                 var crashFile = Path.Combine(crashDir, string.Create(CultureInfo.InvariantCulture, $"emergency_crash_{DateTime.UtcNow:yyyyMMdd_HHmmss}.txt"));
                 var report = string.Create(CultureInfo.InvariantCulture, $"FATAL STARTUP CRASH\nInstallation ID: {AppLogger.InstallationId}\nOS: {RuntimeInformation.OSDescription}\nArchitecture: {RuntimeInformation.ProcessArchitecture}\nSource: {source}\nException: {ex.GetType().FullName}: {ex.Message}\nStackTrace:\n{ex.StackTrace}\n\nHandler Fault: {fallbackEx.Message}");
@@ -358,21 +448,25 @@ internal static partial class Program
             }
             catch (IOException ioEx)
             {
-                Debug.WriteLine($"[Program] Lock file stream disposal notice: {ioEx.Message}");
+                AppLogger.Trace($"[Program] Lock file stream disposal notice: {ioEx.Message}");
             }
 
             try
             {
                 _mutex.ReleaseMutex();
-                _mutex.Dispose();
             }
             catch (ApplicationException appEx)
             {
-                Debug.WriteLine($"[Program] Mutex release notice: {appEx.Message}");
+                AppLogger.Trace($"[Program] Mutex release notice: {appEx.Message}");
+            }
+
+            try
+            {
+                _mutex.Dispose();
             }
             catch (ObjectDisposedException dispEx)
             {
-                Debug.WriteLine($"[Program] Mutex already disposed: {dispEx.Message}");
+                AppLogger.Trace($"[Program] Mutex already disposed: {dispEx.Message}");
             }
         }
     }

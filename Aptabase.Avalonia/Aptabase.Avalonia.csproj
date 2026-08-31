@@ -28,6 +28,12 @@
 		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 	</PropertyGroup>
 
+	<PropertyGroup Label="Avalonia">
+		<AvaloniaXamlIlDebuggerLaunch>False</AvaloniaXamlIlDebuggerLaunch>
+		<AvaloniaXamlCreateSourceInfo>True</AvaloniaXamlCreateSourceInfo>
+		<AvaloniaXamlVerboseExceptions>True</AvaloniaXamlVerboseExceptions>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<PackageReference Include="Avalonia" Version="12.1.1" />
 		<PackageReference Include="DotNext.Threading" Version="6.6.5" />

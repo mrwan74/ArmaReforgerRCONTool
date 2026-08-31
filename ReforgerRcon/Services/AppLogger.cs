@@ -1,4 +1,5 @@
 ﻿using Aptabase.Avalonia;
+using ReforgerRcon.Models;
 using Sentry;
 using Serilog;
 using Serilog.Context;
@@ -17,7 +18,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using ReforgerRcon.Models;
+using System.Threading;
 
 namespace ReforgerRcon.Services;
 
@@ -31,10 +32,11 @@ public enum LogLevel
     Fatal
 }
 
-[SuppressMessage("Major Code Smell", "S3963:Static constructor is required to guarantee thread initialization order", Justification = "Guarantees Serilog pipeline, Sentry and Aptabase integration are configured before background operations start")]
+[SuppressMessage("Major Code Smell", "S3963:Static constructor is required to guarantee thread initialization order", Justification = "Guarantees Serilog pipeline, Sentry, Aptabase, and Trace listener integration are configured before background operations start")]
 public static partial class AppLogger
 {
     private const string SerilogMessageTemplate = "{Message}";
+    private const string CallerContextPropertyName = "CallerContext";
     private static readonly string LogDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "logs");
     private static readonly ConcurrentQueue<string> Breadcrumbs = new();
     private const int MaxBreadcrumbs = 1000;
@@ -269,7 +271,7 @@ public static partial class AppLogger
                     _ => LogEventLevel.Information
                 };
 
-                using (LogContext.PushProperty("CallerContext", caller))
+                using (LogContext.PushProperty(CallerContextPropertyName, caller))
                 {
                     if (entry.Exception != null)
                     {
@@ -286,6 +288,15 @@ public static partial class AppLogger
                 System.Diagnostics.Debug.WriteLine($"[AppLogger] Aptabase log hook failure: {ex.Message}");
             }
         };
+
+        try
+        {
+            System.Diagnostics.Trace.Listeners.Add(new AppLoggerTraceListener());
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] TraceListener registration notice: {ex.Message}");
+        }
 
         LogEnvironmentDiagnostics();
     }
@@ -498,7 +509,7 @@ public static partial class AppLogger
                 new KeyValuePair<string, object>("member", member)
             ]);
 
-            List<IDisposable> disposables = [LogContext.PushProperty("CallerContext", callerContext)];
+            List<IDisposable> disposables = [LogContext.PushProperty(CallerContextPropertyName, callerContext)];
 
             if (context?.Count > 0)
             {
@@ -665,6 +676,55 @@ public static partial class AppLogger
                 {
                     System.Diagnostics.Debug.WriteLine($"[CompositeDisposable] Element disposal notice: {ex.Message}");
                 }
+            }
+        }
+    }
+
+    private sealed class AppLoggerTraceListener : TraceListener
+    {
+        private readonly AsyncLocal<bool> _isProcessing = new();
+
+        public override void Write(string? message)
+        {
+            if (_isProcessing.Value || string.IsNullOrWhiteSpace(message)) return;
+            _isProcessing.Value = true;
+            try
+            {
+                var clean = SanitizeSensitiveData(message.Trim());
+                using (LogContext.PushProperty(CallerContextPropertyName, "System.Diagnostics.Trace"))
+                {
+                    Logger.Write(LogEventLevel.Verbose, SerilogMessageTemplate, clean);
+                }
+            }
+            catch
+            {
+                // Never throw from a trace listener
+            }
+            finally
+            {
+                _isProcessing.Value = false;
+            }
+        }
+
+        public override void WriteLine(string? message)
+        {
+            if (_isProcessing.Value || string.IsNullOrWhiteSpace(message)) return;
+            _isProcessing.Value = true;
+            try
+            {
+                var clean = SanitizeSensitiveData(message.Trim());
+                using (LogContext.PushProperty(CallerContextPropertyName, "System.Diagnostics.Trace"))
+                {
+                    Logger.Write(LogEventLevel.Debug, SerilogMessageTemplate, clean);
+                }
+            }
+            catch
+            {
+                // Never throw from a trace listener
+            }
+            finally
+            {
+                _isProcessing.Value = false;
             }
         }
     }

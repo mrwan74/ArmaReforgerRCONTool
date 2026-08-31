@@ -13,6 +13,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -76,7 +77,7 @@ public abstract class ViewModelBase : ObservableObject
             op.Cancel();
             transaction.Finish(SpanStatus.Cancelled);
 
-            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() cancelled: {opEx.Message}"), member: actionName, path: callerPath, line: callerLine);
+            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() canceled: {opEx.Message}"), member: actionName, path: callerPath, line: callerLine);
             return false;
         }
         catch (SocketException sockEx)
@@ -179,6 +180,34 @@ public abstract class ViewModelBase : ObservableObject
 
             SoundNotificationService.PlayAlert(SoundAlertType.WarningAlert);
             ToastNotificationService.Instance.ShowError("Data Format Error", msg, actionName);
+            return false;
+        }
+        catch (FileNotFoundException fnfEx)
+        {
+            sw.Stop();
+            var demystified = fnfEx.Demystify();
+            transaction.Finish(SpanStatus.NotFound);
+
+            TrackAptabaseError(demystified, actionName, callerType);
+
+            var msg = userFriendlyErrorMessage ?? $"Required file not found: {fnfEx.FileName}";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:FileNotFound] {callerType}.{actionName}(): {fnfEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowError("File Not Found", msg, actionName);
+            return false;
+        }
+        catch (DirectoryNotFoundException dnfEx)
+        {
+            sw.Stop();
+            var demystified = dnfEx.Demystify();
+            transaction.Finish(SpanStatus.NotFound);
+
+            TrackAptabaseError(demystified, actionName, callerType);
+
+            var msg = userFriendlyErrorMessage ?? "Required directory path was not found.";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:DirectoryNotFound] {callerType}.{actionName}(): {dnfEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowError("Directory Not Found", msg, actionName);
             return false;
         }
         catch (UnauthorizedAccessException authEx)
@@ -306,11 +335,11 @@ public abstract class ViewModelBase : ObservableObject
             transaction.Finish(SpanStatus.Ok);
             return true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException opEx)
         {
             op.Cancel();
             transaction.Finish(SpanStatus.Cancelled);
-            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() cancelled."), member: actionName, path: callerPath, line: callerLine);
+            AppLogger.Debug(string.Create(CultureInfo.InvariantCulture, $"[Action:Canceled] {callerType}.{actionName}() canceled: {opEx.Message}"), member: actionName, path: callerPath, line: callerLine);
             return false;
         }
         catch (ArgumentException argEx)
@@ -335,6 +364,30 @@ public abstract class ViewModelBase : ObservableObject
             AppLogger.Warn(string.Create(CultureInfo.InvariantCulture, $"[Action:InvalidOperation] {callerType}.{actionName}(): {invOpEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
 
             ToastNotificationService.Instance.ShowWarning("Invalid State", msg, actionName);
+            return false;
+        }
+        catch (UnauthorizedAccessException authEx)
+        {
+            var demystified = authEx.Demystify();
+            transaction.Finish(SpanStatus.PermissionDenied);
+            TrackAptabaseError(demystified, actionName, callerType);
+
+            var msg = userFriendlyErrorMessage ?? "Operating system permission denied.";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:AccessDenied] {callerType}.{actionName}(): {authEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowError("Access Denied", msg, actionName);
+            return false;
+        }
+        catch (IOException ioEx)
+        {
+            var demystified = ioEx.Demystify();
+            transaction.Finish(SpanStatus.InternalError);
+            TrackAptabaseError(demystified, actionName, callerType);
+
+            var msg = userFriendlyErrorMessage ?? "Disk I/O error occurred.";
+            AppLogger.Error(string.Create(CultureInfo.InvariantCulture, $"[Action:IOError] {callerType}.{actionName}(): {ioEx.Message}"), demystified, member: actionName, path: callerPath, line: callerLine);
+
+            ToastNotificationService.Instance.ShowError("Disk Error", msg, actionName);
             return false;
         }
         catch (Exception ex)

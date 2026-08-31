@@ -91,10 +91,12 @@ public partial class App : Application
                 ToastNotificationService.Instance.ShowWarning("Theme Warning", "Failed to apply custom theme variant. Reverting to default.");
             }
 
+            AppLogger.Info("Initializing Native Notification Service subsystem...");
+            PushNotificationService.Initialize();
+
             AppLogger.Info("Initializing MaxMind GeoIP2 Engine asynchronously...");
             GeoIpService.Initialize();
 
-            // Safe background pre-warm of flag icons now that AssetLoader is registered
             FlagAssetService.PrewarmCache();
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
