@@ -17,6 +17,8 @@ public class AppSettings
     private static readonly string TempSettingsPath = Path.Combine(SettingsDirectory, "settings.json.tmp");
     private static readonly Lock SyncLock = new();
 
+    private static AppSettings? _cachedSettings;
+
     public string InstallationId { get; set; } = string.Empty;
 
     public bool AudioAlerts { get; set; }
@@ -75,70 +77,68 @@ public class AppSettings
 
     public static bool IsCrashReportingEnabled()
     {
-        try
+        lock (SyncLock)
         {
-            if (File.Exists(SettingsPath))
+            if (_cachedSettings != null)
             {
-                var json = File.ReadAllText(SettingsPath);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json, CachedJsonOptions);
-                if (settings != null)
-                {
-                    return settings.SendAnonymousCrashReports;
-                }
+                return _cachedSettings.SendAnonymousCrashReports;
             }
+
+            return LoadFromDiskInternal().SendAnonymousCrashReports;
         }
-        catch (JsonException jsonEx)
-        {
-            Debug.WriteLine($"[AppSettings] Json error checking crash reporting: {jsonEx.Message}");
-        }
-        catch (IOException ioEx)
-        {
-            Debug.WriteLine($"[AppSettings] IO error checking crash reporting: {ioEx.Message}");
-        }
-        return false;
     }
 
     public static AppSettings LoadFromDisk()
     {
         lock (SyncLock)
         {
-            if (File.Exists(SettingsPath))
+            return LoadFromDiskInternal();
+        }
+    }
+
+    private static AppSettings LoadFromDiskInternal()
+    {
+        if (_cachedSettings != null)
+        {
+            return _cachedSettings;
+        }
+
+        if (File.Exists(SettingsPath))
+        {
+            try
             {
-                try
+                var json = File.ReadAllText(SettingsPath);
+                var settings = JsonSerializer.Deserialize<AppSettings>(json, CachedJsonOptions);
+                if (settings != null)
                 {
-                    var json = File.ReadAllText(SettingsPath);
-                    var settings = JsonSerializer.Deserialize<AppSettings>(json, CachedJsonOptions);
-                    if (settings != null)
+                    if (string.IsNullOrWhiteSpace(settings.InstallationId))
                     {
-                        if (string.IsNullOrWhiteSpace(settings.InstallationId))
-                        {
-                            settings.InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
-                            SaveToDisk(settings);
-                        }
-                        return settings;
+                        settings.InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
                     }
-                }
-                catch (JsonException jsonEx)
-                {
-                    Debug.WriteLine($"[AppSettings] JSON parse error in settings: {jsonEx.Message}");
-                }
-                catch (IOException ioEx)
-                {
-                    Debug.WriteLine($"[AppSettings] IO error loading settings: {ioEx.Message}");
-                }
-                catch (UnauthorizedAccessException authEx)
-                {
-                    Debug.WriteLine($"[AppSettings] Access denied loading settings: {authEx.Message}");
+                    _cachedSettings = settings;
+                    return _cachedSettings;
                 }
             }
-
-            var freshSettings = new AppSettings
+            catch (JsonException jsonEx)
             {
-                InstallationId = HardwareIdentityService.GetOrCreateHardwareId()
-            };
-            SaveToDisk(freshSettings);
-            return freshSettings;
+                Debug.WriteLine($"[AppSettings] JSON parse error in settings: {jsonEx.Message}");
+            }
+            catch (IOException ioEx)
+            {
+                Debug.WriteLine($"[AppSettings] IO error loading settings: {ioEx.Message}");
+            }
+            catch (UnauthorizedAccessException authEx)
+            {
+                Debug.WriteLine($"[AppSettings] Access denied loading settings: {authEx.Message}");
+            }
         }
+
+        var freshSettings = new AppSettings
+        {
+            InstallationId = HardwareIdentityService.GetOrCreateHardwareId()
+        };
+        _cachedSettings = freshSettings;
+        return freshSettings;
     }
 
     public static void SaveToDisk(AppSettings settings)
@@ -152,6 +152,7 @@ public class AppSettings
 
         lock (SyncLock)
         {
+            _cachedSettings = settings;
             try
             {
                 if (!Directory.Exists(SettingsDirectory))

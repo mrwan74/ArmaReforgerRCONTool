@@ -6,6 +6,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Formats.Tar;
 using System.Globalization;
 using System.IO;
@@ -202,7 +203,7 @@ public static class LocationFormatter
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[LocationFormatter] TimeZoneConverter notice for '{trimmedZone}': {ex.Message}");
+            AppLogger.Debug($"[LocationFormatter:TimeZone] TimeZone notice for '{trimmedZone}': {ex.Message}");
         }
 
         return trimmedZone;
@@ -213,7 +214,6 @@ public static class GeoIpService
 {
     private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
     private static readonly string GeoIpDirectory = Path.Combine(StorageDirectory, "geoip");
-    private static readonly string SettingsFile = Path.Combine(StorageDirectory, "settings.json");
     private static readonly string ConfFile = Path.Combine(GeoIpDirectory, "GeoIP.conf");
 
     private static readonly string CityDbPath = Path.Combine(GeoIpDirectory, "GeoLite2-City.mmdb");
@@ -225,6 +225,7 @@ public static class GeoIpService
     private static readonly ConcurrentDictionary<string, GeoLocationResult> LookupCache = new(StringComparer.OrdinalIgnoreCase);
 
     private static CancellationTokenSource? _periodicUpdateCts;
+    private static (string AccountId, string LicenseKey)? _cachedCredentials;
 
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
@@ -252,31 +253,24 @@ public static class GeoIpService
 
     public static event Action? DatabasesUpdated;
 
-    static GeoIpService()
-    {
-        try
-        {
-            if (!Directory.Exists(GeoIpDirectory))
-            {
-                Directory.CreateDirectory(GeoIpDirectory);
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Debug($"[GeoIpService] Directory notice: {ex.Message}");
-        }
-
-        DeployBundledDatabasesIfMissing();
-    }
-
     public static void Initialize()
     {
         _ = Task.Run(() =>
         {
+            var startTimestamp = Stopwatch.GetTimestamp();
             try
             {
+                if (!Directory.Exists(GeoIpDirectory))
+                {
+                    Directory.CreateDirectory(GeoIpDirectory);
+                }
+
+                DeployBundledDatabasesIfMissing();
+
+                AppLogger.Info("[GeoIpService:Init] Initializing GeoIP database readers...");
                 ReloadReaders();
-                AppLogger.Info($"[GeoIpService] MaxMind GeoIP2 engine ready (City DB: {IsCityDbLoaded}, Country DB: {IsCountryDbLoaded}, Has Credentials: {HasCustomCredentials}).");
+                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                AppLogger.Info($"[GeoIpService:Init] GeoIP engine ready in {elapsedMs:F2}ms (CityDB={IsCityDbLoaded}, CountryDB={IsCountryDbLoaded}, HasCredentials={HasCustomCredentials}).");
 
                 if (HasCustomCredentials)
                 {
@@ -285,19 +279,22 @@ public static class GeoIpService
                     _periodicUpdateCts = new CancellationTokenSource();
 
                     var token = _periodicUpdateCts.Token;
+                    AppLogger.Info("[GeoIpService:Init] Starting periodic 12-hour sync worker loop...");
                     _ = Task.Run(() => UpdateDatabasesAsync(force: false, progress: null, token), token);
                     _ = StartPeriodicUpdateLoopAsync(token);
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Error("[GeoIpService] Fatal error during GeoIP engine initialization.", ex);
+                AppLogger.Error($"[GeoIpService:Init] Fatal error initializing GeoIP engine: {ex.Message}", ex);
             }
         }, CancellationToken.None);
     }
 
     public static void Shutdown()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
+        AppLogger.Info("[GeoIpService:Shutdown] Shutting down GeoIP workers...");
         if (_periodicUpdateCts != null)
         {
             try
@@ -305,26 +302,27 @@ public static class GeoIpService
                 _periodicUpdateCts.Cancel();
                 _periodicUpdateCts.Dispose();
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException ex)
             {
-                // Disposed cleanly
+                AppLogger.Trace($"[GeoIpService:Shutdown] CTS already disposed: {ex.Message}");
             }
             _periodicUpdateCts = null;
         }
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AppLogger.Debug($"[GeoIpService:Shutdown] GeoIP shutdown complete in {elapsedMs:F2}ms.");
     }
 
+    [SuppressMessage("AsyncUsage", "PH_P008:ThrowOperationCanceledException", Justification = "Background update loop terminates cleanly without throwing")]
     private static async Task StartPeriodicUpdateLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await SafeDelayAsync(TimeSpan.FromHours(12), cancellationToken).ConfigureAwait(false);
-            if (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
-
             try
             {
+                await SafeDelayAsync(TimeSpan.FromHours(12), cancellationToken).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested) break;
+
+                AppLogger.Info("[GeoIpService:Periodic] 12-hour timer tick: checking for updated databases...");
                 await UpdateDatabasesAsync(force: false, progress: null, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -333,18 +331,14 @@ public static class GeoIpService
             }
             catch (Exception ex)
             {
-                AppLogger.Error("[GeoIpService] Exception in background GeoIP update loop.", ex);
+                AppLogger.Error($"[GeoIpService:Periodic] Exception in update loop: {ex.Message}", ex);
             }
         }
     }
 
     private static async Task SafeDelayAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
-        if (delay <= TimeSpan.Zero || cancellationToken.IsCancellationRequested)
-        {
-            return;
-        }
-
+        if (cancellationToken.IsCancellationRequested || delay <= TimeSpan.Zero) return;
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using (cancellationToken.Register(static state => ((TaskCompletionSource?)state)?.TrySetResult(), tcs).ConfigureAwait(false))
         {
@@ -354,8 +348,11 @@ public static class GeoIpService
 
     private static void DeployBundledDatabasesIfMissing()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         TryDeployBundledFile("GeoLite2-City.mmdb", CityDbPath);
         TryDeployBundledFile("GeoLite2-Country.mmdb", CountryDbPath);
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AppLogger.Trace($"[GeoIpService:Deploy] Bundled DB check complete in {elapsedMs:F2}ms.");
     }
 
     private static void TryDeployBundledFile(string fileName, string destinationPath)
@@ -375,40 +372,48 @@ public static class GeoIpService
         {
             try
             {
+                var copyStart = Stopwatch.GetTimestamp();
+                AppLogger.Info($"[GeoIpService:Deploy] Copying bundled MMDB '{sourcePath}' -> '{destinationPath}'...");
                 File.Copy(sourcePath, destinationPath, overwrite: false);
+                var copyElapsed = Stopwatch.GetElapsedTime(copyStart).TotalMilliseconds;
+                AppLogger.Info($"[GeoIpService:Deploy] Deployed '{fileName}' in {copyElapsed:F2}ms.");
                 break;
             }
             catch (Exception ex)
             {
-                AppLogger.Trace($"[GeoIpService] Deploy notice for '{fileName}': {ex.Message}");
+                AppLogger.Trace($"[GeoIpService:Deploy] Deploy notice for '{fileName}': {ex.Message}");
             }
         }
     }
 
     public static (string AccountId, string LicenseKey) ResolveCredentials()
     {
+        if (_cachedCredentials.HasValue)
+        {
+            return _cachedCredentials.Value;
+        }
+
+        var startTimestamp = Stopwatch.GetTimestamp();
         var envAccount = Environment.GetEnvironmentVariable("MAXMIND_ACCOUNT_ID");
         var envKey = Environment.GetEnvironmentVariable("MAXMIND_LICENSE_KEY");
         if (!string.IsNullOrWhiteSpace(envAccount) && !string.IsNullOrWhiteSpace(envKey))
         {
-            return (envAccount.Trim(), envKey.Trim());
+            _cachedCredentials = (envAccount.Trim(), envKey.Trim());
+            return _cachedCredentials.Value;
         }
 
         try
         {
-            if (File.Exists(SettingsFile))
+            var settings = AppSettings.LoadFromDisk();
+            if (!string.IsNullOrWhiteSpace(settings.MaxMindAccountId) && !string.IsNullOrWhiteSpace(settings.MaxMindLicenseKey))
             {
-                var json = File.ReadAllText(SettingsFile);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json);
-                if (settings != null && !string.IsNullOrWhiteSpace(settings.MaxMindAccountId) && !string.IsNullOrWhiteSpace(settings.MaxMindLicenseKey))
-                {
-                    return (settings.MaxMindAccountId.Trim(), settings.MaxMindLicenseKey.Trim());
-                }
+                _cachedCredentials = (settings.MaxMindAccountId.Trim(), settings.MaxMindLicenseKey.Trim());
+                return _cachedCredentials.Value;
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[GeoIpService] Resolve credentials notice: {ex.Message}");
+            AppLogger.Trace($"[GeoIpService:Credentials] Settings parsing notice: {ex.Message}");
         }
 
         try
@@ -439,20 +444,30 @@ public static class GeoIpService
 
                 if (!string.IsNullOrWhiteSpace(parsedAccount) && !string.IsNullOrWhiteSpace(parsedKey))
                 {
-                    return (parsedAccount.Trim(), parsedKey.Trim());
+                    _cachedCredentials = (parsedAccount.Trim(), parsedKey.Trim());
+                    return _cachedCredentials.Value;
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[GeoIpService] Conf file notice: {ex.Message}");
+            AppLogger.Trace($"[GeoIpService:Credentials] Conf file parsing notice: {ex.Message}");
         }
 
-        return (string.Empty, string.Empty);
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AppLogger.Trace($"[GeoIpService:Credentials] Credentials check complete in {elapsedMs:F2}ms (None configured).");
+        _cachedCredentials = (string.Empty, string.Empty);
+        return _cachedCredentials.Value;
+    }
+
+    public static void InvalidateCredentialsCache()
+    {
+        _cachedCredentials = null;
     }
 
     public static void ReloadReaders()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         lock (ReaderLock)
         {
             try
@@ -463,11 +478,16 @@ public static class GeoIpService
                 if (File.Exists(CityDbPath))
                 {
                     _cityReader = new DatabaseReader(CityDbPath);
+                    AppLogger.Info($"[GeoIpService:Reader] Loaded DatabaseReader for GeoLite2-City ({new FileInfo(CityDbPath).Length / 1024} KB).");
+                }
+                else
+                {
+                    AppLogger.Warn($"[GeoIpService:Reader] GeoLite2-City missing at '{CityDbPath}'.");
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Error($"[GeoIpService] Error initializing GeoLite2-City reader: {ex.Message}", ex);
+                AppLogger.Error($"[GeoIpService:Reader] Error initializing City reader: {ex.Message}", ex);
             }
 
             try
@@ -478,14 +498,20 @@ public static class GeoIpService
                 if (File.Exists(CountryDbPath))
                 {
                     _countryReader = new DatabaseReader(CountryDbPath);
+                    AppLogger.Info($"[GeoIpService:Reader] Loaded DatabaseReader for GeoLite2-Country ({new FileInfo(CountryDbPath).Length / 1024} KB).");
+                }
+                else
+                {
+                    AppLogger.Warn($"[GeoIpService:Reader] GeoLite2-Country missing at '{CountryDbPath}'.");
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Error($"[GeoIpService] Error initializing GeoLite2-Country reader: {ex.Message}", ex);
+                AppLogger.Error($"[GeoIpService:Reader] Error initializing Country reader: {ex.Message}", ex);
             }
 
             LookupCache.Clear();
+            AppLogger.Debug("[GeoIpService:Reader] Lookup cache cleared.");
         }
 
         try
@@ -494,12 +520,16 @@ public static class GeoIpService
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[GeoIpService] DatabasesUpdated notification notice: {ex.Message}");
+            AppLogger.Trace($"[GeoIpService:Reader] DatabasesUpdated subscriber notice: {ex.Message}");
         }
+
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AppLogger.Info($"[GeoIpService:Reader] ReloadReaders complete in {elapsedMs:F2}ms.");
     }
 
     public static GeoLocationResult GetLocation(string? ip)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         if (string.IsNullOrWhiteSpace(ip) || ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
         {
             return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
@@ -512,11 +542,13 @@ public static class GeoIpService
 
         if (!IPAddress.TryParse(ip, out var parsedIp))
         {
+            AppLogger.Trace($"[GeoIpService:Lookup] Invalid IP format: '{ip}'");
             return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         }
 
         if (IsPrivateOrLoopbackIp(parsedIp))
         {
+            AppLogger.Trace($"[GeoIpService:Lookup] IP '{ip}' is private/loopback.");
             var localResult = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, "Local Subnet", "LAN", string.Empty, 0.0, 0.0, TimeZoneInfo.Local.Id, LocationFormatter.UnknownRegion);
             LookupCache[ip] = localResult;
             return localResult;
@@ -548,16 +580,18 @@ public static class GeoIpService
 
                         var result = new GeoLocationResult(countryCode, countryName, cityName, stateName, postal, lat, lon, timeZone, naturalLoc);
                         LookupCache[ip] = result;
+                        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                        AppLogger.Trace($"[GeoIpService:Lookup] City lookup hit for {ip} in {elapsedMs:F2}ms: {naturalLoc} (TZ={timeZone})");
                         return result;
                     }
                 }
                 catch (AddressNotFoundException)
                 {
-                    AppLogger.Trace($"[GeoIpService] IP '{ip}' not found in GeoLite2-City database.");
+                    AppLogger.Trace($"[GeoIpService:Lookup] IP '{ip}' not found in GeoLite2-City.");
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Trace($"[GeoIpService] City lookup notice for {ip}: {ex.Message}");
+                    AppLogger.Trace($"[GeoIpService:Lookup] City lookup notice for {ip}: {ex.Message}");
                 }
             }
 
@@ -572,16 +606,18 @@ public static class GeoIpService
 
                         var result = new GeoLocationResult(countryCode, countryName, string.Empty, countryName, string.Empty, null, null, string.Empty, countryName);
                         LookupCache[ip] = result;
+                        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                        AppLogger.Trace($"[GeoIpService:Lookup] Country lookup hit for {ip} in {elapsedMs:F2}ms: {countryName} ({countryCode})");
                         return result;
                     }
                 }
                 catch (AddressNotFoundException)
                 {
-                    AppLogger.Trace($"[GeoIpService] IP '{ip}' not found in GeoLite2-Country database.");
+                    AppLogger.Trace($"[GeoIpService:Lookup] IP '{ip}' not found in GeoLite2-Country.");
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Trace($"[GeoIpService] Country lookup notice for {ip}: {ex.Message}");
+                    AppLogger.Trace($"[GeoIpService:Lookup] Country lookup notice for {ip}: {ex.Message}");
                 }
             }
         }
@@ -608,25 +644,30 @@ public static class GeoIpService
     {
         if (IsUpdating)
         {
+            AppLogger.Warn("[GeoIpService:Update] Skipped: update already in progress.");
             return false;
         }
 
+        var updateStartTimestamp = Stopwatch.GetTimestamp();
+        using var timing = AppLogger.Measure($"GeoIpService.UpdateDatabasesAsync(Force: {force})", slowThresholdMs: 5000);
         var report = new GeoIpProgressReport();
 
         var (accountId, licenseKey) = ResolveCredentials();
         if (string.IsNullOrWhiteSpace(accountId) || string.IsNullOrWhiteSpace(licenseKey))
         {
             report.CurrentOperation = "Authentication Credentials Missing";
-            report.DetailLog = "MaxMind Account ID & License Key required to download live database updates.";
+            report.DetailLog = "MaxMind Account ID and License Key required for live updates.";
             report.CityStatus = GeoIpStepStatus.Failed;
             report.CountryStatus = GeoIpStepStatus.Failed;
             progress?.Report(report);
+
+            AppLogger.Warn("[GeoIpService:Update] Update aborted: MaxMind credentials missing.");
 
             if (force)
             {
                 ToastNotificationService.Instance.ShowToast(
                     "MaxMind Credentials Required",
-                    "Currently using offline pre-bundled databases. Enter Account ID & License Key in Settings to update.",
+                    "Using offline pre-bundled databases. Enter credentials in Settings to update.",
                     "GEOIP_AUTH_NOTICE"
                 );
             }
@@ -636,17 +677,18 @@ public static class GeoIpService
         IsUpdating = true;
         try
         {
-            report.CurrentOperation = "Connecting to MaxMind Update Servers...";
+            report.CurrentOperation = "Connecting to MaxMind servers...";
             report.OverallProgressPercentage = 5;
-            report.DetailLog = $"Initiating authenticated handshake for Account ID: {accountId}...";
+            report.DetailLog = $"Connecting for Account ID: {accountId}...";
             progress?.Report(report);
 
-            // 1. GeoLite2-City
+            AppLogger.Info($"[GeoIpService:Update] Starting MaxMind update (Account: {accountId}, Force: {force})...");
+
             report.CurrentOperation = "Updating GeoLite2-City Database...";
             report.CityStatus = GeoIpStepStatus.InProgress;
             report.CityStatusMessage = "Checking version...";
             report.OverallProgressPercentage = 15;
-            report.DetailLog = "Checking remote revision timestamp for GeoLite2-City.mmdb...";
+            report.DetailLog = "Checking remote timestamp for GeoLite2-City.mmdb...";
             progress?.Report(report);
 
             var cityReq = new GeoIpDownloadRequest("GeoLite2-City", CityDbPath, accountId, licenseKey, force, 15, 55);
@@ -656,12 +698,11 @@ public static class GeoIpService
             report.OverallProgressPercentage = 55;
             progress?.Report(report);
 
-            // 2. GeoLite2-Country
             report.CurrentOperation = "Updating GeoLite2-Country Database...";
             report.CountryStatus = GeoIpStepStatus.InProgress;
             report.CountryStatusMessage = "Checking version...";
             report.OverallProgressPercentage = 60;
-            report.DetailLog = "Checking remote revision timestamp for GeoLite2-Country.mmdb...";
+            report.DetailLog = "Checking remote timestamp for GeoLite2-Country.mmdb...";
             progress?.Report(report);
 
             var countryReq = new GeoIpDownloadRequest("GeoLite2-Country", CountryDbPath, accountId, licenseKey, force, 60, 95);
@@ -671,22 +712,25 @@ public static class GeoIpService
             report.OverallProgressPercentage = 95;
             progress?.Report(report);
 
-            report.CurrentOperation = "Reloading Reader Instances...";
-            report.DetailLog = "Re-initializing binary MaxMind MMDB reader engines and warming cache...";
+            report.CurrentOperation = "Reloading Readers...";
+            report.DetailLog = "Re-initializing binary MMDB readers...";
             progress?.Report(report);
 
             ReloadReaders();
 
             report.OverallProgressPercentage = 100;
-            report.CurrentOperation = "All Databases Synchronized";
-            report.DetailLog = "MaxMind binary database synchronization completed successfully.";
+            report.CurrentOperation = "Databases Synchronized";
+            report.DetailLog = "MaxMind database synchronization completed successfully.";
             progress?.Report(report);
+
+            var totalElapsedMs = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[GeoIpService:Update] Sync finished in {totalElapsedMs:F2}ms (CityUpdated={cityUpdated}, CountryUpdated={countryUpdated}).");
 
             if (cityUpdated || countryUpdated || force)
             {
                 ToastNotificationService.Instance.ShowToast(
                     "GeoIP Databases Updated",
-                    "MaxMind GeoLite2 binary databases refreshed and active.",
+                    "MaxMind GeoLite2 databases refreshed and active.",
                     "GEOIP_UPDATE"
                 );
                 return true;
@@ -697,22 +741,23 @@ public static class GeoIpService
         catch (OperationCanceledException)
         {
             report.CurrentOperation = "Update Canceled";
-            report.DetailLog = "Database update operation was canceled by the operator.";
+            report.DetailLog = "Update canceled by operator.";
             progress?.Report(report);
+            AppLogger.Info("[GeoIpService:Update] Update canceled by operator.");
             return false;
         }
         catch (HttpRequestException httpEx)
         {
-            AppLogger.Error("[GeoIpService] Network error during MaxMind update.", httpEx);
+            AppLogger.Error($"[GeoIpService:Update] HTTP error during update: {httpEx.Message}", httpEx);
             report.CurrentOperation = "Network Failure";
-            report.DetailLog = $"HTTP communication failure: {httpEx.Message}";
+            report.DetailLog = $"HTTP failure: {httpEx.Message}";
             progress?.Report(report);
             ToastNotificationService.Instance.ShowError("GeoIP Update Failed", $"HTTP error: {httpEx.Message}");
             return false;
         }
         catch (IOException ioEx)
         {
-            AppLogger.Error("[GeoIpService] Disk I/O error during database extraction.", ioEx);
+            AppLogger.Error($"[GeoIpService:Update] I/O error extracting databases: {ioEx.Message}", ioEx);
             report.CurrentOperation = "Disk Extraction Failure";
             report.DetailLog = $"File write failure: {ioEx.Message}";
             progress?.Report(report);
@@ -721,11 +766,11 @@ public static class GeoIpService
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[GeoIpService] Unexpected error during MaxMind GeoIP update.", ex);
+            AppLogger.Error($"[GeoIpService:Update] Error updating GeoIP databases: {ex.Message}", ex);
             report.CurrentOperation = "Unexpected Error";
             report.DetailLog = $"Failed updating databases: {ex.Message}";
             progress?.Report(report);
-            ToastNotificationService.Instance.ShowToast("GeoIP Update Error", $"Failed updating GeoIP databases: {ex.Message}", "GEOIP_UPDATE_ERR");
+            ToastNotificationService.Instance.ShowToast("GeoIP Update Error", $"Failed updating databases: {ex.Message}", "GEOIP_UPDATE_ERR");
             return false;
         }
         finally
@@ -740,10 +785,13 @@ public static class GeoIpService
         GeoIpProgressReport report,
         CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested) return false;
+        var stepStart = Stopwatch.GetTimestamp();
         var downloadUrl = $"https://download.maxmind.com/geoip/databases/{request.EditionId}/download?suffix=tar.gz";
         var authHeader = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{request.AccountId}:{request.LicenseKey}"));
 
         DateTimeOffset? remoteLastModified = null;
+        AppLogger.Debug($"[GeoIpService:Download] HEAD request to {downloadUrl} for {request.EditionId}...");
 
         try
         {
@@ -754,13 +802,15 @@ public static class GeoIpService
             if (headResponse.IsSuccessStatusCode)
             {
                 remoteLastModified = headResponse.Content.Headers.LastModified ?? headResponse.Headers.Date;
-                report.DetailLog = $"[{request.EditionId}] Remote version timestamp: {remoteLastModified:yyyy-MM-dd HH:mm:ss UTC}";
+                report.DetailLog = $"[{request.EditionId}] Remote timestamp: {remoteLastModified:yyyy-MM-dd HH:mm:ss UTC}";
                 progress?.Report(report);
+                AppLogger.Info($"[{request.EditionId}] Remote Last-Modified: {remoteLastModified}");
             }
             else if (headResponse.StatusCode == HttpStatusCode.Unauthorized)
             {
-                report.DetailLog = $"[{request.EditionId}] Authentication rejected: MaxMind Account ID or License Key is invalid.";
+                report.DetailLog = $"[{request.EditionId}] Authentication rejected: Account ID or License Key is invalid.";
                 progress?.Report(report);
+                AppLogger.Warn($"[{request.EditionId}] HTTP 401 Unauthorized from MaxMind.");
                 return false;
             }
         }
@@ -770,7 +820,7 @@ public static class GeoIpService
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[GeoIpService] Head check notice for '{request.EditionId}': {ex.Message}");
+            AppLogger.Trace($"[GeoIpService:Download] Head check notice for '{request.EditionId}': {ex.Message}");
         }
 
         if (!request.Force && File.Exists(request.TargetMmdbPath) && remoteLastModified.HasValue)
@@ -778,8 +828,9 @@ public static class GeoIpService
             var localLastWriteTime = new DateTimeOffset(File.GetLastWriteTimeUtc(request.TargetMmdbPath), TimeSpan.Zero);
             if (remoteLastModified.Value <= localLastWriteTime)
             {
-                report.DetailLog = $"[{request.EditionId}] Local file is already current ({localLastWriteTime:yyyy-MM-dd}). Download skipped.";
+                report.DetailLog = $"[{request.EditionId}] Local file is current ({localLastWriteTime:yyyy-MM-dd}). Skipping download.";
                 progress?.Report(report);
+                AppLogger.Info($"[{request.EditionId}] Local database is current. Skipping download.");
                 return false;
             }
         }
@@ -788,14 +839,17 @@ public static class GeoIpService
         report.OverallProgressPercentage = (request.StartPercentage + request.EndPercentage) / 2.0;
         progress?.Report(report);
 
+        AppLogger.Info($"[GeoIpService:Download] Downloading archive for {request.EditionId}...");
+
         using var getRequest = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
         getRequest.Headers.Authorization = new AuthenticationHeaderValue("Basic", authHeader);
 
         using var getResponse = await HttpClient.SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         if (!getResponse.IsSuccessStatusCode)
         {
-            report.DetailLog = $"[{request.EditionId}] Download failed with status {getResponse.StatusCode}.";
+            report.DetailLog = $"[{request.EditionId}] Download failed: {getResponse.StatusCode}.";
             progress?.Report(report);
+            AppLogger.Error($"[{request.EditionId}] Download failed: {getResponse.StatusCode}");
             return false;
         }
 
@@ -812,6 +866,7 @@ public static class GeoIpService
         {
             if (entry.Name.EndsWith(".mmdb", StringComparison.OrdinalIgnoreCase))
             {
+                AppLogger.Debug($"[{request.EditionId}] Found target entry '{entry.Name}'. Extracting to '{tempExtractFile}'...");
                 await entry.ExtractToFileAsync(tempExtractFile, overwrite: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 if (File.Exists(request.TargetMmdbPath))
@@ -826,12 +881,15 @@ public static class GeoIpService
                 }
 
                 var fileSizeMb = new FileInfo(request.TargetMmdbPath).Length / (1024.0 * 1024.0);
-                report.DetailLog = $"[{request.EditionId}] Extracted {fileSizeMb:F2} MB binary database to '{Path.GetFileName(request.TargetMmdbPath)}'.";
+                var stepElapsedMs = Stopwatch.GetElapsedTime(stepStart).TotalMilliseconds;
+                report.DetailLog = $"[{request.EditionId}] Extracted {fileSizeMb:F2} MB binary database in {stepElapsedMs:F2}ms.";
                 progress?.Report(report);
+                AppLogger.Info($"[{request.EditionId}] Deployed database ({fileSizeMb:F2} MB) in {stepElapsedMs:F2}ms.");
                 return true;
             }
         }
 
+        AppLogger.Warn($"[{request.EditionId}] Extraction complete but no .mmdb file found in archive.");
         return false;
     }
 

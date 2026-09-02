@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
@@ -15,15 +16,18 @@ public partial class ConsoleTabView : UserControl
 
     public ConsoleTabView()
     {
+        var start = Stopwatch.GetTimestamp();
         InitializeComponent();
         _logScrollViewer = this.FindControl<ScrollViewer>("PART_LogScrollViewer");
 
         DataContextChanged += OnDataContextChanged;
         Unloaded += OnUnloaded;
+        AppLogger.Debug($"[ConsoleTabView:Init] Initialized in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         DetachViewModel();
 
         if (DataContext is ConsoleViewModel vm)
@@ -36,12 +40,15 @@ public partial class ConsoleTabView : UserControl
             {
                 OnScrollToEndRequested();
             }
+            AppLogger.Trace($"[ConsoleTabView:Bind] ViewModel attached in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
     }
 
     private void OnUnloaded(object? sender, RoutedEventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         DetachViewModel();
+        AppLogger.Trace($"[ConsoleTabView:Unload] Detached in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
     private void DetachViewModel()
@@ -66,13 +73,15 @@ public partial class ConsoleTabView : UserControl
     {
         Dispatcher.UIThread.Post(() =>
         {
+            var scrollStart = Stopwatch.GetTimestamp();
             try
             {
                 _logScrollViewer?.ScrollToEnd();
+                AppLogger.Trace($"[ConsoleTabView:Scroll] ScrollToEnd in {Stopwatch.GetElapsedTime(scrollStart).TotalMilliseconds:F2}ms.");
             }
             catch (Exception ex)
             {
-                AppLogger.Debug($"[ConsoleTabView] Non-fatal layout notification during ScrollToEnd: {ex.Message}");
+                AppLogger.Debug($"[ConsoleTabView:Scroll] Non-fatal notice: {ex.Message}");
             }
         }, DispatcherPriority.Loaded);
     }

@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -33,7 +34,7 @@ public partial class SettingsViewModel : ViewModelBase
     private static readonly string SettingsFile = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json");
     private static readonly string TempSettingsFile = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json.tmp");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private static readonly Lock FileLock = new();
+    private static readonly SemaphoreSlim FileLock = new(1, 1);
 
     [ObservableProperty] public partial AppSettings Settings { get; set; } = new();
     [ObservableProperty] public partial string InstallationId { get; set; } = HardwareIdentityService.GetOrCreateHardwareId();
@@ -75,6 +76,7 @@ public partial class SettingsViewModel : ViewModelBase
                 Settings.ThemeMode = mode;
                 OnPropertyChanged(nameof(SelectedThemeOption));
                 AppSettings.ApplyThemeMode(mode);
+                AppLogger.Info($"[SettingsViewModel:Theme] Theme mode set to: {mode}");
                 _ = SaveSettingsAsync();
             }
         }
@@ -85,12 +87,16 @@ public partial class SettingsViewModel : ViewModelBase
 
     public SettingsViewModel(DashboardViewModel? dashboard = null)
     {
+        var start = Stopwatch.GetTimestamp();
         _dashboard = dashboard;
+        AppLogger.Debug("[SettingsViewModel:Init] Initializing SettingsViewModel...");
         LoadSettingsFast();
+        AppLogger.Trace($"[SettingsViewModel:Init] Initialized in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
     public static void ApplyWindowGlassState(bool enableWindowGlass)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -103,20 +109,22 @@ public partial class SettingsViewModel : ViewModelBase
                     }
                 }
             }
-            AppLogger.Debug($"[SettingsViewModel] Applied window glass backdrop state: {enableWindowGlass}");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[SettingsViewModel:Glass] Window glass state applied in {elapsedMs:F2}ms (UseWindowGlass={enableWindowGlass}).");
         }
         catch (InvalidOperationException invEx)
         {
-            AppLogger.Warn($"[SettingsViewModel] Invalid window state applying backdrop effect: {invEx.Message}", invEx);
+            AppLogger.Warn($"[SettingsViewModel:Glass] Invalid window state applying backdrop: {invEx.Message}", invEx);
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[SettingsViewModel] Unexpected error in ApplyWindowGlassState: {ex.Message}", ex);
+            AppLogger.Error($"[SettingsViewModel:Glass] Unexpected error: {ex.Message}", ex);
         }
     }
 
     private void LoadSettingsFast()
     {
+        var start = Stopwatch.GetTimestamp();
         if (!File.Exists(SettingsFile))
         {
             var (acc, key) = GeoIpService.ResolveCredentials();
@@ -124,7 +132,8 @@ public partial class SettingsViewModel : ViewModelBase
             Settings.MaxMindLicenseKey = key;
             InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
-            AppLogger.Info("[SettingsViewModel] Initialized fresh default application settings.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[SettingsViewModel:Load] Loaded fresh default settings in {elapsedMs:F2}ms.");
             return;
         }
 
@@ -134,26 +143,27 @@ public partial class SettingsViewModel : ViewModelBase
             Settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
             InstallationId = !string.IsNullOrWhiteSpace(Settings.InstallationId) ? Settings.InstallationId : HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
-            AppLogger.Info($"[SettingsViewModel] Loaded settings from '{SettingsFile}' (AudioAlerts={Settings.AudioAlerts}, PushNotifications={Settings.PushNotifications}, ThemeMode='{Settings.ThemeMode}').");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[SettingsViewModel:Load] Loaded settings in {elapsedMs:F2}ms (AudioAlerts={Settings.AudioAlerts}, PushNotifications={Settings.PushNotifications}, ThemeMode='{Settings.ThemeMode}').");
         }
         catch (JsonException jsonEx)
         {
-            AppLogger.Warn($"[SettingsViewModel] Settings JSON format warning: {jsonEx.Message}. Restoring defaults.", jsonEx);
+            AppLogger.Warn($"[SettingsViewModel:Load] Settings JSON corrupted: {jsonEx.Message}. Restoring defaults.", jsonEx);
             Settings = new AppSettings();
             InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
-            ToastNotificationService.Instance.ShowWarning("Settings Corrupted", "Settings file contained invalid JSON. Default settings restored.");
+            ToastNotificationService.Instance.ShowWarning("Settings Corrupted", "Default settings restored.");
         }
         catch (FileNotFoundException fnfEx)
         {
-            AppLogger.Trace($"[SettingsViewModel] Settings file was not found: {fnfEx.Message}");
+            AppLogger.Trace($"[SettingsViewModel:Load] Settings file missing: {fnfEx.Message}");
             Settings = new AppSettings();
             InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
         }
         catch (UnauthorizedAccessException authEx)
         {
-            AppLogger.Warn($"[SettingsViewModel] Access denied reading settings from '{SettingsFile}': {authEx.Message}", authEx);
+            AppLogger.Warn($"[SettingsViewModel:Load] Access denied reading '{SettingsFile}': {authEx.Message}", authEx);
             Settings = new AppSettings();
             InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
@@ -161,7 +171,7 @@ public partial class SettingsViewModel : ViewModelBase
         }
         catch (IOException ioEx)
         {
-            AppLogger.Warn($"[SettingsViewModel] Disk I/O warning reading settings: {ioEx.Message}", ioEx);
+            AppLogger.Warn($"[SettingsViewModel:Load] Disk I/O warning: {ioEx.Message}", ioEx);
             Settings = new AppSettings();
             InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
@@ -172,10 +182,12 @@ public partial class SettingsViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Debug($"[SettingsViewModel] Sorting preferences updated (Players: {Settings.PlayersSortBy}, Bans: {Settings.BansSortBy}, DB: {Settings.DatabaseSortBy}). Re-filtering tabs...");
+            var start = Stopwatch.GetTimestamp();
+            AppLogger.Debug($"[SettingsViewModel:Sort] Sorting preferences changed (Players: {Settings.PlayersSortBy}, Bans: {Settings.BansSortBy}, DB: {Settings.DatabaseSortBy}). Re-filtering...");
             _dashboard?.PlayersTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard?.BansTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard?.DatabaseTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+            AppLogger.Trace($"[SettingsViewModel:Sort] Re-filter complete in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         });
     }
 
@@ -193,7 +205,7 @@ public partial class SettingsViewModel : ViewModelBase
                 _ => SoundAlertType.DefaultNotification
             };
 
-            AppLogger.Info($"[SettingsViewModel] User triggered manual Audio Alert test for: {alert}");
+            AppLogger.Info($"[SettingsViewModel:AudioTest] Playing alert: {alert}");
             SoundNotificationService.PlayAlert(alert);
             ToastNotificationService.Instance.ShowToast("Audio Alert Test", $"Playing {alert} audio alert.");
         });
@@ -204,24 +216,27 @@ public partial class SettingsViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Info("[SettingsViewModel] User triggered manual Native Push Notification test.");
+            AppLogger.Info("[SettingsViewModel:PushTest] Triggering test push notification.");
             PushNotificationService.SendNotification("ARRT Test Alert", "Native OS Push Notification channel is operational.", "default");
-            ToastNotificationService.Instance.ShowToast("Push Notification Dispatched", "Dispatched test notification to system notification tray.");
+            ToastNotificationService.Instance.ShowToast("Push Notification Dispatched", "Test notification sent.");
         });
     }
 
     [RelayCommand]
     public Task<bool> CopyInstallationIdAsync() => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         await ClipboardService.SetTextAsync(InstallationId).ConfigureAwait(false);
-        AppLogger.Info($"[SettingsViewModel] Copied installation ID '{InstallationId}' to clipboard.");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[SettingsViewModel:Clipboard] Copied installation ID in {elapsedMs:F2}ms: '{InstallationId}'");
         ToastNotificationService.Instance.ShowToast("Copied Hardware ID", $"Hardware identity copied: {InstallationId}");
     });
 
     [RelayCommand]
     public Task<bool> RefreshDatabaseStatsAsync() => ExecuteSafeAsync(async () =>
     {
-        AppLogger.Debug("[SettingsViewModel] Querying SQLite historical database statistics...");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Debug("[SettingsViewModel:Stats] Querying SQLite statistics...");
         var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync().ConfigureAwait(false);
         var sizeText = $"{stats.DatabaseSizeBytes / (1024.0 * 1024.0):F2} MB (WAL: {stats.WalSizeBytes / 1024.0:F1} KB)";
         var recordsText = $"{stats.TotalReforgerPlayers:N0} Reforger / {stats.TotalBattlEyePlayers:N0} BattlEye Players";
@@ -231,7 +246,8 @@ public partial class SettingsViewModel : ViewModelBase
             DatabaseSizeText = sizeText;
             DatabaseRecordsText = recordsText;
         });
-        AppLogger.Info($"[SettingsViewModel] SQLite statistics updated: {recordsText}, Size: {sizeText}");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[SettingsViewModel:Stats] SQLite stats updated in {elapsedMs:F2}ms: {recordsText}, Size: {sizeText}");
     }, "Failed to query SQLite database telemetry stats.");
 
     [RelayCommand]
@@ -242,7 +258,7 @@ public partial class SettingsViewModel : ViewModelBase
             IsLicenseKeyRevealed = !IsLicenseKeyRevealed;
             OnPropertyChanged(nameof(LicenseKeyMaskChar));
             OnPropertyChanged(nameof(LicenseKeyIconKind));
-            AppLogger.Trace($"[SettingsViewModel] Toggled license key reveal state: {IsLicenseKeyRevealed}");
+            AppLogger.Trace($"[SettingsViewModel:LicenseKey] Reveal state: {IsLicenseKeyRevealed}");
         });
     }
 
@@ -251,6 +267,7 @@ public partial class SettingsViewModel : ViewModelBase
     {
         return ExecuteSafeAsync(async () =>
         {
+            var start = Stopwatch.GetTimestamp();
             using var timing = AppLogger.Measure("SettingsViewModel.SaveSettingsAsync");
 
             var dir = Path.GetDirectoryName(SettingsFile);
@@ -262,14 +279,19 @@ public partial class SettingsViewModel : ViewModelBase
             Settings.InstallationId = InstallationId;
             var json = JsonSerializer.Serialize(Settings, JsonOptions);
 
-            lock (FileLock)
+            await FileLock.WaitAsync().ConfigureAwait(false);
+            try
             {
-                File.WriteAllText(TempSettingsFile, json);
+                await File.WriteAllTextAsync(TempSettingsFile, json).ConfigureAwait(false);
                 if (File.Exists(SettingsFile))
                 {
                     File.Delete(SettingsFile);
                 }
                 File.Move(TempSettingsFile, SettingsFile, overwrite: true);
+            }
+            finally
+            {
+                FileLock.Release();
             }
 
             AppSettings.ApplyThemeMode(Settings.ThemeMode);
@@ -277,8 +299,9 @@ public partial class SettingsViewModel : ViewModelBase
             OnPropertyChanged(nameof(SelectedThemeOption));
             OnSortSettingChanged();
 
-            AppLogger.Info($"[SettingsViewModel] Persisted preferences successfully: AudioAlerts={Settings.AudioAlerts}, PushNotifications={Settings.PushNotifications}, Glass={Settings.EnableWindowGlass}, AutoBans={Settings.AutoRefreshBans}");
-            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences and notification settings updated.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[SettingsViewModel:Save] Preferences saved in {elapsedMs:F2}ms (AudioAlerts={Settings.AudioAlerts}, Push={Settings.PushNotifications}, Glass={Settings.EnableWindowGlass}).");
+            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences updated.");
         });
     }
 
@@ -289,7 +312,7 @@ public partial class SettingsViewModel : ViewModelBase
         {
             if (string.IsNullOrWhiteSpace(Settings.MaxMindAccountId) || string.IsNullOrWhiteSpace(Settings.MaxMindLicenseKey))
             {
-                AppLogger.Warn("[SettingsViewModel] GeoIP update aborted: MaxMind Account ID or License Key is empty.");
+                AppLogger.Warn("[SettingsViewModel:GeoIP] Update aborted: credentials missing.");
                 ToastNotificationService.Instance.ShowToast(
                     "Credentials Required for Updates",
                     "Enter your MaxMind Account ID and License Key in Settings to update.",
@@ -302,6 +325,7 @@ public partial class SettingsViewModel : ViewModelBase
 
             if (_dashboard != null)
             {
+                AppLogger.Info("[SettingsViewModel:GeoIP] Opening GeoIpUpdateDialog in dashboard...");
                 _dashboard.ShowDialog(new GeoIpUpdateDialogViewModel(() => _dashboard.CloseDialog()));
             }
             else
@@ -309,7 +333,7 @@ public partial class SettingsViewModel : ViewModelBase
                 IsGeoIpUpdating = true;
                 try
                 {
-                    AppLogger.Info("[SettingsViewModel] Starting standalone GeoIP database update...");
+                    AppLogger.Info("[SettingsViewModel:GeoIP] Starting GeoIP database update...");
                     await GeoIpService.UpdateDatabasesAsync(force: true).ConfigureAwait(false);
                 }
                 finally
@@ -325,18 +349,21 @@ public partial class SettingsViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Info("[SettingsViewModel] Prompting confirmation for SQLite database purge.");
+            AppLogger.Info("[SettingsViewModel:DatabasePurge] Prompting confirmation for database purge.");
             _dashboard?.ShowDialog(new ConfirmDialogViewModel(
                 "Clear SQLite Database",
-                "Are you sure you want to permanently clear all historical player records from both Reforger and BattlEye tables?",
+                "Are you sure you want to permanently clear all historical player records?",
                 "Clear Database",
                 true,
                 async () =>
                 {
-                    AppLogger.Info("[SettingsViewModel] Executing SQLite historical database purge...");
+                    var start = Stopwatch.GetTimestamp();
+                    AppLogger.Info("[SettingsViewModel:DatabasePurge] Executing database purge...");
                     await PlayerDatabaseStorageService.ClearDatabaseAsync(null).ConfigureAwait(false);
                     await RefreshDatabaseStatsAsync().ConfigureAwait(false);
-                    ToastNotificationService.Instance.ShowToast("Database Cleared", "SQLite historical database purged.");
+                    var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                    AppLogger.Info($"[SettingsViewModel:DatabasePurge] Purge complete in {elapsedMs:F2}ms.");
+                    ToastNotificationService.Instance.ShowToast("Database Cleared", "SQLite database purged.");
                 },
                 () => _dashboard.CloseDialog()
             ));

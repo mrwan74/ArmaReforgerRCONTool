@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
@@ -16,38 +17,8 @@ namespace ReforgerRcon.Services;
 public static class FlagAssetService
 {
     private const string FlagUriPrefix = "avares://ReforgerRcon/Assets/flags/";
-    private static readonly string[] CommonCountryCodes = ["xx", "un", "us", "de", "gb", "fr", "ca", "au", "ru", "il", "pl", "cz", "nl", "se", "no", "fi", "es", "it", "br", "jp", "kr", "cn"];
-    private static readonly ConcurrentDictionary<string, Bitmap?> FlagCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, WriteableBitmap?> FlagCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lock RasterizeLock = new();
-    private static bool _isPrewarmed;
-
-    public static void PrewarmCache()
-    {
-        if (_isPrewarmed) return;
-        _isPrewarmed = true;
-
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var sw = Stopwatch.StartNew();
-                foreach (var code in CommonCountryCodes)
-                {
-                    GetFlag(code);
-                }
-                sw.Stop();
-                AppLogger.Debug($"[FlagAssetService] Background SVG engine and flag pre-warming completed in {sw.ElapsedMilliseconds} ms ({FlagCache.Count} flags cached).");
-            }
-            catch (InvalidOperationException ex)
-            {
-                AppLogger.Debug($"[FlagAssetService] Asset loader not ready during prewarm: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Debug($"[FlagAssetService] Background warmup notice: {ex.Message}");
-            }
-        }, CancellationToken.None);
-    }
 
     public static Bitmap? GetFlag(string? countryCode)
     {
@@ -58,8 +29,11 @@ public static class FlagAssetService
             return cached;
         }
 
+        var startTimestamp = Stopwatch.GetTimestamp();
         var bitmap = LoadSvgToBitmap(code);
         FlagCache[code] = bitmap;
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AppLogger.Trace($"[FlagAssetService:Get] Loaded flag for '{code}' in {elapsedMs:F2}ms.");
         return bitmap;
     }
 
@@ -76,7 +50,7 @@ public static class FlagAssetService
 
     private static Uri GetFlagUri(string code) => new($"{FlagUriPrefix}{code}.svg");
 
-    private static Bitmap? LoadSvgToBitmap(string code)
+    private static WriteableBitmap? LoadSvgToBitmap(string code)
     {
         try
         {
@@ -100,19 +74,19 @@ public static class FlagAssetService
         }
         catch (InvalidOperationException)
         {
-            // AssetLoader is not yet registered by Avalonia framework
             return null;
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[FlagAssetService] Failed loading SVG for code '{code}': {ex.Message}");
+            AppLogger.Debug($"[FlagAssetService:Load] Failed loading SVG for '{code}': {ex.Message}");
         }
 
         return null;
     }
 
-    private static Bitmap? RasterizeSvgUri(Uri uri)
+    private static WriteableBitmap? RasterizeSvgUri(Uri uri)
     {
+        var start = Stopwatch.GetTimestamp();
         lock (RasterizeLock)
         {
             try
@@ -139,11 +113,21 @@ public static class FlagAssetService
                     canvas.DrawPicture(picture);
                 }
 
-                using var skImage = SKImage.FromBitmap(skBitmap);
-                using var data = skImage.Encode(SKEncodedImageFormat.Png, 90);
-                using var memStream = new MemoryStream(data.ToArray());
+                var writeableBitmap = new WriteableBitmap(
+                    new Avalonia.PixelSize(targetWidth, targetHeight),
+                    new Avalonia.Vector(96, 96),
+                    Avalonia.Platform.PixelFormat.Bgra8888,
+                    Avalonia.Platform.AlphaFormat.Premul);
 
-                return new Bitmap(memStream);
+                var pixelBytes = skBitmap.Bytes;
+                using (var frameBuffer = writeableBitmap.Lock())
+                {
+                    Marshal.Copy(pixelBytes, 0, frameBuffer.Address, pixelBytes.Length);
+                }
+
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                AppLogger.Trace($"[FlagAssetService:Rasterize] Fast rasterized '{uri}' in {elapsedMs:F2}ms.");
+                return writeableBitmap;
             }
             catch (InvalidOperationException)
             {
@@ -151,7 +135,7 @@ public static class FlagAssetService
             }
             catch (Exception ex)
             {
-                AppLogger.Trace($"[FlagAssetService] Rasterize notice for '{uri}': {ex.Message}");
+                AppLogger.Trace($"[FlagAssetService:Rasterize] Notice for '{uri}': {ex.Message}");
                 return null;
             }
         }

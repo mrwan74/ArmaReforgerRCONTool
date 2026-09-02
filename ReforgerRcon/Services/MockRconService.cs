@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
@@ -58,7 +59,9 @@ public class MockRconService : IRconService
 
     public MockRconService()
     {
+        var start = Stopwatch.GetTimestamp();
         SeedMockData();
+        AppLogger.Info($"[MockRconService] Initialized demo simulated dataset in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms ({_players.Count} players, {_bans.Count} bans).");
     }
 
     private void SeedMockData()
@@ -99,10 +102,12 @@ public class MockRconService : IRconService
         }
     }
 
-    public async Task<bool> ConnectAsync(ServerProfile profile)
+    public async Task<bool> ConnectAsync(ServerProfile profile, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        var start = Stopwatch.GetTimestamp();
         _currentProfile = profile;
-        await Task.Delay(400, CancellationToken.None);
+        await Task.Delay(400, cancellationToken);
         IsConnected = true;
         LastPacketTime = DateTime.UtcNow;
 
@@ -116,32 +121,39 @@ public class MockRconService : IRconService
             AdminConnectedStream?.Invoke(this, (0, "127.0.0.1:5353"));
         }
 
+        AppLogger.Info($"[MockRconService] ConnectAsync simulated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         return true;
     }
 
-    public async Task DisconnectAsync()
+    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        await Task.Delay(100, CancellationToken.None);
+        cancellationToken.ThrowIfCancellationRequested();
+        var start = Stopwatch.GetTimestamp();
+        await Task.Delay(100, cancellationToken);
         IsConnected = false;
         await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol);
         OutputReceived?.Invoke(this, "[SYSTEM] Disconnected from server.");
+        AppLogger.Info($"[MockRconService] Disconnected simulated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
     public void SimulatePlayerJoin(PlayerModel player)
     {
         _players.Add(player);
+        AppLogger.Debug($"[MockRconService:Simulate] PlayerJoined simulated: '{player.Name}' (ID: #{player.Id})");
         PlayerJoined?.Invoke(this, player);
     }
 
     public void SimulatePlayerLeave(PlayerModel player)
     {
         _players.Remove(player);
+        AppLogger.Debug($"[MockRconService:Simulate] PlayerLeft simulated: '{player.Name}' (ID: #{player.Id})");
         PlayerLeft?.Invoke(this, player);
     }
 
     public void SimulateConnectionDrop()
     {
         IsConnected = false;
+        AppLogger.Warn("[MockRconService:Simulate] Connection drop simulated.");
         ConnectionLost?.Invoke(this, "Connection timed out (No packets received)");
     }
 
@@ -181,6 +193,7 @@ public class MockRconService : IRconService
         OutputReceived?.Invoke(this, $"[RCON IN] Player '{player.Name}' kicked!");
         PlayerLeft?.Invoke(this, player);
         PlayerKickedStream?.Invoke(this, (player.Name, player.Id, reason));
+        AppLogger.Info($"[MockRconService:Moderation] Simulated kick for '{player.Name}'");
         return Task.FromResult(true);
     }
 
@@ -209,6 +222,7 @@ public class MockRconService : IRconService
         OutputReceived?.Invoke(this, $"[RCON IN] Ban added for {player.Name}.");
         PlayerLeft?.Invoke(this, player);
         PlayerBannedStream?.Invoke(this, (player.Name, player.Id, player.Guid, reason));
+        AppLogger.Info($"[MockRconService:Moderation] Simulated ban for '{player.Name}' ({durationSeconds}s)");
         return Task.FromResult(true);
     }
 
@@ -228,6 +242,7 @@ public class MockRconService : IRconService
 
         var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {identity} {durationSeconds} {reason}" : $"addBan {identity} {durationSeconds / 60} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
+        AppLogger.Info($"[MockRconService:Moderation] Simulated offline ban for '{identity}'");
         return Task.FromResult(true);
     }
 
@@ -238,28 +253,38 @@ public class MockRconService : IRconService
         var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban remove {ban.IdentityId}" : $"removeBan {ban.BanNumber}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         OutputReceived?.Invoke(this, $"[RCON IN] Ban removed for {ban.IdentityId}.");
+        AppLogger.Info($"[MockRconService:Moderation] Simulated ban removal for '{ban.IdentityId}'");
         return Task.FromResult(true);
     }
 
-    public Task SendCommandAsync(string rawCommand)
+    public Task SendCommandAsync(string rawCommand, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         OutputReceived?.Invoke(this, $"[RCON OUT] {rawCommand}");
         OutputReceived?.Invoke(this, $"[RCON IN] Command executed successfully: {rawCommand}");
+        AppLogger.Trace($"[MockRconService:Command] Simulated raw command: '{rawCommand}'");
         return Task.CompletedTask;
     }
 
-    public Task RestartServerAsync(CancellationToken cancellationToken = default) => SendCommandAsync("#restart");
-    public Task ShutdownServerAsync(CancellationToken cancellationToken = default) => SendCommandAsync("#shutdown");
-    public Task SendGlobalMessageAsync(string message, CancellationToken cancellationToken = default) => SendCommandAsync($"#say -1 {message}");
-    public Task SendAnnouncementAsync(string title, string message, CancellationToken cancellationToken = default) => SendCommandAsync($"#say -1 [ANNOUNCEMENT: {title}] {message}");
+    public Task RestartServerAsync(CancellationToken cancellationToken = default) => SendCommandAsync("#restart", cancellationToken);
+    public Task ShutdownServerAsync(CancellationToken cancellationToken = default) => SendCommandAsync("#shutdown", cancellationToken);
+    public Task SendGlobalMessageAsync(string message, CancellationToken cancellationToken = default) => SendCommandAsync($"#say -1 {message}", cancellationToken);
+    public Task SendAnnouncementAsync(string title, string message, CancellationToken cancellationToken = default) => SendCommandAsync($"#say -1 [ANNOUNCEMENT: {title}] {message}", cancellationToken);
 
-    public Task UpdatePlayerCommentAsync(string uid, string comment)
+    public Task UpdatePlayerCommentAsync(string uid, string comment, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (_players.FirstOrDefault(x => x.Uid == uid) is { } p) p.Comment = comment;
+        AppLogger.Debug($"[MockRconService:Comment] Simulated comment update for UID '{uid}': '{comment}'");
         return PlayerDatabaseStorageService.UpdateCommentAsync(uid, comment, CurrentProtocol);
     }
 
-    public Task ClearDatabaseAsync() => PlayerDatabaseStorageService.ClearDatabaseAsync(CurrentProtocol);
+    public Task ClearDatabaseAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        AppLogger.Warn("[MockRconService:Database] Simulated database purge.");
+        return PlayerDatabaseStorageService.ClearDatabaseAsync(CurrentProtocol);
+    }
 
     public void Dispose()
     {

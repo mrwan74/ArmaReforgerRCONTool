@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -15,6 +16,7 @@ public partial class PlayersTabView : UserControl
 
     public PlayersTabView()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
             InitializeComponent();
@@ -50,6 +52,7 @@ public partial class PlayersTabView : UserControl
             {
                 if (DataContext is PlayersViewModel vm)
                 {
+                    var bindStart = Stopwatch.GetTimestamp();
                     try
                     {
                         var gridKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
@@ -85,15 +88,17 @@ public partial class PlayersTabView : UserControl
                                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
                             }
                         };
+                        AppLogger.Debug($"[PlayersTabView:Bind] DataContext bound in {Stopwatch.GetElapsedTime(bindStart).TotalMilliseconds:F2}ms.");
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("Failed configuring PlayersTabView data context bindings.", ex);
+                        AppLogger.Error("Failed configuring PlayersTabView bindings.", ex);
                     }
                 }
             };
 
             DebugLayoutLoggerService.RegisterDataGrid("PlayersGrid", PlayersGrid);
+            AppLogger.Debug($"[PlayersTabView:Init] Initialized in {Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -103,6 +108,7 @@ public partial class PlayersTabView : UserControl
 
     private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             e.Handled = true;
@@ -112,10 +118,11 @@ public partial class PlayersTabView : UserControl
                 vm.CycleColumnSort(tag);
                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
             }
+            AppLogger.Trace($"[PlayersTabView:Sort] Handled in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[PlayersTabView] Error in OnDataGridSorting.", ex);
+            AppLogger.Error("[PlayersTabView:Sort] Error sorting: " + ex.Message, ex);
         }
     }
 
@@ -127,6 +134,7 @@ public partial class PlayersTabView : UserControl
 
     private void UpdateColumnSortGlyphs(string sortField, bool isAscending)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             foreach (var col in PlayersGrid.Columns)
@@ -148,10 +156,11 @@ public partial class PlayersTabView : UserControl
                     col.Header = cleanHeader;
                 }
             }
+            AppLogger.Trace($"[PlayersTabView:SortGlyph] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[PlayersTabView] Sort glyph update notice: {ex.Message}");
+            AppLogger.Trace($"[PlayersTabView:SortGlyph] Update notice: {ex.Message}");
         }
     }
 
@@ -159,6 +168,7 @@ public partial class PlayersTabView : UserControl
     {
         if (DataContext is not PlayersViewModel vm) return;
 
+        var start = Stopwatch.GetTimestamp();
         try
         {
             foreach (var col in PlayersGrid.Columns)
@@ -186,6 +196,7 @@ public partial class PlayersTabView : UserControl
                         break;
                 }
             }
+            AppLogger.Trace($"[PlayersTabView:Visibility] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -214,7 +225,7 @@ public partial class PlayersTabView : UserControl
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"OnGridPointerPressed handled non-fatal visual lookup: {ex.Message}");
+            AppLogger.Trace($"[PlayersTabView:Pointer] Lookup notice: {ex.Message}");
         }
     }
 
@@ -237,13 +248,14 @@ public partial class PlayersTabView : UserControl
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"OnGridContextRequested handled non-fatal visual lookup: {ex.Message}");
+            AppLogger.Trace($"[PlayersTabView:Context] Lookup notice: {ex.Message}");
             e.Handled = true;
         }
     }
 
     private void OnGridDoubleTapped(object? sender, TappedEventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             if (e.Source is Visual visual && visual.FindAncestorOfType<Button>() != null)
@@ -255,6 +267,7 @@ public partial class PlayersTabView : UserControl
             {
                 vm.OpenPlayerDetails(player);
                 e.Handled = true;
+                AppLogger.Trace($"[PlayersTabView:DoubleTap] Handled in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
             }
         }
         catch (Exception ex)

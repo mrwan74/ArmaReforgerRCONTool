@@ -14,12 +14,13 @@ public static class UrlLauncherService
     {
         if (string.IsNullOrWhiteSpace(url))
         {
-            AppLogger.Warn("[UrlLauncherService] OpenUrlAsync aborted for empty URL.");
+            AppLogger.Warn("[UrlLauncherService:Launch] OpenUrlAsync aborted for empty URL.");
             return false;
         }
 
         var trimmedUrl = url.Trim();
-        AppLogger.Info($"[UrlLauncherService] Launching external browser for: '{trimmedUrl}'");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info($"[UrlLauncherService:Launch] Launching external browser for: '{trimmedUrl}'");
 
         try
         {
@@ -30,6 +31,8 @@ public static class UrlLauncherService
                     FileName = trimmedUrl,
                     UseShellExecute = true
                 });
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                AppLogger.Info($"[UrlLauncherService:Launch] Windows shell launch complete in {elapsedMs:F2}ms.");
                 return true;
             }
 
@@ -42,6 +45,8 @@ public static class UrlLauncherService
                     Arguments = $"\"{trimmedUrl}\"",
                     UseShellExecute = false
                 });
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                AppLogger.Info($"[UrlLauncherService:Launch] macOS open launch complete in {elapsedMs:F2}ms.");
                 return true;
             }
 
@@ -52,29 +57,31 @@ public static class UrlLauncherService
                 Arguments = $"\"{trimmedUrl}\"",
                 UseShellExecute = false
             });
+            var linuxElapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[UrlLauncherService:Launch] Linux xdg-open launch complete in {linuxElapsedMs:F2}ms.");
             return true;
         }
         catch (Win32Exception winEx)
         {
-            AppLogger.Error($"[UrlLauncherService] Win32 shell execution error for '{trimmedUrl}': {winEx.Message}", winEx);
+            AppLogger.Error($"[UrlLauncherService:Launch] Win32 error for '{trimmedUrl}': {winEx.Message}", winEx);
             await FallbackCopyToClipboardAsync(trimmedUrl);
             return false;
         }
         catch (FileNotFoundException fnfEx)
         {
-            AppLogger.Error($"[UrlLauncherService] Browser launcher binary not found: {fnfEx.Message}", fnfEx);
+            AppLogger.Error($"[UrlLauncherService:Launch] Browser launcher not found: {fnfEx.Message}", fnfEx);
             await FallbackCopyToClipboardAsync(trimmedUrl);
             return false;
         }
         catch (InvalidOperationException invEx)
         {
-            AppLogger.Error($"[UrlLauncherService] Process launch invalid in current state: {invEx.Message}", invEx);
+            AppLogger.Error($"[UrlLauncherService:Launch] Process launch invalid: {invEx.Message}", invEx);
             await FallbackCopyToClipboardAsync(trimmedUrl);
             return false;
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[UrlLauncherService] Unexpected error launching web browser: {ex.Message}", ex);
+            AppLogger.Error($"[UrlLauncherService:Launch] Unexpected error opening browser: {ex.Message}", ex);
             await FallbackCopyToClipboardAsync(trimmedUrl);
             return false;
         }

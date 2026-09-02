@@ -74,7 +74,7 @@ public static partial class ReforgerResponseParser
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Trace($"[ReforgerResponseParser] Regex timeout during ANSI escape sequence filtering: {regexEx.Message}");
+            AppLogger.Trace($"[ReforgerResponseParser:Sanitize] Regex timeout on ANSI escape filter: {regexEx.Message}");
         }
 
         try
@@ -86,7 +86,7 @@ public static partial class ReforgerResponseParser
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Trace($"[ReforgerResponseParser] Regex timeout during Zalgo mark filtering: {regexEx.Message}");
+            AppLogger.Trace($"[ReforgerResponseParser:Sanitize] Regex timeout on Zalgo filter: {regexEx.Message}");
         }
 
         sanitized = sanitized.Trim();
@@ -104,17 +104,20 @@ public static partial class ReforgerResponseParser
 
     public static List<PlayerModel> ParsePlayers(string rawResponse)
     {
-        using var timing = AppLogger.Measure("ReforgerResponseParser.ParsePlayers");
+        var startTimestamp = Stopwatch.GetTimestamp();
+        using var timing = AppLogger.Measure("ReforgerResponseParser.ParsePlayers", slowThresholdMs: 15.0);
         var players = new List<PlayerModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
+            AppLogger.Trace("[ReforgerResponseParser:Players] Empty response buffer.");
             return players;
         }
 
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            AppLogger.Debug($"[ReforgerResponseParser:Players] Processing {lines.Length} line(s) ({rawResponse.Length} chars)...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -122,6 +125,7 @@ public static partial class ReforgerResponseParser
 
                 if (IsKnownPlayerHeaderLine(rawLine))
                 {
+                    AppLogger.Trace($"[ReforgerResponseParser:Players] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -131,15 +135,16 @@ public static partial class ReforgerResponseParser
                 }
                 else
                 {
-                    LogParserAnomaly("Reforger Player List", i + 1, rawLine, "Line did not match standard '[Player#] ; [Player UID] ; [Player Name]' pattern and heuristic reconstruction failed.");
+                    LogParserAnomaly("Reforger Player List", i + 1, rawLine, "Line did not match standard '[Player#] ; [Player UID] ; [Player Name]' and heuristic reconstruction failed.");
                 }
             }
 
-            AppLogger.Info($"[ReforgerResponseParser] Successfully parsed {players.Count} Reforger player(s) from {lines.Length} line(s).");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[ReforgerResponseParser:Players] Parsed {players.Count} Reforger player(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[ReforgerResponseParser] Critical failure while parsing Reforger player list. Dump:\n{ToForensicDump(rawResponse)}", ex);
+            AppLogger.Error($"[ReforgerResponseParser:Players] Fatal error parsing player list. Dump:\n{ToForensicDump(rawResponse)}", ex);
         }
 
         return players;
@@ -188,12 +193,13 @@ public static partial class ReforgerResponseParser
                     DisplayLocation = string.Empty
                 };
 
+                AppLogger.Trace($"[ReforgerResponseParser:Players] Parsed player #{id} ('{sanitizedName}', UID: '{uid}').");
                 return true;
             }
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Warn($"[ReforgerResponseParser] Regex timeout on player line: '{line}'. Exception: {regexEx.Message}");
+            AppLogger.Warn($"[ReforgerResponseParser:Players] Regex timeout on line '{line}': {regexEx.Message}");
         }
 
         return TryHeuristicPlayerLine(line, out player);
@@ -212,6 +218,7 @@ public static partial class ReforgerResponseParser
             if (uid.Length >= 8)
             {
                 string sanitizedName = SanitizePlayerName(rawName);
+                AppLogger.Warn($"[ReforgerResponseParser:Heuristic] Salvaged player #{id} ('{sanitizedName}', UID: '{uid}') from '{line}'");
 
                 player = new PlayerModel
                 {
@@ -236,11 +243,13 @@ public static partial class ReforgerResponseParser
 
     public static List<BanModel> ParseBans(string rawResponse)
     {
-        using var timing = AppLogger.Measure("ReforgerResponseParser.ParseBans");
+        var startTimestamp = Stopwatch.GetTimestamp();
+        using var timing = AppLogger.Measure("ReforgerResponseParser.ParseBans", slowThresholdMs: 15.0);
         var bans = new List<BanModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
+            AppLogger.Trace("[ReforgerResponseParser:Bans] Empty response buffer.");
             return bans;
         }
 
@@ -248,6 +257,7 @@ public static partial class ReforgerResponseParser
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             int banSequence = 1;
+            AppLogger.Debug($"[ReforgerResponseParser:Bans] Processing {lines.Length} line(s) for bans...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -255,6 +265,7 @@ public static partial class ReforgerResponseParser
 
                 if (IsKnownBanHeaderLine(rawLine))
                 {
+                    AppLogger.Trace($"[ReforgerResponseParser:Bans] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -269,11 +280,12 @@ public static partial class ReforgerResponseParser
                 }
             }
 
-            AppLogger.Info($"[ReforgerResponseParser] Successfully parsed {bans.Count} Reforger ban(s) from {lines.Length} line(s).");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[ReforgerResponseParser:Bans] Parsed {bans.Count} Reforger ban(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[ReforgerResponseParser] Fatal error during Reforger ban parsing. Dump:\n{ToForensicDump(rawResponse)}", ex);
+            AppLogger.Error($"[ReforgerResponseParser:Bans] Error parsing bans. Dump:\n{ToForensicDump(rawResponse)}", ex);
         }
 
         return bans;
@@ -294,12 +306,21 @@ public static partial class ReforgerResponseParser
                line.StartsWith("- Identity Id", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("Identity Id", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("---", StringComparison.OrdinalIgnoreCase) ||
-               line.StartsWith("Page:", StringComparison.OrdinalIgnoreCase);
+               line.StartsWith("Page:", StringComparison.OrdinalIgnoreCase) ||
+               line.StartsWith("Players on server", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseBanLine(string line, int banIndex, out BanModel? ban)
     {
         ban = null;
+
+        if (line.StartsWith("Processing Command", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Server has no bans", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Players on server", StringComparison.OrdinalIgnoreCase) ||
+            line.Contains(';'))
+        {
+            return false;
+        }
 
         try
         {
@@ -327,6 +348,7 @@ public static partial class ReforgerResponseParser
                     BannedAt = DateTime.UtcNow
                 };
 
+                AppLogger.Trace($"[ReforgerResponseParser:Bans] Parsed row #{banIndex}: '{sanitizedBannedName}' (Identity: '{identityId}')");
                 return true;
             }
 
@@ -343,12 +365,14 @@ public static partial class ReforgerResponseParser
                     DurationSeconds = 0,
                     BannedAt = DateTime.UtcNow
                 };
+
+                AppLogger.Trace($"[ReforgerResponseParser:Bans] Parsed identity-only row #{banIndex}: '{identityId}'");
                 return true;
             }
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Warn($"[ReforgerResponseParser] Regex timeout on ban line: '{line}'. Exception: {regexEx.Message}");
+            AppLogger.Warn($"[ReforgerResponseParser:Bans] Regex timeout on ban line '{line}': {regexEx.Message}");
         }
 
         if (line.Contains('|'))
@@ -370,6 +394,7 @@ public static partial class ReforgerResponseParser
                     DurationSeconds = 0,
                     BannedAt = DateTime.UtcNow
                 };
+                AppLogger.Warn($"[ReforgerResponseParser:Heuristic] Salvaged row #{banIndex}: '{sanitizedName}' (Identity: '{idPart}')");
                 return true;
             }
         }
@@ -379,11 +404,13 @@ public static partial class ReforgerResponseParser
 
     public static void LogParserAnomaly(string parserContext, int lineIndex, string rawLine, string reason)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         var forensicDump = ToForensicDump(rawLine);
         var charBreakdown = GenerateCharacterForensics(rawLine);
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
         AppLogger.Warn(
-            $"[PARSER_ANOMALY] Context: [{parserContext}] | Line #{lineIndex} failed parsing.\n" +
+            $"[PARSER_ANOMALY] Context: [{parserContext}] | Line #{lineIndex} failed parsing (Analysis: {elapsedMs:F2}ms).\n" +
             $"  Reason:        {reason}\n" +
             $"  Raw Line:      \"{rawLine}\"\n" +
             $"  Hex & Length Dump:\n{forensicDump}\n" +

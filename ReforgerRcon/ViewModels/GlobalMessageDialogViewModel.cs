@@ -20,21 +20,21 @@ public partial class GlobalMessageDialogViewModel(IRconService rconService, Play
     {
         if (string.IsNullOrWhiteSpace(Message))
         {
-            AppLogger.Warn("[GlobalMessageDialog] Global broadcast cancelled: Message text is empty.");
+            AppLogger.Warn("[GlobalMessageDialog:Send] Message broadcast canceled: text is empty.");
             return;
         }
 
         var cleanMessage = Message.Trim();
-        var sw = Stopwatch.StartNew();
+        var start = Stopwatch.GetTimestamp();
 
         IsSending = true;
         try
         {
-            AppLogger.Info($"[GlobalMessageDialog] Dispatching global broadcast message ({cleanMessage.Length} chars): '{cleanMessage}'...");
-            await _rconService.SendGlobalMessageAsync(cleanMessage);
-            sw.Stop();
+            AppLogger.Info($"[GlobalMessageDialog:Send] Sending global message ({cleanMessage.Length} chars): '{cleanMessage}'...");
+            await _rconService.SendGlobalMessageAsync(cleanMessage).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
-            AppLogger.Info($"[GlobalMessageDialog] Global broadcast message delivered in {sw.ElapsedMilliseconds} ms.");
+            AppLogger.Info($"[GlobalMessageDialog:Send] Message delivered in {elapsedMs:F2}ms.");
             ToastNotificationService.Instance.ShowToast("Broadcast", "Global broadcast sent.", $"#say -1 {cleanMessage}");
             _parent.CloseDialog();
         }
@@ -47,7 +47,7 @@ public partial class GlobalMessageDialogViewModel(IRconService rconService, Play
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[GlobalMessageDialog] Operator closed global message dialog.");
+        AppLogger.Debug("[GlobalMessageDialog:Close] Dialog closed.");
         _parent.CloseDialog();
     }
 }

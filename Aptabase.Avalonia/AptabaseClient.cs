@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -20,11 +22,15 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
     private readonly ILogger<AptabaseClient>? _logger;
     private readonly AptabaseOptions? _options;
     private readonly CancellationTokenSource _cts = new();
-    private readonly Lock _disposeLock = new();
-    private bool _disposed;
+    private int _disposed;
+    private long _totalEventsEnqueued;
+    private long _totalBatchesFlushed;
+    private long _totalErrorsHandled;
 
+    [SuppressMessage("AsyncUsage", "PH_S007:AvoidStartingThreadsOrTasksInConstructor", Justification = "Background channel batch processor must be initialized alongside client lifecycle")]
     public AptabaseClient(string appKey, AptabaseOptions? options, ILogger<AptabaseClient>? logger)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
 
         _options = options;
@@ -36,14 +42,18 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
             SingleReader = true
         });
         _processingTask = Task.Run(ProcessEventsBatchAsync, CancellationToken.None);
-        AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient), "AptabaseClient batch processor initialized with bounded channel capacity 1000.");
+
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient),
+            $"[AptabaseClient:Init] In-memory telemetry pipeline initialized in {elapsedMs:F2}ms (ChannelCapacity=1000, MaxBatchSize={MaxBatchSize}, FlushInterval={FlushIntervalMs}ms).");
     }
 
     public Task TrackEvent(string eventName, Dictionary<string, object>? props = null, CancellationToken cancellationToken = default)
     {
-        if (_disposed)
+        var startTimestamp = Stopwatch.GetTimestamp();
+        if (Volatile.Read(ref _disposed) != 0)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"TrackEvent skipped: client is disposed. Event: '{eventName}'.");
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"[AptabaseClient:TrackEvent] Discarded: instance disposed. Event: '{eventName}'.");
             return Task.CompletedTask;
         }
 
@@ -54,16 +64,18 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
             var ev = new EventData(eventName, props, _options?.ContextInjector);
             if (!_channel.Writer.TryWrite(ev))
             {
-                AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClient), $"Event buffer capacity reached. Dropped oldest event to queue: '{eventName}'.");
+                AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClient), $"[AptabaseClient:TrackEvent] Bounded event buffer full (1000 items). Oldest event dropped to write: '{eventName}'.");
             }
             else
             {
-                AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"Enqueued event '{eventName}' with {ev.Props?.Count ?? 0} property entries.");
+                var count = Interlocked.Increment(ref _totalEventsEnqueued);
+                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"[AptabaseClient:TrackEvent] Enqueued '{eventName}' (TotalEnqueued={count}, Props={ev.Props?.Count ?? 0}) in {elapsedMs:F2}ms.");
             }
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"Unexpected failure writing event '{eventName}' to pipeline: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"[AptabaseClient:TrackEvent] Failed enqueuing telemetry event '{eventName}': {ex.Message}", ex);
         }
 
         return Task.CompletedTask;
@@ -74,17 +86,22 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
 
     async Task IErrorTracker.TrackError(Exception exception, bool fatal, string kind, CancellationToken cancellationToken)
     {
-        if (_disposed)
+        var startTimestamp = Stopwatch.GetTimestamp();
+        if (Volatile.Read(ref _disposed) != 0)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"TrackError skipped: client is disposed. Exception: '{exception.GetType().Name}'.");
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"[AptabaseClient:TrackError] Discarded: instance disposed. Exception: '{exception.GetType().FullName}'.");
             return;
         }
 
         ArgumentNullException.ThrowIfNull(exception);
 
+        var errCount = Interlocked.Increment(ref _totalErrorsHandled);
         var userMessage = fatal
             ? $"A critical application failure occurred: {exception.Message}."
             : $"An error occurred: {exception.Message}.";
+
+        AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient),
+            $"[AptabaseClient:TrackError] Processing error report #{errCount} for '{exception.GetType().Name}' (Fatal={fatal}, Kind={kind}, Message='{exception.Message}')...");
 
         NotifyErrorOccurred(exception, fatal, kind, userMessage);
 
@@ -92,37 +109,42 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
 
         try
         {
-            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient), $"Transmitting {(fatal ? "FATAL" : "NON-FATAL")} error report ({exception.GetType().Name}) via AptabaseClientBase...");
             await _client.TrackError(errorData, cancellationToken).ConfigureAwait(false);
-            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient), $"Error telemetry report for '{exception.GetType().Name}' delivered successfully.");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient),
+                $"[AptabaseClient:TrackError] Delivered error report #{errCount} for '{exception.GetType().Name}' in {elapsedMs:F2}ms (Fatal={fatal}).");
         }
         catch (OperationCanceledException ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), "TrackError operation was canceled during application shutdown.", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), "[AptabaseClient:TrackError] Error transmission cancelled during shutdown.", ex);
         }
         catch (AptabaseException ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"Aptabase HTTP error report transmission failure: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"[AptabaseClient:TrackError] Aptabase endpoint rejected error report: {ex.Message}", ex);
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Critical, nameof(AptabaseClient), $"Unhandled fault delivering error telemetry: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Critical, nameof(AptabaseClient), $"[AptabaseClient:TrackError] Unhandled error during error dispatch: {ex.Message}", ex);
         }
     }
 
     private void NotifyErrorOccurred(Exception exception, bool fatal, string kind, string userMessage)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
             OnErrorOccurred?.Invoke(this, new AptabaseErrorEventArgs(exception, fatal, kind, userMessage));
             _options?.OnUserFacingNotification?.Invoke(userMessage, exception, fatal);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"[AptabaseClient:Notify] Dispatched local OnErrorOccurred handlers in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"Subscriber exception in OnErrorOccurred callback: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"[AptabaseClient:Notify] Callback subscriber threw exception: {ex.Message}", ex);
         }
     }
 
+    [SuppressMessage("AsyncUsage", "PH_P008:ThrowOperationCanceledException", Justification = "Background channel batch processor loop terminates gracefully on shutdown without throwing first-chance exceptions")]
     private async Task ProcessEventsBatchAsync()
     {
         var batch = new List<EventData>(MaxBatchSize);
@@ -143,7 +165,7 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
                     bool canRead = false;
                     try
                     {
-                        canRead = await _channel.Reader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false);
+                        canRead = await _channel.Reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
@@ -165,9 +187,14 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
                     }
                 }
 
-                if (batch.Count > 0)
+                if (batch.Count > 0 && !_cts.IsCancellationRequested)
                 {
-                    await _client.TrackEvents(batch, CancellationToken.None).ConfigureAwait(false);
+                    var batchStart = Stopwatch.GetTimestamp();
+                    await _client.TrackEvents(batch, _cts.Token).ConfigureAwait(false);
+                    var flushedCount = Interlocked.Increment(ref _totalBatchesFlushed);
+                    var batchElapsedMs = Stopwatch.GetElapsedTime(batchStart).TotalMilliseconds;
+                    AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient),
+                        $"[AptabaseClient:Worker] Flushed event batch #{flushedCount} ({batch.Count} events) in {batchElapsedMs:F2}ms.");
                 }
 
                 if (_cts.IsCancellationRequested)
@@ -187,21 +214,18 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
             }
             catch (AptabaseException ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"Failed to send event batch to telemetry endpoint: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClient), $"[AptabaseClient:Worker] Transmission error sending batch: {ex.Message}", ex);
             }
             catch (Exception ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Critical, nameof(AptabaseClient), $"Unexpected error in event processor worker loop: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Critical, nameof(AptabaseClient), $"[AptabaseClient:Worker] Unhandled loop error: {ex.Message}", ex);
             }
         }
     }
 
     private static async Task SafeDelayAsync(int millisecondsDelay, CancellationToken cancellationToken)
     {
-        if (millisecondsDelay <= 0 || cancellationToken.IsCancellationRequested)
-        {
-            return;
-        }
+        if (millisecondsDelay <= 0 || cancellationToken.IsCancellationRequested) return;
 
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using (cancellationToken.Register(static state => ((TaskCompletionSource?)state)?.TrySetResult(), tcs).ConfigureAwait(false))
@@ -212,42 +236,45 @@ public sealed class AptabaseClient : IAptabaseClient, IErrorTracker
 
     public async ValueTask DisposeAsync()
     {
-        lock (_disposeLock)
-        {
-            if (_disposed) return;
-            _disposed = true;
-        }
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-        AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient), "AptabaseClient initiating graceful shutdown and flush...");
+        var startTimestamp = Stopwatch.GetTimestamp();
+        AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient), "[AptabaseClient:Dispose] Initiating graceful shutdown of AptabaseClient...");
+
         _channel.Writer.TryComplete();
 
         try
         {
             await _cts.CancelAsync().ConfigureAwait(false);
         }
-        catch (ObjectDisposedException ex)
+        catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), "CancellationTokenSource already disposed during shutdown.", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), "[AptabaseClient:Dispose] CTS notice: " + ex.Message, ex);
         }
 
-        if (!_processingTask.IsCompleted)
+        try
         {
-            try
-            {
-                await Task.WhenAny(_processingTask, Task.Delay(300, CancellationToken.None)).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Clean cancellation
-            }
-            catch (Exception ex)
-            {
-                AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), $"Background worker shutdown notice: {ex.Message}", ex);
-            }
+            await _processingTask.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected
+        }
+        catch (TimeoutException)
+        {
+            AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClient), "[AptabaseClient:Dispose] Worker task timed out during shutdown.");
+        }
+        catch (Exception ex)
+        {
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClient), "[AptabaseClient:Dispose] Worker notice: " + ex.Message, ex);
         }
 
         _cts.Dispose();
         await _client.DisposeAsync().ConfigureAwait(false);
+
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClient),
+            $"[AptabaseClient:Dispose] Teardown complete in {elapsedMs:F2}ms (Enqueued={_totalEventsEnqueued}, FlushedBatches={_totalBatchesFlushed}, ErrorsHandled={_totalErrorsHandled}).");
 
         GC.SuppressFinalize(this);
     }

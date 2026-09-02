@@ -29,14 +29,14 @@ public partial class ConfirmDialogViewModel(
     {
         if (IsExecuting) return;
         IsExecuting = true;
-        var sw = Stopwatch.StartNew();
+        var start = Stopwatch.GetTimestamp();
 
         try
         {
-            AppLogger.Info($"[ConfirmDialog] Confirmed action: '{Title}'. Executing callback...");
+            AppLogger.Info($"[ConfirmDialog:Confirm] Executing confirmed action: '{Title}'...");
             await _onConfirmed();
-            sw.Stop();
-            AppLogger.Info($"[ConfirmDialog] Action '{Title}' completed in {sw.ElapsedMilliseconds} ms.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[ConfirmDialog:Confirm] Action '{Title}' completed in {elapsedMs:F2}ms.");
             _onClose();
         }
         finally
@@ -49,7 +49,7 @@ public partial class ConfirmDialogViewModel(
     private void Close()
     {
         if (IsExecuting) return;
-        AppLogger.Debug($"[ConfirmDialog] Cancelled action: '{Title}'.");
+        AppLogger.Debug($"[ConfirmDialog:Close] Canceled action: '{Title}'.");
         _onClose();
     }
 }

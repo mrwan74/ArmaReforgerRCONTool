@@ -27,26 +27,27 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
         ["SH"] = ""
     }.ToFrozenDictionary();
 
-    private readonly string _appKey;
     private readonly ILogger? _logger;
     private readonly HttpClient? _http;
     private readonly AptabaseOptions? _options;
     private readonly Lock _sessionLock = new();
     private DateTimeOffset _lastTouched = DateTimeOffset.UtcNow;
     private string _sessionId = NewSessionId();
+    private int _disposed;
 
     public AptabaseClientBase(string appKey, AptabaseOptions? options, ILogger? logger)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
 
-        _appKey = appKey.Trim();
+        var trimmedKey = appKey.Trim();
         _options = options;
         _logger = logger;
 
-        var parts = _appKey.Split('-');
+        var parts = trimmedKey.Split('-');
         if (parts.Length < 3 || !Hosts.ContainsKey(parts[1]))
         {
-            throw new AptabaseConfigurationException($"The Aptabase App Key '{_appKey}' is invalid. Expected format: 'A-REGION-00000000'.");
+            throw new AptabaseConfigurationException($"The Aptabase App Key '{trimmedKey}' is invalid. Expected format: 'A-REGION-00000000'.");
         }
 
         var region = parts[1];
@@ -61,22 +62,27 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
 
         _http = region == "DEV" ? new HttpClient(new LocalHttpsClientHandler(logger)) : new HttpClient();
         _http.BaseAddress = new Uri(baseUrl);
-        _http.DefaultRequestHeaders.Add("App-Key", _appKey);
+        _http.DefaultRequestHeaders.Add("App-Key", trimmedKey);
         _http.Timeout = TimeSpan.FromSeconds(10);
 
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
         AptabaseLogging.Log(_logger, LogLevel.Information, nameof(AptabaseClientBase),
-            $"AptabaseClientBase ready. Region: {region}, BaseUrl: {baseUrl}, Session: {_sessionId}, OS: {SysInfo.OsName} {SysInfo.OsVersion}");
+            $"[AptabaseClientBase:Init] Client ready in {elapsedMs:F2}ms (Region: {region}, BaseUrl: '{baseUrl}', SessionId: {_sessionId}, OS: {SysInfo.OsName} {SysInfo.OsVersion}, Arch: {SysInfo.ProcessArchitecture}, Debug: {SysInfo.IsDebug}).");
     }
 
     private bool IsConsentGranted()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            return _options?.ConsentCheck?.Invoke() ?? true;
+            var result = _options?.ConsentCheck?.Invoke() ?? true;
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), $"[AptabaseClientBase:Consent] Evaluated telemetry consent ({result}) in {elapsedMs:F2}ms.");
+            return result;
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"Consent check delegate failed: {ex.Message}. Defaulting to consent withheld.", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:Consent] Consent check delegate failed: {ex.Message}. Defaulting to false.", ex);
             return false;
         }
     }
@@ -86,9 +92,15 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
 
     internal async Task TrackEvents(IEnumerable<EventData> events, CancellationToken cancellationToken = default)
     {
+        if (cancellationToken.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
+        {
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), "[AptabaseClientBase:TrackEvents] Bypassed: cancellation requested or client disposed.");
+            return;
+        }
+
         if (!IsConsentGranted())
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "TrackEvents withheld: User telemetry consent not granted.");
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "[AptabaseClientBase:TrackEvents] Withheld: user consent not granted.");
             return;
         }
 
@@ -98,10 +110,7 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
         }
 
         var eventList = events.ToList();
-        if (eventList.Count == 0)
-        {
-            return;
-        }
+        if (eventList.Count == 0) return;
 
         RefreshSession();
 
@@ -111,27 +120,28 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
             ev.SystemProps = SysInfo;
         }
 
-        var stopwatch = Stopwatch.StartNew();
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Sending POST /api/v0/events with {eventList.Count} item(s)...");
             var body = JsonContent.Create(eventList);
-            using var response = await _http.PostAsync("/api/v0/events", body, cancellationToken).ConfigureAwait(false);
-            stopwatch.Stop();
+            using var response = await _http.PostAsync("/api/v0/events", body, CancellationToken.None).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
             if (!response.IsSuccessStatusCode)
             {
-                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None).ConfigureAwait(false);
                 var statusCode = (int)response.StatusCode;
 
                 if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized)
                 {
                     AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClientBase),
-                        $"Aptabase server rejected App Key '{_appKey}': {responseBody}.");
+                        $"[AptabaseClientBase:TrackEvents] Server rejected App Key (Status: {statusCode}) in {elapsedMs:F2}ms: {responseBody}.");
                     return;
                 }
 
                 AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase),
-                    $"HTTP POST /api/v0/events failed. Status: {statusCode}, Latency: {stopwatch.ElapsedMilliseconds}ms, Response: {responseBody}");
+                    $"[AptabaseClientBase:TrackEvents] HTTP POST /api/v0/events failed (Status: {statusCode}, Latency: {elapsedMs:F2}ms, Response: {responseBody})");
 
                 if (response.StatusCode is >= HttpStatusCode.InternalServerError or HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
                 {
@@ -141,29 +151,29 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
             else
             {
                 AptabaseLogging.Log(_logger, LogLevel.Information, nameof(AptabaseClientBase),
-                    $"HTTP POST /api/v0/events SUCCESS. Delivered {eventList.Count} event(s) in {stopwatch.ElapsedMilliseconds}ms.");
+                    $"[AptabaseClientBase:TrackEvents] Successfully delivered {eventList.Count} event(s) in {elapsedMs:F2}ms.");
             }
         }
         catch (OperationCanceledException)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "TrackEvents operation canceled on shutdown.");
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "[AptabaseClientBase:TrackEvents] Operation canceled during shutdown.");
         }
         catch (HttpRequestException ex)
         {
-            stopwatch.Stop();
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"Network error during TrackEvents: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Network error after {elapsedMs:F2}ms: {ex.Message}", ex);
             throw new AptabaseTransmissionException($"Network failure sending analytics events: {ex.Message}", ex);
         }
         catch (SocketException ex)
         {
-            stopwatch.Stop();
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"Socket error during TrackEvents: {ex.Message}", ex);
-            throw new AptabaseTransmissionException($"Socket failure connecting to Aptabase server: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Socket error after {elapsedMs:F2}ms: {ex.Message}", ex);
+            throw new AptabaseTransmissionException($"Socket failure connecting to Aptabase: {ex.Message}", ex);
         }
         catch (JsonException ex)
         {
-            stopwatch.Stop();
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"JSON serialization error during TrackEvents: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Serialization error after {elapsedMs:F2}ms: {ex.Message}", ex);
             throw new AptabaseSerializationException($"Failed to serialize analytics events payload: {ex.Message}", ex);
         }
     }
@@ -179,10 +189,11 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
     private const int MaxSdkVersion = 40;
     private const int MaxSessionId = 100;
 
-    internal bool IsEnabled => _http is not null;
+    internal bool IsEnabled => _http is not null && Volatile.Read(ref _disposed) == 0;
 
     internal void EnrichError(ErrorData errorData)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         RefreshSession();
 
         errorData.SessionId = Truncate(_sessionId, MaxSessionId);
@@ -196,13 +207,23 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
         errorData.ErrorMessage = Truncate(errorData.ErrorMessage, MaxErrorMessage)!;
         errorData.ErrorType = Truncate(errorData.ErrorType, MaxErrorType)!;
         errorData.StackTrace = Truncate(errorData.StackTrace, MaxStackTrace);
+
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase),
+            $"[AptabaseClientBase:Enrich] Enriched ErrorData for '{errorData.ErrorType}' (SessionId: {_sessionId}) in {elapsedMs:F2}ms.");
     }
 
     internal async Task SendErrorAsync(ErrorData errorData, CancellationToken cancellationToken = default)
     {
+        if (cancellationToken.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
+        {
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), "[AptabaseClientBase:SendError] Bypassed: cancellation requested or client disposed.");
+            return;
+        }
+
         if (!IsConsentGranted())
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "SendErrorAsync withheld: User telemetry consent not granted.");
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "[AptabaseClientBase:SendError] Withheld: user consent not granted.");
             return;
         }
 
@@ -211,27 +232,28 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
             throw new AptabaseConfigurationException("HTTP Client is not initialized.");
         }
 
-        var stopwatch = Stopwatch.StartNew();
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Posting error report '{errorData.ErrorType}' to /api/v0/error...");
             var body = JsonContent.Create(errorData);
-            using var response = await _http.PostAsync("/api/v0/error", body, cancellationToken).ConfigureAwait(false);
-            stopwatch.Stop();
+            using var response = await _http.PostAsync("/api/v0/error", body, CancellationToken.None).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
             if (!response.IsSuccessStatusCode)
             {
-                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None).ConfigureAwait(false);
                 var statusCode = (int)response.StatusCode;
 
                 if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized)
                 {
                     AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClientBase),
-                        $"Aptabase server rejected App Key '{_appKey}' for error report: {responseBody}.");
+                        $"[AptabaseClientBase:SendError] Server rejected App Key for error report in {elapsedMs:F2}ms: {responseBody}.");
                     return;
                 }
 
                 AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase),
-                    $"HTTP POST /api/v0/error failed. Status: {statusCode}, Latency: {stopwatch.ElapsedMilliseconds}ms, Response: {responseBody}");
+                    $"[AptabaseClientBase:SendError] HTTP POST /api/v0/error failed (Status: {statusCode}, Latency: {elapsedMs:F2}ms, Response: {responseBody})");
 
                 if (response.StatusCode is >= HttpStatusCode.InternalServerError or HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
                 {
@@ -241,29 +263,29 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
             else
             {
                 AptabaseLogging.Log(_logger, LogLevel.Information, nameof(AptabaseClientBase),
-                    $"HTTP POST /api/v0/error SUCCESS. Delivered error report '{errorData.ErrorType}' in {stopwatch.ElapsedMilliseconds}ms.");
+                    $"[AptabaseClientBase:SendError] Delivered error report '{errorData.ErrorType}' in {elapsedMs:F2}ms.");
             }
         }
         catch (OperationCanceledException)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "SendErrorAsync operation canceled on shutdown.");
+            AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), "[AptabaseClientBase:SendError] SendErrorAsync operation canceled.");
         }
         catch (HttpRequestException ex)
         {
-            stopwatch.Stop();
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"Network error sending error report: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Network error delivering error report after {elapsedMs:F2}ms: {ex.Message}", ex);
             throw new AptabaseTransmissionException($"Network failure delivering error report: {ex.Message}", ex);
         }
         catch (SocketException ex)
         {
-            stopwatch.Stop();
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"Socket error sending error report: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Socket error delivering error report after {elapsedMs:F2}ms: {ex.Message}", ex);
             throw new AptabaseTransmissionException($"Socket failure delivering error report: {ex.Message}", ex);
         }
         catch (JsonException ex)
         {
-            stopwatch.Stop();
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"JSON serialization error: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Serialization error after {elapsedMs:F2}ms: {ex.Message}", ex);
             throw new AptabaseSerializationException($"Failed to serialize error report: {ex.Message}", ex);
         }
     }
@@ -279,7 +301,12 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+
+        var startTimestamp = Stopwatch.GetTimestamp();
         _http?.Dispose();
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AptabaseLogging.Log(_logger, LogLevel.Trace, nameof(AptabaseClientBase), $"[AptabaseClientBase:Dispose] HTTP client resources disposed in {elapsedMs:F2}ms.");
         return ValueTask.CompletedTask;
     }
 
@@ -290,8 +317,10 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
             var now = DateTimeOffset.UtcNow;
             if (now - _lastTouched >= SessionTimeout)
             {
+                var previousSession = _sessionId;
                 _sessionId = NewSessionId();
-                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), $"Session timed out. Generated new session ID: {_sessionId}");
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase),
+                    $"[AptabaseClientBase:Session] Session timeout reached (60m). Rotated session: '{previousSession}' -> '{_sessionId}'");
             }
 
             _lastTouched = now;

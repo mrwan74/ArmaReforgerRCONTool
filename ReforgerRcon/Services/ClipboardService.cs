@@ -14,52 +14,51 @@ public static class ClipboardService
     {
         if (string.IsNullOrEmpty(text))
         {
-            AppLogger.Debug("[ClipboardService] SetTextAsync skipped for empty text.");
+            AppLogger.Debug("[ClipboardService:Copy] SetTextAsync skipped for empty text.");
             return false;
         }
 
-        var sw = Stopwatch.StartNew();
+        var start = Stopwatch.GetTimestamp();
         try
         {
             if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
                 desktop.MainWindow?.Clipboard is { } clipboard)
             {
-                await clipboard.SetTextAsync(text);
-                sw.Stop();
-                AppLogger.Debug($"[ClipboardService] Copied {text.Length} char(s) to system clipboard in {sw.ElapsedMilliseconds} ms.");
+                await clipboard.SetTextAsync(text).ConfigureAwait(false);
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                AppLogger.Debug($"[ClipboardService:Copy] Copied {text.Length} char(s) to clipboard in {elapsedMs:F2}ms.");
                 return true;
             }
 
-            sw.Stop();
-            AppLogger.Warn("[ClipboardService] Platform clipboard is unavailable from current window state.");
+            var elapsedFailMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Warn($"[ClipboardService:Copy] Platform clipboard unavailable after {elapsedFailMs:F2}ms.");
             ToastNotificationService.Instance.ShowWarning("Clipboard Unavailable", "Unable to access clipboard from current window.");
             return false;
         }
         catch (Win32Exception winEx)
         {
-            sw.Stop();
-            AppLogger.Error($"[ClipboardService] Win32 clipboard locking error: {winEx.Message} (Code: {winEx.NativeErrorCode})", winEx);
-            ToastNotificationService.Instance.ShowError("Clipboard Locked", "Another process is currently locking the system clipboard.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Error($"[ClipboardService:Copy] Win32 clipboard error in {elapsedMs:F2}ms (Code: {winEx.NativeErrorCode}): {winEx.Message}", winEx);
+            ToastNotificationService.Instance.ShowError("Clipboard Locked", "Another process is locking the clipboard.");
             return false;
         }
         catch (TimeoutException timeEx)
         {
-            sw.Stop();
-            AppLogger.Warn($"[ClipboardService] Clipboard lock wait timed out after {sw.ElapsedMilliseconds} ms: {timeEx.Message}");
-            ToastNotificationService.Instance.ShowWarning("Clipboard Timeout", "Timed out waiting for system clipboard lock.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Warn($"[ClipboardService:Copy] Clipboard wait timed out after {elapsedMs:F2}ms: {timeEx.Message}");
+            ToastNotificationService.Instance.ShowWarning("Clipboard Timeout", "Timed out waiting for clipboard lock.");
             return false;
         }
         catch (InvalidOperationException invEx)
         {
-            sw.Stop();
-            AppLogger.Warn($"[ClipboardService] Clipboard operation invalid in current state: {invEx.Message}");
-            ToastNotificationService.Instance.ShowWarning("Clipboard Notice", "Unable to copy text in current window state.");
+            AppLogger.Warn($"[ClipboardService:Copy] Clipboard operation invalid: {invEx.Message}");
+            ToastNotificationService.Instance.ShowWarning("Clipboard Notice", "Unable to copy text in current state.");
             return false;
         }
         catch (Exception ex)
         {
-            sw.Stop();
-            AppLogger.Error($"[ClipboardService] Unexpected error setting clipboard: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Error($"[ClipboardService:Copy] Error setting clipboard in {elapsedMs:F2}ms: {ex.Message}", ex);
             ToastNotificationService.Instance.ShowError("Clipboard Error", "Failed copying to clipboard: " + ex.Message);
             return false;
         }

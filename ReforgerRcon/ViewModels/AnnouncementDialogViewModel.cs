@@ -21,22 +21,22 @@ public partial class AnnouncementDialogViewModel(IRconService rconService, Playe
     {
         if (string.IsNullOrWhiteSpace(Message))
         {
-            AppLogger.Warn("[AnnouncementDialog] Broadcast cancelled: Announcement message is empty.");
+            AppLogger.Warn("[AnnouncementDialog:Send] Broadcast canceled: Message text is empty.");
             return;
         }
 
         var cleanTitle = string.IsNullOrWhiteSpace(Title) ? "Server Announcement" : Title.Trim();
         var cleanMessage = Message.Trim();
-        var sw = Stopwatch.StartNew();
+        var start = Stopwatch.GetTimestamp();
 
         IsSending = true;
         try
         {
-            AppLogger.Info($"[AnnouncementDialog] Dispatching server announcement: Title='{cleanTitle}', Length={cleanMessage.Length} chars...");
-            await _rconService.SendAnnouncementAsync(cleanTitle, cleanMessage);
-            sw.Stop();
+            AppLogger.Info($"[AnnouncementDialog:Send] Dispatching server announcement: Title='{cleanTitle}', Length={cleanMessage.Length} chars...");
+            await _rconService.SendAnnouncementAsync(cleanTitle, cleanMessage).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
-            AppLogger.Info($"[AnnouncementDialog] Announcement broadcast dispatched successfully in {sw.ElapsedMilliseconds} ms.");
+            AppLogger.Info($"[AnnouncementDialog:Send] Announcement delivered in {elapsedMs:F2}ms.");
             ToastNotificationService.Instance.ShowToast("Announcement", "Broadcast dispatched.", $"#say -1 [{cleanTitle}] {cleanMessage}");
             _parent.CloseDialog();
         }
@@ -49,7 +49,7 @@ public partial class AnnouncementDialogViewModel(IRconService rconService, Playe
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[AnnouncementDialog] Operator closed announcement dialog.");
+        AppLogger.Debug("[AnnouncementDialog:Close] Dialog closed.");
         _parent.CloseDialog();
     }
 }

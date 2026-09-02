@@ -16,7 +16,7 @@ public class ToastNotificationService
 
     public void ShowToast(string title, string message, string? commandExecuted = null, Func<Task>? undoAction = null, ToastType type = ToastType.Info)
     {
-        AppLogger.Info($"[TOAST:{type}] {title}: {message} [Command: {commandExecuted ?? "N/A"}] (Has Undo: {undoAction != null})");
+        AppLogger.Info($"[ToastNotificationService:Show] [{type}] {title}: {message} [Command: {commandExecuted ?? "N/A"}] (HasUndo: {undoAction != null})");
 
         if (type is ToastType.Error or ToastType.Warning)
         {
@@ -38,16 +38,16 @@ public class ToastNotificationService
                 var sw = Stopwatch.StartNew();
                 try
                 {
-                    AppLogger.Info($"[TOAST UNDO] Executing undo action for toast: '{title}'...");
+                    AppLogger.Info($"[ToastNotificationService:Undo] Executing undo action for '{title}'...");
                     ActiveToasts.Remove(toast);
                     await undoAction();
                     sw.Stop();
-                    AppLogger.Info($"[TOAST UNDO] Undo action for '{title}' completed in {sw.ElapsedMilliseconds} ms.");
+                    AppLogger.Info($"[ToastNotificationService:Undo] Undo for '{title}' complete in {sw.ElapsedMilliseconds}ms.");
                 }
                 catch (Exception ex)
                 {
                     sw.Stop();
-                    AppLogger.Error($"[TOAST UNDO] Error executing toast undo action: {ex.Message}", ex);
+                    AppLogger.Error($"[ToastNotificationService:Undo] Error executing undo: {ex.Message}", ex);
                     ShowError("Undo Failed", $"Could not revert action: {ex.Message}");
                 }
             });
@@ -56,7 +56,7 @@ public class ToastNotificationService
         Dispatcher.UIThread.Post(() =>
         {
             ActiveToasts.Add(toast);
-            AppLogger.Trace($"[ToastNotificationService] Added toast '{title}' to visual queue (Total active: {ActiveToasts.Count}).");
+            AppLogger.Trace($"[ToastNotificationService:Queue] Added '{title}' (ActiveCount={ActiveToasts.Count}).");
         });
 
         _ = Task.Run(async () =>
@@ -66,7 +66,7 @@ public class ToastNotificationService
             {
                 if (ActiveToasts.Remove(toast))
                 {
-                    AppLogger.Trace($"[ToastNotificationService] Auto-dismissed toast '{title}'.");
+                    AppLogger.Trace($"[ToastNotificationService:Queue] Auto-dismissed '{title}'.");
                 }
             });
         });
@@ -87,7 +87,7 @@ public class ToastNotificationService
         {
             if (ActiveToasts.Remove(toast))
             {
-                AppLogger.Trace($"[ToastNotificationService] Manually dismissed toast '{toast.Title}'.");
+                AppLogger.Trace($"[ToastNotificationService:Queue] Manually dismissed '{toast.Title}'.");
             }
         });
     }

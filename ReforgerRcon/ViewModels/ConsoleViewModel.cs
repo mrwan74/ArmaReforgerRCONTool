@@ -43,7 +43,7 @@ public partial class ConsoleViewModel : ViewModelBase
         _rconService.OutputReceived += OnOutputReceived;
 
         AddLog(LogCategory.System, LogType.System, $"RCON console initialized for {_rconService.CurrentProtocol}.");
-        AppLogger.Debug($"[ConsoleViewModel] Console initialized for protocol: {_rconService.CurrentProtocol}");
+        AppLogger.Debug($"[ConsoleViewModel:Init] Initialized for protocol: {_rconService.CurrentProtocol}");
     }
 
     private void OnOutputReceived(object? sender, string rawMessage)
@@ -110,7 +110,7 @@ public partial class ConsoleViewModel : ViewModelBase
                     FilteredLogs.RemoveAt(0);
                 }
             }
-            AppLogger.Debug($"[ConsoleViewModel] Truncated {removeCount} old log lines to maintain buffer limit ({TrimToLogCount}).");
+            AppLogger.Debug($"[ConsoleViewModel:Buffer] Truncated {removeCount} old log line(s) to maintain buffer limit ({TrimToLogCount}).");
         }
 
         if (SelectedTab == LogCategory.All || SelectedTab == category)
@@ -125,13 +125,13 @@ public partial class ConsoleViewModel : ViewModelBase
 
     partial void OnSelectedTabChanged(LogCategory value)
     {
-        AppLogger.Debug($"[ConsoleViewModel] Selected log category filter switched to: {value}");
+        AppLogger.Debug($"[ConsoleViewModel:Filter] Category filter switched to: {value}");
         ApplyTabFilter();
     }
 
     partial void OnAutoScrollChanged(bool value)
     {
-        AppLogger.Trace($"[ConsoleViewModel] AutoScroll toggled: {value}");
+        AppLogger.Trace($"[ConsoleViewModel:AutoScroll] AutoScroll toggled: {value}");
         if (value)
         {
             RequestScrollToEnd();
@@ -167,7 +167,7 @@ public partial class ConsoleViewModel : ViewModelBase
             FilteredLogs.Add(log);
         }
 
-        AppLogger.Trace($"[ConsoleViewModel] Filtered {FilteredLogs.Count}/{_allLogs.Count} entries for category '{SelectedTab}'.");
+        AppLogger.Trace($"[ConsoleViewModel:Filter] Filtered {FilteredLogs.Count}/{_allLogs.Count} entries for '{SelectedTab}'.");
 
         if (AutoScroll)
         {
@@ -181,28 +181,28 @@ public partial class ConsoleViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(CommandInput)) return;
         var cmd = CommandInput.Trim();
         CommandInput = string.Empty;
-        AppLogger.Info($"[ConsoleViewModel] Operator submitted manual console command: '{cmd}'");
+        AppLogger.Info($"[ConsoleViewModel:Command] Submitted command: '{AppLogger.SanitizeSensitiveData(cmd)}'");
         await _rconService.SendCommandAsync(cmd).ConfigureAwait(false);
     });
 
     [RelayCommand]
     private void ToggleFullscreen()
     {
-        AppLogger.Debug("[ConsoleViewModel] Fullscreen toggle requested.");
+        AppLogger.Debug("[ConsoleViewModel:Fullscreen] Fullscreen toggled.");
         _dashboard?.ToggleConsoleFullscreen();
     }
 
     [RelayCommand]
     private void Detach()
     {
-        AppLogger.Info("[ConsoleViewModel] Console detach requested.");
+        AppLogger.Info("[ConsoleViewModel:Detach] Detaching console.");
         _dashboard?.DetachConsole();
     }
 
     [RelayCommand]
     private void Reattach()
     {
-        AppLogger.Info("[ConsoleViewModel] Console reattach requested.");
+        AppLogger.Info("[ConsoleViewModel:Reattach] Reattaching console.");
         _dashboard?.ReattachConsole();
     }
 
@@ -212,7 +212,7 @@ public partial class ConsoleViewModel : ViewModelBase
         int count = _allLogs.Count;
         _allLogs.Clear();
         FilteredLogs.Clear();
-        AppLogger.Info($"[ConsoleViewModel] Cleared {count} log lines from terminal buffer.");
+        AppLogger.Info($"[ConsoleViewModel:Clear] Cleared {count} log entries.");
     }
 
     [RelayCommand]
@@ -220,7 +220,7 @@ public partial class ConsoleViewModel : ViewModelBase
     {
         var text = string.Join(Environment.NewLine, FilteredLogs.Select(l => $"[{l.FormattedTime}] [{l.BadgeText}] {l.Message}"));
         await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
-        AppLogger.Info($"[ConsoleViewModel] Copied {FilteredLogs.Count} console entries ({text.Length} chars) to clipboard.");
+        AppLogger.Info($"[ConsoleViewModel:Clipboard] Copied {FilteredLogs.Count} console entries ({text.Length} chars) to clipboard.");
         ToastNotificationService.Instance.ShowToast("Logs Copied", "Copied terminal buffer to clipboard.");
     });
 }

@@ -33,15 +33,15 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
         try
         {
             int total = _targets.Count;
-            AppLogger.Info($"[KickDialog] Starting kick execution for {total} player(s) (Reason: '{Reason}')...");
+            AppLogger.Info($"[KickDialog:Execute] Starting kick sequence for {total} player(s) (Reason: '{Reason}')...");
 
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];
                 ProgressStatus = $"Kicking {player.Name} ({i + 1}/{total})...";
-                AppLogger.Info($"[KickDialog] Sequentially kicking target {i + 1}/{total}: '{player.Name}' (ID: {player.Id}, UID: {player.Uid})...");
+                AppLogger.Info($"[KickDialog:Execute] Target {i + 1}/{total}: '{player.Name}' (ID: #{player.Id}, UID: {player.Uid})...");
 
-                bool isSuccess = await _rconService.KickPlayerAsync(player, Reason);
+                bool isSuccess = await _rconService.KickPlayerAsync(player, Reason).ConfigureAwait(false);
 
                 var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
                     ? $"#kick {player.Id} {Reason}"
@@ -50,14 +50,14 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
                 if (isSuccess)
                 {
                     successCount++;
-                    AppLogger.Info($"[KickDialog] Kick SUCCESS for '{player.Name}'.");
+                    AppLogger.Info($"[KickDialog:Execute] Kick SUCCESS for '{player.Name}'.");
                     ToastNotificationService.Instance.ShowSuccess("Kick Executed", $"Kicked {player.Name}", cmd);
                     _parent.RemovePlayerFromList(player);
                 }
                 else
                 {
                     failedCount++;
-                    AppLogger.Warn($"[KickDialog] Kick FAILED for '{player.Name}'. Command: '{cmd}'");
+                    AppLogger.Warn($"[KickDialog:Execute] Kick FAILED for '{player.Name}'. Command: '{cmd}'");
                     ToastNotificationService.Instance.ShowError(
                         "Kick Failed",
                         $"Could not kick {player.Name} (ID: {player.Id}): Server timed out or player already left.",
@@ -66,10 +66,10 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
                 }
             }
 
-            AppLogger.Info($"[KickDialog] Kick execution finished (Success: {successCount}, Failed: {failedCount}).");
+            AppLogger.Info($"[KickDialog:Execute] Kick execution complete (Success: {successCount}, Failed: {failedCount}).");
 
             _parent.CloseDialog();
-            await _parent.RefreshPlayersAsync();
+            await _parent.RefreshPlayersAsync().ConfigureAwait(false);
 
             if (total > 1)
             {
@@ -97,7 +97,7 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
     private void Close()
     {
         if (IsExecuting) return;
-        AppLogger.Debug("[KickDialog] Operator closed kick dialog.");
+        AppLogger.Debug("[KickDialog:Close] Dialog closed.");
         _parent.CloseDialog();
     }
 }

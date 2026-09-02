@@ -41,19 +41,20 @@ public static partial class BattlEyeResponseParser
 
     public static List<PlayerModel> ParsePlayers(string rawResponse)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("BattlEyeResponseParser.ParsePlayers");
         var players = new List<PlayerModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
-            AppLogger.Trace("[BattlEyeResponseParser] Empty BattlEye player response buffer.");
+            AppLogger.Trace("[BattlEyeResponseParser:Players] Empty response buffer.");
             return players;
         }
 
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            AppLogger.Debug($"[BattlEyeResponseParser] Processing {lines.Length} line(s) for BattlEye player records ({rawResponse.Length} bytes)...");
+            AppLogger.Debug($"[BattlEyeResponseParser:Players] Processing {lines.Length} line(s) for player records ({rawResponse.Length} chars)...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -61,7 +62,7 @@ public static partial class BattlEyeResponseParser
 
                 if (IsKnownPlayerHeaderLine(rawLine))
                 {
-                    AppLogger.Trace($"[BattlEyeResponseParser] Skipped header line #{i + 1}: '{rawLine}'");
+                    AppLogger.Trace($"[BattlEyeResponseParser:Players] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -80,19 +81,20 @@ public static partial class BattlEyeResponseParser
             {
                 if (players.Count != expectedCount)
                 {
-                    AppLogger.Warn($"[BattlEyeResponseParser] Player count mismatch! Server reported ({expectedCount} players in total) but parsed {players.Count} rows.");
+                    AppLogger.Warn($"[BattlEyeResponseParser:Players] Discrepancy: Server reported {expectedCount} players, parsed {players.Count} rows.");
                 }
                 else
                 {
-                    AppLogger.Trace($"[BattlEyeResponseParser] Server player total ({expectedCount}) verified against parsed rows.");
+                    AppLogger.Trace($"[BattlEyeResponseParser:Players] Server count verified ({expectedCount} players).");
                 }
             }
 
-            AppLogger.Info($"[BattlEyeResponseParser] Successfully parsed {players.Count} active BattlEye player(s) from {lines.Length} line(s).");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[BattlEyeResponseParser:Players] Parsed {players.Count} active player(s) from {lines.Length} line(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[BattlEyeResponseParser] Critical failure while parsing BattlEye players. Dump:\n{ReforgerResponseParser.ToForensicDump(rawResponse)}", ex);
+            AppLogger.Error($"[BattlEyeResponseParser:Players] Critical failure parsing players. Dump:\n{ReforgerResponseParser.ToForensicDump(rawResponse)}", ex);
         }
 
         return players;
@@ -100,19 +102,20 @@ public static partial class BattlEyeResponseParser
 
     public static List<AdminModel> ParseAdmins(string rawResponse)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("BattlEyeResponseParser.ParseAdmins");
         var admins = new List<AdminModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
-            AppLogger.Trace("[BattlEyeResponseParser] Empty BattlEye admin response buffer.");
+            AppLogger.Trace("[BattlEyeResponseParser:Admins] Empty response buffer.");
             return admins;
         }
 
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            AppLogger.Debug($"[BattlEyeResponseParser] Processing {lines.Length} line(s) for connected RCON admins...");
+            AppLogger.Debug($"[BattlEyeResponseParser:Admins] Processing {lines.Length} line(s) for connected admins...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -121,7 +124,7 @@ public static partial class BattlEyeResponseParser
                     line.StartsWith("[#]", StringComparison.OrdinalIgnoreCase) ||
                     line.StartsWith("---", StringComparison.OrdinalIgnoreCase))
                 {
-                    AppLogger.Trace($"[BattlEyeResponseParser] Skipped admin table header line #{i + 1}: '{line}'");
+                    AppLogger.Trace($"[BattlEyeResponseParser:Admins] Skipped header line #{i + 1}: '{line}'");
                     continue;
                 }
 
@@ -143,19 +146,20 @@ public static partial class BattlEyeResponseParser
                         TimeZone = geo.TimeZone
                     });
 
-                    AppLogger.Trace($"[BattlEyeResponseParser] Parsed connected admin #{id} ({ip}:{port}, Location: '{geo.NaturalLocation}').");
+                    AppLogger.Trace($"[BattlEyeResponseParser:Admins] Parsed admin #{id} ({ip}:{port}, Location: '{geo.NaturalLocation}').");
                 }
                 else
                 {
-                    ReforgerResponseParser.LogParserAnomaly("BattlEye Admins List", i + 1, line, "Line did not match '[#] [IP:Port]' format.");
+                    ReforgerResponseParser.LogParserAnomaly("BattlEye Admins List", i + 1, line, "Line did not match '[#] [IP:Port]'.");
                 }
             }
 
-            AppLogger.Info($"[BattlEyeResponseParser] Successfully parsed {admins.Count} connected RCON admin(s).");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[BattlEyeResponseParser:Admins] Parsed {admins.Count} admin(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[BattlEyeResponseParser] Error parsing RCON admins: {ex.Message}", ex);
+            AppLogger.Error($"[BattlEyeResponseParser:Admins] Error parsing admins: {ex.Message}", ex);
         }
 
         return admins;
@@ -201,6 +205,8 @@ public static partial class BattlEyeResponseParser
                     Id = id,
                     Uid = guid == "-" ? $"init_{id}" : guid,
                     Guid = guid == "-" ? "Initializing..." : guid,
+                    BattlEyeGuid = guid == "-" ? string.Empty : guid,
+                    ReforgerUid = string.Empty,
                     Name = cleanName,
                     Ip = ip,
                     Port = port,
@@ -216,13 +222,13 @@ public static partial class BattlEyeResponseParser
                     TimeZone = geo.TimeZone
                 };
 
-                AppLogger.Trace($"[BattlEyeResponseParser] Parsed player #{id} ({cleanName}, Endpoint: {ip}:{port}, Ping: {ping}ms, GUID: {guid}) on line #{lineIndex + 1}.");
+                AppLogger.Trace($"[BattlEyeResponseParser:Players] Line #{lineIndex + 1} -> #{id} '{cleanName}' ({ip}:{port}, Ping={ping}ms, GUID={guid}).");
                 return true;
             }
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Warn($"[BattlEyeResponseParser] Regex timeout on player row #{lineIndex + 1}: '{line}'. Detail: {regexEx.Message}");
+            AppLogger.Warn($"[BattlEyeResponseParser:Players] Regex timeout on line #{lineIndex + 1}: '{line}': {regexEx.Message}");
         }
 
         return TryHeuristicPlayerLine(line, lineIndex, out player);
@@ -253,13 +259,15 @@ public static partial class BattlEyeResponseParser
 
                 var geo = GeoIpService.GetLocation(ip);
 
-                AppLogger.Warn($"[BattlEyeResponseParser:Heuristic] Salvaged player #{id} ({cleanName}, Endpoint: {ip}:{port}, GUID: {guid}) on line #{lineIndex + 1}");
+                AppLogger.Warn($"[BattlEyeResponseParser:Heuristic] Salvaged player row #{lineIndex + 1}: ID #{id} ('{cleanName}', Endpoint: {ip}:{port}, GUID: '{guid}')");
 
                 player = new PlayerModel
                 {
                     Id = id,
                     Uid = guid == "-" ? $"init_{id}" : guid,
                     Guid = guid == "-" ? "Initializing..." : guid,
+                    BattlEyeGuid = guid == "-" ? string.Empty : guid,
+                    ReforgerUid = string.Empty,
                     Name = cleanName,
                     Ip = ip,
                     Port = port,
@@ -283,19 +291,20 @@ public static partial class BattlEyeResponseParser
 
     public static List<BanModel> ParseBans(string rawResponse)
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("BattlEyeResponseParser.ParseBans");
         var bans = new List<BanModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
-            AppLogger.Trace("[BattlEyeResponseParser] Empty BattlEye ban response buffer.");
+            AppLogger.Trace("[BattlEyeResponseParser:Bans] Empty response buffer.");
             return bans;
         }
 
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            AppLogger.Debug($"[BattlEyeResponseParser] Processing {lines.Length} line(s) for BattlEye ban records...");
+            AppLogger.Debug($"[BattlEyeResponseParser:Bans] Processing {lines.Length} line(s) for bans...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -303,7 +312,7 @@ public static partial class BattlEyeResponseParser
 
                 if (IsKnownBanHeaderLine(rawLine))
                 {
-                    AppLogger.Trace($"[BattlEyeResponseParser] Skipped ban header line #{i + 1}: '{rawLine}'");
+                    AppLogger.Trace($"[BattlEyeResponseParser:Bans] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -317,11 +326,12 @@ public static partial class BattlEyeResponseParser
                 }
             }
 
-            AppLogger.Info($"[BattlEyeResponseParser] Successfully parsed {bans.Count} BattlEye ban(s).");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[BattlEyeResponseParser:Bans] Parsed {bans.Count} ban(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[BattlEyeResponseParser] Critical failure while parsing BattlEye bans. Dump:\n{ReforgerResponseParser.ToForensicDump(rawResponse)}", ex);
+            AppLogger.Error($"[BattlEyeResponseParser:Bans] Error parsing bans. Dump:\n{ReforgerResponseParser.ToForensicDump(rawResponse)}", ex);
         }
 
         return bans;
@@ -372,13 +382,13 @@ public static partial class BattlEyeResponseParser
                     BannedAt = DateTime.UtcNow
                 };
 
-                AppLogger.Trace($"[BattlEyeResponseParser] Parsed ban record #{banNumber} (Identity: {identity}, Duration: {durationSeconds}s, Reason: '{cleanReason}') on line #{lineIndex + 1}.");
+                AppLogger.Trace($"[BattlEyeResponseParser:Bans] Line #{lineIndex + 1} -> Ban #{banNumber}: Identity='{identity}', Duration={durationSeconds}s, Reason='{cleanReason}'.");
                 return true;
             }
         }
         catch (RegexMatchTimeoutException regexEx)
         {
-            AppLogger.Warn($"[BattlEyeResponseParser] Regex timeout on ban row #{lineIndex + 1}: '{line}'. Exception: {regexEx.Message}");
+            AppLogger.Warn($"[BattlEyeResponseParser:Bans] Regex timeout on line #{lineIndex + 1}: '{line}': {regexEx.Message}");
         }
 
         var tokens = line.Split([' ', '\t'], 4, StringSplitOptions.RemoveEmptyEntries);
@@ -395,7 +405,7 @@ public static partial class BattlEyeResponseParser
             }
 
             var cleanReason = ReforgerResponseParser.SanitizeReason(rawReason);
-            AppLogger.Warn($"[BattlEyeResponseParser:Heuristic] Salvaged Ban #{fallbackBanNo} ({identity}, Duration: {durationStr}m, Reason: '{cleanReason}') on line #{lineIndex + 1}");
+            AppLogger.Warn($"[BattlEyeResponseParser:Heuristic] Salvaged Ban #{fallbackBanNo} on line #{lineIndex + 1}: Identity='{identity}', Duration='{durationStr}m', Reason='{cleanReason}'");
 
             ban = new BanModel
             {

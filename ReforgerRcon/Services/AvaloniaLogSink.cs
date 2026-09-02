@@ -71,6 +71,7 @@ public partial class AvaloniaLogSink(LogEventLevel minimumLevel = LogEventLevel.
             case LogEventLevel.Error:
             case LogEventLevel.Fatal:
                 AppLogger.Error(msg, null, context);
+                ToastNotificationService.Instance.ShowError("UI Framework Warning", $"{sourceName}: {formatted}", "AVALONIA_UI_ERROR");
                 break;
         }
     }

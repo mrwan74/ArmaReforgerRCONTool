@@ -67,13 +67,14 @@ public partial class BanDialogViewModel : ViewModelBase
             IsBanIpVisible = false;
         }
 
+        AppLogger.Info($"[BanDialog:Init] Initialized for {targets.Count} target(s): '{TargetNames}' (Protocol: {_rconService.CurrentProtocol}, HasValidIP: {hasValidIp})");
         UpdateCalculations();
     }
 
     partial void OnSelectedPresetChanged(string value)
     {
         OnPropertyChanged(nameof(IsCustomSelected));
-        AppLogger.Debug($"[BanDialog] Preset changed to '{value}'.");
+        AppLogger.Debug($"[BanDialog:Preset] Changed to '{value}'.");
         UpdateCalculations();
     }
 
@@ -98,7 +99,7 @@ public partial class BanDialogViewModel : ViewModelBase
     private async Task CopyCommandPreviewAsync()
     {
         await ClipboardService.SetTextAsync(CommandPreview).ConfigureAwait(false);
-        AppLogger.Debug($"[BanDialog] Copied command preview '{CommandPreview}' to clipboard.");
+        AppLogger.Debug($"[BanDialog:Clipboard] Copied command preview: '{CommandPreview}'");
         ToastNotificationService.Instance.ShowToast("Copied", "Copied ban command to clipboard.");
     }
 
@@ -156,7 +157,7 @@ public partial class BanDialogViewModel : ViewModelBase
             }
         }
 
-        AppLogger.Trace($"[BanDialog] Ban calculation updated: {TotalCalculatedTimeText} -> '{CommandPreview}'");
+        AppLogger.Trace($"[BanDialog:Calculation] Calculated: {TotalCalculatedTimeText} -> '{CommandPreview}'");
     }
 
     [RelayCommand]
@@ -173,13 +174,13 @@ public partial class BanDialogViewModel : ViewModelBase
         {
             var totalSec = CalculateTotalSeconds();
             int total = _targets.Count;
-            AppLogger.Info($"[BanDialog] Starting sequential ban for {total} target(s) (Duration: {totalSec}s, Reason: '{Reason}', AlsoBanIp: {AlsoBanIpAddress})...");
+            AppLogger.Info($"[BanDialog:Execute] Starting sequential ban for {total} target(s) (Duration: {totalSec}s, Reason: '{Reason}', AlsoBanIp: {AlsoBanIpAddress})...");
 
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];
                 ProgressStatus = $"Banning {player.Name} ({i + 1}/{total})...";
-                AppLogger.Info($"[BanDialog] Sequentially banning target {i + 1}/{total}: '{player.Name}' (ID: {player.Id}, UID: {player.Uid}, IP: {player.Ip})...");
+                AppLogger.Info($"[BanDialog:Execute] Target {i + 1}/{total}: '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}, IP: {player.Ip})...");
 
                 bool isSuccess = await _rconService.BanPlayerWithOptionalIpAsync(player, totalSec, Reason, AlsoBanIpAddress).ConfigureAwait(false);
 
@@ -191,10 +192,10 @@ public partial class BanDialogViewModel : ViewModelBase
                 if (isSuccess)
                 {
                     successCount++;
-                    AppLogger.Info($"[BanDialog] Ban SUCCESS for '{player.Name}'.");
+                    AppLogger.Info($"[BanDialog:Execute] Ban SUCCESS for '{player.Name}'.");
                     ToastNotificationService.Instance.ShowSuccess("Ban Executed", $"Banned {player.Name}", cmd, async () =>
                     {
-                        AppLogger.Info($"[BanDialog] Ban Undo action invoked for '{player.Name}'.");
+                        AppLogger.Info($"[BanDialog:Undo] Ban undo invoked for '{player.Name}'. Reinstating unban...");
                         var allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
                         var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid || b.IdentityId == player.Ip);
                         if (ban != null)
@@ -209,7 +210,7 @@ public partial class BanDialogViewModel : ViewModelBase
                 else
                 {
                     failedCount++;
-                    AppLogger.Warn($"[BanDialog] Ban FAILED for '{player.Name}'. Command: '{cmd}'");
+                    AppLogger.Warn($"[BanDialog:Execute] Ban FAILED for '{player.Name}'. Command: '{cmd}'");
                     ToastNotificationService.Instance.ShowError(
                         "Ban Failed",
                         $"Could not ban {player.Name}: Server rejected command or timed out.",
@@ -218,7 +219,7 @@ public partial class BanDialogViewModel : ViewModelBase
                 }
             }
 
-            AppLogger.Info($"[BanDialog] Ban execution finished (Success: {successCount}, Failed: {failedCount}).");
+            AppLogger.Info($"[BanDialog:Execute] Ban execution complete (Success: {successCount}, Failed: {failedCount}).");
 
             _parent.CloseDialog();
             await _parent.TriggerPostBanRefreshAsync().ConfigureAwait(false);
@@ -249,7 +250,7 @@ public partial class BanDialogViewModel : ViewModelBase
     private void Close()
     {
         if (IsExecuting) return;
-        AppLogger.Debug("[BanDialog] Operator closed ban dialog.");
+        AppLogger.Debug("[BanDialog:Close] Dialog closed.");
         _parent.CloseDialog();
     }
 }

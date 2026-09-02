@@ -41,6 +41,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
     public GeoIpUpdateDialogViewModel(Action onClose)
     {
         _onClose = onClose;
+        AppLogger.Debug("[GeoIpUpdateDialogViewModel:Init] Instantiated dialog. Launching update task...");
         _ = RunUpdateAsync();
     }
 
@@ -66,7 +67,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
 
         try
         {
-            AppLogger.Info("[GeoIpUpdateDialog] Starting GeoIP database update process (City & Country)...");
+            AppLogger.Info("[GeoIpUpdateDialog:Update] Starting MaxMind GeoIP update task...");
             bool success = await GeoIpService.UpdateDatabasesAsync(force: true, progressHandler, _cts.Token).ConfigureAwait(false);
 
             Dispatcher.UIThread.Post(() =>
@@ -103,7 +104,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[GeoIpUpdateDialog] Unexpected fault updating GeoIP databases.", ex);
+            AppLogger.Error($"[GeoIpUpdateDialog:Update] Fatal error: {ex.Message}", ex);
             Dispatcher.UIThread.Post(() =>
             {
                 IsInProgress = false;
@@ -139,6 +140,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
         {
             try
             {
+                AppLogger.Warn("[GeoIpUpdateDialog:Cancel] Cancellation requested.");
                 _cts.Cancel();
             }
             catch (ObjectDisposedException)
@@ -148,6 +150,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
         }
         else
         {
+            AppLogger.Debug("[GeoIpUpdateDialog:Close] Dialog closed.");
             _onClose();
         }
     }
@@ -155,8 +158,11 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyLogsAsync()
     {
+        var start = Stopwatch.GetTimestamp();
         var text = string.Join(Environment.NewLine, ActivityLogs);
         await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[GeoIpUpdateDialog:Clipboard] Copied {ActivityLogs.Count} update log lines in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Copied", "Copied update activity log to clipboard.");
     }
 

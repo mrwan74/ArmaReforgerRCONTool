@@ -16,13 +16,28 @@ public partial class MainViewModel : ViewModelBase
 
     public MainViewModel()
     {
+        AppLogger.Debug("[MainViewModel:Init] Initializing MainViewModel...");
         CurrentView = new LoginViewModel(OnLoginSuccess, isStartup: true);
         CrashReportService.UnhandledErrorCaptured += OnUnhandledErrorCaptured;
+
+        CheckForPendingCrashReports();
+        AppLogger.Trace("[MainViewModel:Init] MainViewModel ready.");
+    }
+
+    private void CheckForPendingCrashReports()
+    {
+        var pending = CrashReportService.GetAndClearPendingReports();
+        if (pending.Count > 0)
+        {
+            var latest = pending[^1];
+            AppLogger.Info($"[MainViewModel:Crash] Displaying pending startup error report #{latest.ErrorId}");
+            OnUnhandledErrorCaptured(latest);
+        }
     }
 
     private void OnUnhandledErrorCaptured(ErrorReportModel report)
     {
-        AppLogger.Info($"MainViewModel presenting global crash dialog: #{report.ErrorId} ({report.ExceptionType})");
+        AppLogger.Info($"[MainViewModel:Crash] Presenting global crash dialog: #{report.ErrorId} ({report.ExceptionType})");
         CurrentErrorViewModel = new ErrorDetailsDialogViewModel(report, CloseErrorDialog);
         IsErrorDialogVisible = true;
     }
@@ -30,6 +45,7 @@ public partial class MainViewModel : ViewModelBase
     [RelayCommand]
     public void CloseErrorDialog()
     {
+        AppLogger.Debug("[MainViewModel:Crash] Dismissing crash dialog.");
         IsErrorDialogVisible = false;
         CurrentErrorViewModel = null;
     }
@@ -45,16 +61,20 @@ public partial class MainViewModel : ViewModelBase
         settings.ThemeMode = newMode;
         AppSettings.SaveToDisk(settings);
 
-        AppLogger.Info($"[MainViewModel] Toggled theme variant (New Mode: {newMode}, Actual: {currentActual})");
+        AppLogger.Info($"[MainViewModel:Theme] Theme switched to: {newMode}");
     }
 
     private void OnLoginSuccess(ServerProfile profile, IRconService rconService)
     {
-        CurrentView = new DashboardViewModel(profile, rconService, OnDisconnect);
+        AppLogger.Info($"[MainViewModel:Navigation] Transitioning from Login to Dashboard for {profile.ServerIp}:{profile.Port} ({profile.Protocol})...");
+        var dashboardVm = new DashboardViewModel(profile, rconService, OnDisconnect);
+        CurrentView = dashboardVm;
+        dashboardVm.Initialize();
     }
 
     private void OnDisconnect()
     {
+        AppLogger.Info("[MainViewModel:Navigation] Transitioning from Dashboard back to Login screen...");
         CurrentView = new LoginViewModel(OnLoginSuccess, isStartup: false);
     }
 }

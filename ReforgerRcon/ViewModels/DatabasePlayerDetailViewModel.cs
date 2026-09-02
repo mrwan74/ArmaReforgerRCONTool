@@ -22,22 +22,25 @@ public partial class DatabasePlayerDetailViewModel(DatabasePlayerModel player, D
         var text = value?.ToString() ?? string.Empty;
         if (string.IsNullOrEmpty(text)) return;
 
-        AppLogger.Debug($"[DatabasePlayerDetail] Copying database field to clipboard: '{text}'");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Debug($"[DatabasePlayerDetail:Clipboard] Copying value ({text.Length} chars): '{text}'");
         await ClipboardService.SetTextAsync(text);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Trace($"[DatabasePlayerDetail:Clipboard] Copied in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied: {text}");
     }
 
     [RelayCommand]
     private void EditComment()
     {
-        AppLogger.Debug($"[DatabasePlayerDetail] Opening comment editor for '{Player.Name}' (UID: {Player.Uid}).");
+        AppLogger.Debug($"[DatabasePlayerDetail:Comment] Opening comment editor for '{Player.Name}' (UID: {Player.Uid}).");
         _parent.OpenSetComment(Player);
     }
 
     [RelayCommand]
     private void OfflineBan()
     {
-        AppLogger.Info($"[DatabasePlayerDetail] Opening offline ban dialog for '{Player.Name}' (UID: {Player.Uid}).");
+        AppLogger.Info($"[DatabasePlayerDetail:OfflineBan] Opening offline ban for '{Player.Name}' (UID: {Player.Uid}).");
         _parent.CloseDialog();
         _parent.OpenOfflineBan(Player);
     }
@@ -45,7 +48,7 @@ public partial class DatabasePlayerDetailViewModel(DatabasePlayerModel player, D
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[DatabasePlayerDetail] Operator closed database player details dialog.");
+        AppLogger.Debug("[DatabasePlayerDetail:Close] Dialog closed.");
         _parent.CloseDialog();
     }
 }

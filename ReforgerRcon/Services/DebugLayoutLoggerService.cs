@@ -46,6 +46,7 @@ public static class DebugLayoutLoggerService
 
     public static void Dump()
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             var dir = Path.GetDirectoryName(LogFile);
@@ -75,7 +76,7 @@ public static class DebugLayoutLoggerService
             sb.AppendLine("--- DATA GRID COLUMNS ---");
             foreach (var (name, grid) in RegisteredGrids)
             {
-                sb.AppendLine(CultureInfo.InvariantCulture, $"Grid: [{name}] (Total Columns: {grid.Columns.Count}, Grid Bounds: {grid.Bounds.Width:F1} x {grid.Bounds.Height:F1})");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"Grid: [{name}] (Columns={grid.Columns.Count}, Bounds={grid.Bounds.Width:F1}x{grid.Bounds.Height:F1})");
                 sb.AppendFormat(CultureInfo.InvariantCulture, "{0,-6} | {1,-22} | {2,-16} | {3,-15} | {4,-8} | {5,-10}", "Index", "Header/Tag", "ActualWidth (px)", "Width Setting", "Visible", "DisplayIdx").AppendLine();
                 sb.AppendLine(new string('-', 90));
 
@@ -95,6 +96,7 @@ public static class DebugLayoutLoggerService
             }
 
             File.WriteAllText(LogFile, sb.ToString());
+            AppLogger.Trace($"[DebugLayoutLogger:Dump] Snapshot written in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {

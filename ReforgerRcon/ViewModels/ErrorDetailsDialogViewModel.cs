@@ -43,7 +43,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     private void SetTab(string tab)
     {
-        AppLogger.Debug($"[ErrorDetailsDialog] Switched diagnostic tab to: '{tab}'");
+        AppLogger.Debug($"[ErrorDetailsDialog:Tab] Diagnostic tab switched to: '{tab}'");
         SelectedTab = tab;
     }
 
@@ -88,7 +88,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
             targetPath = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
         }
 
-        AppLogger.Info($"[ErrorDetailsDialog] Requesting native file manager to highlight: '{targetPath}'");
+        AppLogger.Info($"[ErrorDetailsDialog:Explorer] Highlighting in file manager: '{targetPath}'");
 
         try
         {
@@ -166,17 +166,17 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         }
         catch (Win32Exception winEx)
         {
-            AppLogger.Error($"[ErrorDetailsDialog] Win32 error opening file manager for '{targetPath}': {winEx.Message}", winEx);
+            AppLogger.Error($"[ErrorDetailsDialog:Explorer] Win32 error launching explorer for '{targetPath}': {winEx.Message}", winEx);
             ToastNotificationService.Instance.ShowToast("File Manager Error", "Unable to launch system file explorer.");
         }
         catch (IOException ioEx)
         {
-            AppLogger.Error($"[ErrorDetailsDialog] I/O error accessing path '{targetPath}': {ioEx.Message}", ioEx);
+            AppLogger.Error($"[ErrorDetailsDialog:Explorer] I/O error: {ioEx.Message}", ioEx);
             ToastNotificationService.Instance.ShowToast("File Manager Error", "Path is not accessible.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[ErrorDetailsDialog] Unexpected error launching file manager for '{targetPath}'", ex);
+            AppLogger.Error($"[ErrorDetailsDialog:Explorer] Unexpected error for '{targetPath}'", ex);
             ToastNotificationService.Instance.ShowToast("File Manager Error", "Unable to launch native file explorer.");
         }
     }
@@ -184,6 +184,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     private async Task CopyDetailsAsync()
     {
+        var start = Stopwatch.GetTimestamp();
         var content = Report.FullReportText;
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -193,7 +194,8 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         var success = await ClipboardService.SetTextAsync(content);
         if (success)
         {
-            AppLogger.Info($"[ErrorDetailsDialog] Copied full diagnostic crash report ({content.Length} chars) to clipboard.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[ErrorDetailsDialog:Clipboard] Copied diagnostic report ({content.Length} chars) in {elapsedMs:F2}ms.");
             ToastNotificationService.Instance.ShowToast("Copied", "Full diagnostic crash report with breadcrumbs and system stats copied to clipboard.");
         }
     }
@@ -202,10 +204,12 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     private async Task CopyDumpPathAsync()
     {
         if (string.IsNullOrEmpty(Report.DumpFilePath)) return;
+        var start = Stopwatch.GetTimestamp();
         var success = await ClipboardService.SetTextAsync(Report.DumpFilePath);
         if (success)
         {
-            AppLogger.Info($"[ErrorDetailsDialog] Copied dump file path '{Report.DumpFilePath}' to clipboard.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[ErrorDetailsDialog:Clipboard] Copied dump file path in {elapsedMs:F2}ms.");
             ToastNotificationService.Instance.ShowToast("Copied", "Memory dump file path copied to clipboard.");
         }
     }
@@ -213,7 +217,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     public static void RestartApp()
     {
-        AppLogger.Info("[ErrorDetailsDialog] Restart application command executed by operator.");
+        AppLogger.Info("[ErrorDetailsDialog:Restart] Relaunching application...");
         try
         {
             var exePath = Environment.ProcessPath;
@@ -236,7 +240,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[ErrorDetailsDialog] Operator closed crash diagnostic window.");
+        AppLogger.Debug("[ErrorDetailsDialog:Close] Dialog closed.");
         _onClose();
     }
 }

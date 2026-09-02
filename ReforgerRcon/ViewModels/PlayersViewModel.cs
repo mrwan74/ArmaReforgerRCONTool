@@ -52,14 +52,16 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public Task<bool> RefreshPlayersAsync() => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("PlayersViewModel.RefreshPlayersAsync");
-        AppLogger.Debug("[PlayersViewModel] Querying live player list from server...");
+        AppLogger.Debug($"[PlayersViewModel:Refresh] Querying live player list ({_rconService.CurrentProtocol})...");
 
-        _allPlayers = await _rconService.GetPlayersAsync();
+        _allPlayers = await _rconService.GetPlayersAsync().ConfigureAwait(false);
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
 
         _dashboard.OnlinePlayersCount = Players.Count;
-        AppLogger.Info($"[PlayersViewModel] Populated Players tab with {_allPlayers.Count} player record(s) ({Players.Count} visible after filter).");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[PlayersViewModel:Refresh] Refreshed {_allPlayers.Count} players ({Players.Count} visible) in {elapsedMs:F2}ms.");
     });
 
     public static string MapColumnTagToSortField(string? tag)
@@ -82,6 +84,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             var mappedField = MapColumnTagToSortField(columnTag);
             if (string.IsNullOrEmpty(mappedField)) return;
 
@@ -93,23 +96,24 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 if (currentAsc)
                 {
                     _dashboard.SettingsTab.Settings.PlayersSortAscending = false;
-                    AppLogger.Info($"[PlayersViewModel] Cycled sort for '{mappedField}' -> Descending.");
+                    AppLogger.Info($"[PlayersViewModel:Sort] Cycled sort '{mappedField}' -> Descending.");
                 }
                 else
                 {
                     _dashboard.SettingsTab.Settings.PlayersSortBy = DefaultSortKey;
                     _dashboard.SettingsTab.Settings.PlayersSortAscending = true;
-                    AppLogger.Info($"[PlayersViewModel] Cycled sort for '{mappedField}' -> Default (raw server order).");
+                    AppLogger.Info($"[PlayersViewModel:Sort] Cycled sort '{mappedField}' -> Default.");
                 }
             }
             else
             {
                 _dashboard.SettingsTab.Settings.PlayersSortBy = mappedField;
                 _dashboard.SettingsTab.Settings.PlayersSortAscending = true;
-                AppLogger.Info($"[PlayersViewModel] Cycled sort column -> '{mappedField}' (Ascending).");
+                AppLogger.Info($"[PlayersViewModel:Sort] Cycled sort column -> '{mappedField}' (Ascending).");
             }
 
             ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+            AppLogger.Debug($"[PlayersViewModel:Sort] Sort cycling finished in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         });
     }
 
@@ -117,6 +121,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             var existing = _allPlayers.FirstOrDefault(p => RconService.IsSamePlayer(p, player));
 
             if (existing != null)
@@ -138,7 +143,8 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
             ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard.OnlinePlayersCount = Players.Count;
-            AppLogger.Debug($"[PlayersViewModel] Added/Updated live player '{player.Name}' (ID: #{player.Id}, GUID: {player.Guid}). Total: {_allPlayers.Count}");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[PlayersViewModel:PlayerUpdate] Added/Updated '{player.Name}' in {elapsedMs:F2}ms (Total={_allPlayers.Count}).");
         });
     }
 
@@ -146,6 +152,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             var purged = _allPlayers.RemoveAll(p => RconService.IsSamePlayer(p, player));
 
             var match = Players.FirstOrDefault(p => RconService.IsSamePlayer(p, player));
@@ -157,16 +164,19 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
             _dashboard.OnlinePlayersCount = Players.Count;
             UpdateSelectedCount();
-            AppLogger.Info($"[PlayersViewModel] Removed '{player.Name}' (ID: #{player.Id}) from live list. Purged: {purged}, Remaining: {Players.Count}");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[PlayersViewModel:PlayerRemove] Removed '{player.Name}' (ID: #{player.Id}) in {elapsedMs:F2}ms (Purged={purged}, Remaining={Players.Count}).");
         });
     }
 
     public async Task TriggerPostBanRefreshAsync()
     {
-        AppLogger.Info("[PlayersViewModel] Triggering post-ban refresh across Players and Bans tabs...");
-        await RefreshPlayersAsync();
-        await _dashboard.BansTab.RefreshBansAsync();
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info("[PlayersViewModel:PostBan] Triggering post-ban refresh...");
+        await RefreshPlayersAsync().ConfigureAwait(false);
+        await _dashboard.BansTab.RefreshBansAsync().ConfigureAwait(false);
         _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count;
+        AppLogger.Debug($"[PlayersViewModel:PostBan] Post-ban refresh complete in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
     private static int GetPlayerStatusWeight(PlayerModel p)
@@ -180,6 +190,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             using var timing = AppLogger.Measure($"PlayersViewModel.ApplyFilter('{query}', '{searchType}')");
 
             foreach (var p in Players)
@@ -245,7 +256,8 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             }
 
             UpdateSelectedCount();
-            AppLogger.Trace($"[PlayersViewModel] Filtered {Players.Count}/{_allPlayers.Count} players using query '{query}' (Sort: {sortField}, Asc: {isAscending}).");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Trace($"[PlayersViewModel:Filter] Filtered {Players.Count}/{_allPlayers.Count} players in {elapsedMs:F2}ms (Query='{query}', Sort='{sortField}', Asc={isAscending}).");
         });
     }
 
@@ -271,7 +283,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         ExecuteSafe(() =>
         {
             IsMultiSelectMode = !IsMultiSelectMode;
-            AppLogger.Debug($"[PlayersViewModel] Multi-select mode toggled: {IsMultiSelectMode}");
+            AppLogger.Debug($"[PlayersViewModel:MultiSelect] Multi-select toggled: {IsMultiSelectMode}");
 
             if (IsMultiSelectMode && initialPlayer != null)
             {
@@ -301,7 +313,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                     p.IsSelected = isSelected;
                 }
                 SelectedCount = isSelected ? Players.Count : 0;
-                AppLogger.Debug($"[PlayersViewModel] Toggled select-all: {isSelected} ({SelectedCount} selected).");
+                AppLogger.Debug($"[PlayersViewModel:SelectAll] Toggled select-all: {isSelected} ({SelectedCount} selected).");
             }
             finally
             {
@@ -341,10 +353,10 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null)
             {
-                AppLogger.Warn("[PlayersViewModel] OpenPlayerDetails invoked with null target.");
+                AppLogger.Warn("[PlayersViewModel:Details] OpenPlayerDetails called with null target.");
                 return;
             }
-            AppLogger.Info($"[PlayersViewModel] Opening details dialog for player '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
+            AppLogger.Info($"[PlayersViewModel:Details] Opening details for '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "PlayerDetailDialog" });
             _dashboard.ShowDialog(new PlayerDetailViewModel(player, _rconService, this));
         });
@@ -357,7 +369,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            AppLogger.Info($"[PlayersViewModel] Opening kick dialog for '{player.Name}' (ID: #{player.Id}).");
+            AppLogger.Info($"[PlayersViewModel:Kick] Opening kick dialog for '{player.Name}' (ID: #{player.Id}).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "KickDialog" });
             _dashboard.ShowDialog(new KickDialogViewModel([player], _rconService, this));
         });
@@ -370,7 +382,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            AppLogger.Info($"[PlayersViewModel] Opening ban dialog for '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
+            AppLogger.Info($"[PlayersViewModel:Ban] Opening ban dialog for '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BanDialog" });
             _dashboard.ShowDialog(new BanDialogViewModel([player], _rconService, this));
         });
@@ -384,7 +396,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null) return;
 
-            AppLogger.Info($"[PlayersViewModel] Prompting quick permanent ban for '{player.Name}' (ID: #{player.Id}).");
+            AppLogger.Info($"[PlayersViewModel:QuickBan] Prompting quick permanent ban for '{player.Name}' (ID: #{player.Id}).");
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Quick Permanent Ban",
                 $"Are you sure you want to PERMANENTLY ban {player.Name} (Player #{player.Id})?",
@@ -392,8 +404,9 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 true,
                 async () =>
                 {
-                    AppLogger.Info($"[PlayersViewModel] Executing quick permanent ban for '{player.Name}'...");
-                    bool isSuccess = await _rconService.BanPlayerAsync(player, 0, "Quick Permanent Ban by Administrator");
+                    var start = Stopwatch.GetTimestamp();
+                    AppLogger.Info($"[PlayersViewModel:QuickBan] Executing ban for '{player.Name}'...");
+                    bool isSuccess = await _rconService.BanPlayerAsync(player, 0, "Quick Permanent Ban by Administrator").ConfigureAwait(false);
                     var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
                         ? $"#ban create {player.Id} 0 Quick Ban"
                         : $"addBan {player.Guid} 0 Quick Ban";
@@ -402,23 +415,24 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                     {
                         ToastNotificationService.Instance.ShowSuccess("Permanent Ban", $"Banned {player.Name}", cmd, async () =>
                         {
-                            AppLogger.Info($"[PlayersViewModel] Undo triggered for quick permanent ban of '{player.Name}'.");
-                            var allBans = await _rconService.GetBansAsync();
+                            AppLogger.Info($"[PlayersViewModel:QuickBan] Undo triggered for '{player.Name}'. Reinstating unban...");
+                            var allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
                             var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid);
                             if (ban != null)
                             {
-                                await _rconService.RemoveBanAsync(ban);
-                                await TriggerPostBanRefreshAsync();
+                                await _rconService.RemoveBanAsync(ban).ConfigureAwait(false);
+                                await TriggerPostBanRefreshAsync().ConfigureAwait(false);
                             }
                         });
 
                         RemovePlayerFromList(player);
-                        await TriggerPostBanRefreshAsync();
+                        await TriggerPostBanRefreshAsync().ConfigureAwait(false);
                     }
                     else
                     {
-                        ToastNotificationService.Instance.ShowError("Permanent Ban Failed", $"Could not ban {player.Name} (Server timeout or invalid ID).", cmd);
+                        ToastNotificationService.Instance.ShowError("Permanent Ban Failed", $"Could not ban {player.Name}.", cmd);
                     }
+                    AppLogger.Debug($"[PlayersViewModel:QuickBan] Finished in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
                 },
                 () => _dashboard.CloseDialog()
             ));
@@ -432,7 +446,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            AppLogger.Debug($"[PlayersViewModel] Opening set comment dialog for '{player.Name}'.");
+            AppLogger.Debug($"[PlayersViewModel:Comment] Opening comment editor for '{player.Name}'.");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "SetCommentDialog" });
             _dashboard.ShowDialog(new SetCommentDialogViewModel(player.Name, player.Uid, player.Comment, _rconService, _dashboard));
         });
@@ -441,6 +455,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public Task<bool> ToggleWatchlist(PlayerModel? player) => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         player ??= SelectedPlayer;
         if (player == null) return;
         player.IsWatchlisted = !player.IsWatchlisted;
@@ -453,18 +468,24 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         string identifier;
         if (IsBattlEyeProtocol)
         {
-            identifier = string.IsNullOrWhiteSpace(player.Guid) || player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
-                ? player.Uid
-                : player.Guid;
+            if (string.IsNullOrWhiteSpace(player.Guid) || player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase))
+            {
+                identifier = player.Uid;
+            }
+            else
+            {
+                identifier = player.Guid;
+            }
         }
         else
         {
             identifier = player.Uid;
         }
 
-        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted, _rconService.CurrentProtocol);
+        await PlayerDatabaseStorageService.SetWatchlistStatusAsync(identifier, player.IsWatchlisted, _rconService.CurrentProtocol).ConfigureAwait(false);
         var feedbackMessage = player.IsWatchlisted ? $"Added {player.Name} to Watchlist" : $"Removed {player.Name} from Watchlist";
-        AppLogger.Info($"[PlayersViewModel] Watchlist toggled for '{player.Name}' (ID: {identifier}) -> {player.IsWatchlisted}");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[PlayersViewModel:Watchlist] Toggled watchlist in {elapsedMs:F2}ms for '{player.Name}' ({identifier}) -> {player.IsWatchlisted}");
         ToastNotificationService.Instance.ShowToast("Watchlist Updated", feedbackMessage);
     });
 
@@ -494,11 +515,13 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public Task<bool> CopyPlayerInfoAsync(PlayerModel? player) => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         player ??= SelectedPlayer;
         if (player == null) return;
         var text = FormatPlayerInfo(player);
-        await ClipboardService.SetTextAsync(text);
-        AppLogger.Info($"[PlayersViewModel] Copied player info for '{player.Name}' to clipboard.");
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[PlayersViewModel:Clipboard] Copied player info in {elapsedMs:F2}ms for '{player.Name}'.");
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied info for {player.Name}");
     });
 
@@ -509,7 +532,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             var selected = Players.Where(p => p.IsSelected).ToList();
             if (selected.Count == 0) return;
-            AppLogger.Info($"[PlayersViewModel] Opening batch kick dialog for {selected.Count} player(s).");
+            AppLogger.Info($"[PlayersViewModel:BatchKick] Opening batch kick for {selected.Count} player(s).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BatchKickDialog", ["count"] = selected.Count });
             _dashboard.ShowDialog(new KickDialogViewModel(selected, _rconService, this));
         });
@@ -522,7 +545,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             var selected = Players.Where(p => p.IsSelected).ToList();
             if (selected.Count == 0) return;
-            AppLogger.Info($"[PlayersViewModel] Opening batch ban dialog for {selected.Count} player(s).");
+            AppLogger.Info($"[PlayersViewModel:BatchBan] Opening batch ban for {selected.Count} player(s).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BatchBanDialog", ["count"] = selected.Count });
             _dashboard.ShowDialog(new BanDialogViewModel(selected, _rconService, this));
         });
@@ -531,14 +554,16 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     private Task<bool> CopyAllInfoAsync() => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         var selected = Players.Where(p => p.IsSelected).ToList();
         if (selected.Count == 0) selected = [.. Players];
 
         var formattedEntries = selected.Select(FormatPlayerInfo);
         var text = string.Join("\n\n", formattedEntries);
 
-        await ClipboardService.SetTextAsync(text);
-        AppLogger.Info($"[PlayersViewModel] Copied {selected.Count} player entries to clipboard.");
+        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[PlayersViewModel:Clipboard] Copied {selected.Count} player entries in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Clipboard", "Copied player info to clipboard.");
     });
 
@@ -548,23 +573,26 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public void OpenGlobalMessage() => ExecuteSafe(() =>
     {
-        AppLogger.Info("[PlayersViewModel] Opening global message modal.");
+        AppLogger.Info("[PlayersViewModel] Opening global message dialog.");
         _dashboard.ShowDialog(new GlobalMessageDialogViewModel(_rconService, this));
     });
 
     [RelayCommand]
     public void OpenAnnouncement() => ExecuteSafe(() =>
     {
-        AppLogger.Info("[PlayersViewModel] Opening announcement modal.");
+        AppLogger.Info("[PlayersViewModel] Opening announcement dialog.");
         _dashboard.ShowDialog(new AnnouncementDialogViewModel(_rconService, this));
     });
 
     [RelayCommand]
     public Task<bool> RestartServerAsync() => ExecuteSafeAsync(async () =>
     {
-        AppLogger.Info("[PlayersViewModel] Dispatching restart server command...");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info("[PlayersViewModel] Dispatching '#restart' command...");
         AppLogger.TrackEvent("server_restart_dispatched");
-        await _rconService.RestartServerAsync();
+        await _rconService.RestartServerAsync().ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Debug($"[PlayersViewModel] Server restart dispatched in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Server Restart", "Restart command sent.", "#restart");
     });
 
@@ -588,9 +616,12 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public Task<bool> ShutdownServerAsync() => ExecuteSafeAsync(async () =>
     {
-        AppLogger.Info("[PlayersViewModel] Dispatching shutdown server command...");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info("[PlayersViewModel] Dispatching '#shutdown' command...");
         AppLogger.TrackEvent("server_shutdown_dispatched");
-        await _rconService.ShutdownServerAsync();
+        await _rconService.ShutdownServerAsync().ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Debug($"[PlayersViewModel] Server shutdown dispatched in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Server Shutdown", "Shutdown command sent.", "#shutdown");
     });
 

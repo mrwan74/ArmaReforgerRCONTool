@@ -23,22 +23,25 @@ public partial class PlayerDetailViewModel(PlayerModel player, IRconService rcon
         var text = value?.ToString() ?? string.Empty;
         if (string.IsNullOrEmpty(text)) return;
 
-        AppLogger.Debug($"[PlayerDetailViewModel] Copying field value to clipboard ({text.Length} chars): '{text}'");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Debug($"[PlayerDetailViewModel:Clipboard] Copying value ({text.Length} chars): '{text}'");
         await ClipboardService.SetTextAsync(text);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Trace($"[PlayerDetailViewModel:Clipboard] Copied in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied: {text}");
     }
 
     [RelayCommand]
     private void EditComment()
     {
-        AppLogger.Debug($"[PlayerDetailViewModel] Opening comment editor for '{Player.Name}' (UID: {Player.Uid}).");
+        AppLogger.Debug($"[PlayerDetailViewModel:Comment] Editing comment for '{Player.Name}' (UID: {Player.Uid}).");
         _parent.OpenSetComment(Player);
     }
 
     [RelayCommand]
     private void Kick()
     {
-        AppLogger.Info($"[PlayerDetailViewModel] Kick player dialog requested for '{Player.Name}' (ID: {Player.Id}).");
+        AppLogger.Info($"[PlayerDetailViewModel:Kick] Opening kick dialog for '{Player.Name}' (ID: #{Player.Id}).");
         _parent.CloseDialog();
         _parent.OpenKickDialog(Player);
     }
@@ -46,7 +49,7 @@ public partial class PlayerDetailViewModel(PlayerModel player, IRconService rcon
     [RelayCommand]
     private void Ban()
     {
-        AppLogger.Info($"[PlayerDetailViewModel] Ban player dialog requested for '{Player.Name}' (ID: {Player.Id}).");
+        AppLogger.Info($"[PlayerDetailViewModel:Ban] Opening ban dialog for '{Player.Name}' (ID: #{Player.Id}).");
         _parent.CloseDialog();
         _parent.OpenBanDialog(Player);
     }
@@ -54,7 +57,7 @@ public partial class PlayerDetailViewModel(PlayerModel player, IRconService rcon
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[PlayerDetailViewModel] Operator closed player details dialog.");
+        AppLogger.Debug("[PlayerDetailViewModel:Close] Dialog closed.");
         _parent.CloseDialog();
     }
 }

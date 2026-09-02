@@ -12,14 +12,14 @@ public partial class TelemetryConsentDialogViewModel(Action<bool> onDecision) : 
     [RelayCommand]
     private void Enable()
     {
-        AppLogger.Info("[TelemetryConsentDialog] User accepted anonymous diagnostic telemetry.");
+        AppLogger.Info("[TelemetryConsentDialog:Decision] User accepted diagnostic telemetry reporting.");
         _onDecision(true);
     }
 
     [RelayCommand]
     private void Decline()
     {
-        AppLogger.Info("[TelemetryConsentDialog] User declined anonymous diagnostic telemetry.");
+        AppLogger.Info("[TelemetryConsentDialog:Decision] User declined diagnostic telemetry reporting.");
         _onDecision(false);
     }
 }

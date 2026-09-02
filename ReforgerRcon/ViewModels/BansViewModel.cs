@@ -36,14 +36,16 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     [RelayCommand]
     public Task<bool> RefreshBansAsync() => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("BansViewModel.RefreshBansAsync");
-        AppLogger.Debug("[BansViewModel] Fetching active ban records from server...");
+        AppLogger.Debug($"[BansViewModel:Refresh] Fetching ban records from server ({_rconService.CurrentProtocol})...");
 
         _allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
         ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
 
         _dashboard.ActiveBansCount = _allBans.Count;
-        AppLogger.Info($"[BansViewModel] Loaded {_allBans.Count} ban records ({Bans.Count} visible after filter).");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[BansViewModel:Refresh] Loaded {_allBans.Count} ban records ({Bans.Count} visible) in {elapsedMs:F2}ms.");
     });
 
     public static string MapColumnTagToSortField(string? tag)
@@ -62,6 +64,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             var mappedField = MapColumnTagToSortField(columnTag);
             if (string.IsNullOrEmpty(mappedField)) return;
 
@@ -73,23 +76,24 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
                 if (currentAsc)
                 {
                     _dashboard.SettingsTab.Settings.BansSortAscending = false;
-                    AppLogger.Info($"[BansViewModel] Cycled sort for '{mappedField}' -> Descending.");
+                    AppLogger.Info($"[BansViewModel:Sort] Cycled sort for '{mappedField}' -> Descending.");
                 }
                 else
                 {
                     _dashboard.SettingsTab.Settings.BansSortBy = DefaultSortKey;
                     _dashboard.SettingsTab.Settings.BansSortAscending = true;
-                    AppLogger.Info($"[BansViewModel] Cycled sort for '{mappedField}' -> Default (raw server order).");
+                    AppLogger.Info($"[BansViewModel:Sort] Cycled sort for '{mappedField}' -> Default (raw server order).");
                 }
             }
             else
             {
                 _dashboard.SettingsTab.Settings.BansSortBy = mappedField;
                 _dashboard.SettingsTab.Settings.BansSortAscending = true;
-                AppLogger.Info($"[BansViewModel] Cycled sort column -> '{mappedField}' (Ascending).");
+                AppLogger.Info($"[BansViewModel:Sort] Cycled sort column -> '{mappedField}' (Ascending).");
             }
 
             ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+            AppLogger.Debug($"[BansViewModel:Sort] Column sort cycle complete in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         });
     }
 
@@ -97,6 +101,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             int removed = _allBans.RemoveAll(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
 
             var match = Bans.FirstOrDefault(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
@@ -107,7 +112,8 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
             _dashboard.ActiveBansCount = _allBans.Count;
             UpdateSelectedState();
-            AppLogger.Debug($"[BansViewModel] Removed ban #{ban.BanNumber} ({ban.IdentityId}) from live list. Purged: {removed}");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[BansViewModel:Remove] Removed ban #{ban.BanNumber} ({ban.IdentityId}) from list in {elapsedMs:F2}ms (Purged: {removed}).");
         });
     }
 
@@ -115,6 +121,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     {
         ExecuteSafe(() =>
         {
+            var start = Stopwatch.GetTimestamp();
             using var timing = AppLogger.Measure($"BansViewModel.ApplyFilter('{query}', '{searchType}')");
 
             foreach (var b in Bans)
@@ -165,7 +172,8 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
             _dashboard.ActiveBansCount = _allBans.Count;
             UpdateSelectedState();
-            AppLogger.Trace($"[BansViewModel] Filtered {Bans.Count}/{_allBans.Count} bans using query '{query}' (Sort: {sortField}, Asc: {isAscending}).");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Trace($"[BansViewModel:Filter] Filtered {Bans.Count}/{_allBans.Count} bans in {elapsedMs:F2}ms (Query='{query}', Sort='{sortField}', Asc={isAscending}).");
         });
     }
 
@@ -190,7 +198,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
                 {
                     b.IsSelected = value;
                 }
-                AppLogger.Debug($"[BansViewModel] Toggled IsAllSelected to {value} across {Bans.Count} entries.");
+                AppLogger.Debug($"[BansViewModel:SelectAll] Toggled IsAllSelected to {value} across {Bans.Count} entries.");
             }
             finally
             {
@@ -228,7 +236,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             ban ??= SelectedBan;
             if (ban == null)
             {
-                AppLogger.Warn("[BansViewModel] RemoveBan invoked with null target.");
+                AppLogger.Warn("[BansViewModel:RemoveBan] RemoveBan invoked with null target.");
                 return;
             }
 
@@ -236,7 +244,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
                 ? ban.BannedName
                 : ban.IdentityId;
 
-            AppLogger.Info($"[BansViewModel] Prompting confirmation for ban removal: '{displayName}' (#{ban.BanNumber}, {ban.IdentityId})");
+            AppLogger.Info($"[BansViewModel:RemoveBan] Prompting confirmation for ban removal: '{displayName}' (#{ban.BanNumber}, {ban.IdentityId})");
 
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Confirm Ban Removal",
@@ -252,14 +260,14 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     private async Task ExecuteRemoveBanAsync(BanModel ban)
     {
         using var timing = AppLogger.Measure($"BansViewModel.ExecuteRemoveBanAsync(#{ban.BanNumber})");
-        AppLogger.Info($"[BansViewModel] Dispatching remove ban command for #{ban.BanNumber} ({ban.IdentityId})...");
+        AppLogger.Info($"[BansViewModel:ExecuteRemove] Dispatching remove ban command for #{ban.BanNumber} ({ban.IdentityId})...");
 
         bool isSuccess = await _rconService.RemoveBanAsync(ban).ConfigureAwait(false);
 
         if (isSuccess)
         {
             RemoveBanFromList(ban);
-            AppLogger.Info($"[BansViewModel] Ban #{ban.BanNumber} ({ban.IdentityId}) successfully removed.");
+            AppLogger.Info($"[BansViewModel:ExecuteRemove] Ban #{ban.BanNumber} ({ban.IdentityId}) successfully removed.");
 
             var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
                 ? $"#ban remove {ban.IdentityId}"
@@ -267,14 +275,14 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
             ToastNotificationService.Instance.ShowSuccess("Ban Removed", $"Removed ban for {ban.BannedName}", cmd, async () =>
             {
-                AppLogger.Info($"[BansViewModel] Undo triggered for ban removal: {ban.IdentityId}. Reinstating...");
+                AppLogger.Info($"[BansViewModel:Undo] Undo triggered for ban removal: {ban.IdentityId}. Reinstating ban...");
                 await _rconService.OfflineBanAsync(ban.IdentityId, ban.DurationSeconds, ban.Reason, false).ConfigureAwait(false);
                 await RefreshBansAsync().ConfigureAwait(false);
             });
         }
         else
         {
-            AppLogger.Warn($"[BansViewModel] Server rejected ban removal for #{ban.BanNumber} ({ban.IdentityId}).");
+            AppLogger.Warn($"[BansViewModel:ExecuteRemove] Server rejected ban removal for #{ban.BanNumber} ({ban.IdentityId}).");
             ToastNotificationService.Instance.ShowError("Ban Removal Failed", $"Server timed out or ban #{ban.BanNumber} not found.");
         }
     }
@@ -287,11 +295,11 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             var selected = Bans.Where(b => b.IsSelected).ToList();
             if (selected.Count == 0)
             {
-                AppLogger.Warn("[BansViewModel] RemoveSelectedBans called with 0 items selected.");
+                AppLogger.Warn("[BansViewModel:BatchRemove] RemoveSelectedBans called with 0 items selected.");
                 return;
             }
 
-            AppLogger.Info($"[BansViewModel] Prompting batch removal dialog for {selected.Count} ban(s)...");
+            AppLogger.Info($"[BansViewModel:BatchRemove] Prompting batch removal dialog for {selected.Count} ban(s)...");
 
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Remove Selected Bans",
@@ -314,7 +322,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         for (int i = 0; i < total; i++)
         {
             var b = selected[i];
-            AppLogger.Info($"[BansViewModel] Processing batch removal {i + 1}/{total}: {b.BannedName} (#{b.BanNumber}, {b.IdentityId})...");
+            AppLogger.Info($"[BansViewModel:BatchRemove] Processing removal {i + 1}/{total}: {b.BannedName} (#{b.BanNumber}, {b.IdentityId})...");
 
             bool isSuccess = await _rconService.RemoveBanAsync(b).ConfigureAwait(false);
             if (isSuccess)
@@ -325,12 +333,12 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             else
             {
                 failedCount++;
-                AppLogger.Warn($"[BansViewModel] Failed removing ban #{b.BanNumber} ({b.IdentityId}).");
+                AppLogger.Warn($"[BansViewModel:BatchRemove] Failed removing ban #{b.BanNumber} ({b.IdentityId}).");
             }
         }
 
         IsMultiSelectMode = false;
-        AppLogger.Info($"[BansViewModel] Batch ban removal completed (Success: {successCount}, Failed: {failedCount}).");
+        AppLogger.Info($"[BansViewModel:BatchRemove] Batch ban removal completed (Success: {successCount}, Failed: {failedCount}).");
 
         if (failedCount == 0)
         {
@@ -361,17 +369,20 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     [RelayCommand]
     public Task<bool> CopyBanInfoAsync(BanModel? ban) => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         ban ??= SelectedBan;
         if (ban == null) return;
         var text = FormatBanInfo(ban);
         await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
-        AppLogger.Debug($"[BansViewModel] Copied ban info for '{ban.BannedName}' ({ban.IdentityId}) to clipboard.");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Debug($"[BansViewModel:Clipboard] Copied ban info for '{ban.BannedName}' ({ban.IdentityId}) in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Copied", $"Copied ban info for {ban.BannedName}");
     });
 
     [RelayCommand]
     private Task<bool> CopyAllInfoAsync() => ExecuteSafeAsync(async () =>
     {
+        var start = Stopwatch.GetTimestamp();
         var selected = Bans.Where(b => b.IsSelected).ToList();
         if (selected.Count == 0) selected = [.. Bans];
 
@@ -379,25 +390,32 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         var text = string.Join("\n\n", formattedEntries);
 
         await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
-        AppLogger.Info($"[BansViewModel] Copied {selected.Count} ban entries to clipboard.");
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[BansViewModel:Clipboard] Copied {selected.Count} ban entries in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Clipboard", "Copied ban list to clipboard.");
     });
 
     [RelayCommand]
     private Task<bool> LoadBans() => ExecuteSafeAsync(async () =>
     {
-        AppLogger.Info("[BansViewModel] Dispatching 'loadBans' command to reload bans.txt...");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info("[BansViewModel:LoadBans] Dispatching 'loadBans' command to reload bans.txt...");
         AppLogger.TrackEvent("battleye_load_bans_dispatched");
         await _rconService.SendCommandAsync("loadBans").ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Debug($"[BansViewModel:LoadBans] 'loadBans' dispatched in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Load Bans", "Reloaded bans from bans.txt", "loadBans");
     });
 
     [RelayCommand]
     private Task<bool> WriteBans() => ExecuteSafeAsync(async () =>
     {
-        AppLogger.Info("[BansViewModel] Dispatching 'writeBans' command to persist bans.txt...");
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info("[BansViewModel:WriteBans] Dispatching 'writeBans' command to persist bans.txt...");
         AppLogger.TrackEvent("battleye_write_bans_dispatched");
         await _rconService.SendCommandAsync("writeBans").ConfigureAwait(false);
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Debug($"[BansViewModel:WriteBans] 'writeBans' dispatched in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Write Bans", "Saved bans to bans.txt", "writeBans");
     });
 }

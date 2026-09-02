@@ -11,11 +11,11 @@ public partial class SettingsTabView : UserControl
         try
         {
             InitializeComponent();
-            AppLogger.Debug("[SettingsTabView] SettingsTabView component initialized.");
+            AppLogger.Debug("[SettingsTabView:Init] Component initialized.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[SettingsTabView] Component initialization failed.", ex);
+            AppLogger.Error("[SettingsTabView:Init] Component initialization failed.", ex);
             CrashReportService.HandleFatalException("SettingsTabView.Constructor", ex, isTerminating: false);
         }
     }

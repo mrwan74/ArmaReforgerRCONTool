@@ -1,6 +1,5 @@
 using System;
-using System.IO;
-using System.Text.Json;
+using System.Diagnostics;
 using LuminaUI.Controls;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
@@ -12,12 +11,16 @@ public partial class MainWindow : LuminaWindow
 {
     public MainWindow()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
+            AppLogger.Debug("[MainWindow:Init] Commencing visual tree initialization...");
             InitializeComponent();
             ApplyInitialGlassSetting();
             DataContext = new MainViewModel();
             WindowStateStorageService.BindWindowPersistence(this, "MainWindow");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Info($"[MainWindow:Init] Main window visual tree initialized in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -29,22 +32,16 @@ public partial class MainWindow : LuminaWindow
 
     private void ApplyInitialGlassSetting()
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
-            var settingsFile = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json");
-            if (File.Exists(settingsFile))
-            {
-                var json = File.ReadAllText(settingsFile);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json);
-                if (settings != null)
-                {
-                    UseWindowGlass = settings.EnableWindowGlass;
-                }
-            }
+            var settings = AppSettings.LoadFromDisk();
+            UseWindowGlass = settings.EnableWindowGlass;
+            AppLogger.Debug($"[MainWindow:Glass] Applied UseWindowGlass={UseWindowGlass} in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[MainWindow] Glass inspection notice: {ex.Message}");
+            AppLogger.Trace($"[MainWindow:Glass] Inspection notice: {ex.Message}");
         }
     }
 }

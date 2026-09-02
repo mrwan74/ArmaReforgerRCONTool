@@ -38,20 +38,20 @@ public static class PushNotificationService
                 {
                     manager.NotificationCompleted += OnNotificationCompleted;
                     _isHooked = true;
-                    AppLogger.Info($"[PushNotificationService] Attached lifecycle event listener to NativeNotificationManager.Current (Active Notifications: {manager.ActiveNotifications.Count}).");
+                    AppLogger.Info($"[PushNotificationService:Init] Attached event listener to NativeNotificationManager.Current (Active={manager.ActiveNotifications.Count}).");
                 }
                 else
                 {
-                    AppLogger.Warn("[PushNotificationService] NativeNotificationManager.Current is null. Native notification manager not yet instantiated.");
+                    AppLogger.Warn("[PushNotificationService:Init] NativeNotificationManager.Current is null.");
                 }
             }
             catch (InvalidOperationException invEx)
             {
-                AppLogger.Error($"[PushNotificationService] Invalid operation attaching notification event listener: {invEx.Message}", invEx);
+                AppLogger.Error($"[PushNotificationService:Init] InvalidOperationException: {invEx.Message}", invEx);
             }
             catch (COMException comEx)
             {
-                AppLogger.Error($"[PushNotificationService] COM failure attaching notification event listener (HRESULT: 0x{comEx.HResult:X8}): {comEx.Message}", comEx);
+                AppLogger.Error($"[PushNotificationService:Init] COM failure (0x{comEx.HResult:X8}): {comEx.Message}", comEx);
             }
         }
     }
@@ -76,7 +76,7 @@ public static class PushNotificationService
             }
             catch (Exception ex)
             {
-                AppLogger.Trace($"[PushNotificationService] Embedded app icon bitmap load notice: {ex.Message}");
+                AppLogger.Trace($"[PushNotificationService:Icon] Embedded icon notice: {ex.Message}");
             }
 
             var candidatePaths = new[]
@@ -97,7 +97,7 @@ public static class PushNotificationService
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Trace($"[PushNotificationService] Disk icon bitmap load notice for '{path}': {ex.Message}");
+                    AppLogger.Trace($"[PushNotificationService:Icon] Disk icon notice for '{path}': {ex.Message}");
                 }
             }
         }
@@ -120,7 +120,7 @@ public static class PushNotificationService
                 ["user_data"] = e.UserData?.ToString()
             };
 
-            AppLogger.Info($"[PushNotificationService:Event] Notification completed: Id={e.NotificationId}, Activated={e.IsActivated}, Cancelled={e.IsCancelled}, ActionTag='{e.ActionTag ?? "none"}', UserData='{e.UserData ?? "none"}'", context);
+            AppLogger.Info($"[PushNotificationService:Event] Notification complete: Id={e.NotificationId}, Activated={e.IsActivated}, Cancelled={e.IsCancelled}, ActionTag='{e.ActionTag ?? "none"}'", context);
 
             AppLogger.TrackEvent("native_notification_completed", new Dictionary<string, object>
             {
@@ -132,11 +132,11 @@ public static class PushNotificationService
         }
         catch (InvalidOperationException invEx)
         {
-            AppLogger.Error($"[PushNotificationService] InvalidOperationException in OnNotificationCompleted: {invEx.Message}", invEx);
+            AppLogger.Error($"[PushNotificationService:Event] InvalidOperationException: {invEx.Message}", invEx);
         }
         catch (ArgumentException argEx)
         {
-            AppLogger.Error($"[PushNotificationService] ArgumentException in OnNotificationCompleted: {argEx.Message}", argEx);
+            AppLogger.Error($"[PushNotificationService:Event] ArgumentException: {argEx.Message}", argEx);
         }
     }
 
@@ -156,12 +156,12 @@ public static class PushNotificationService
                 var cleanTitle = AppLogger.SanitizeSensitiveData(title.Trim());
                 var cleanMessage = AppLogger.SanitizeSensitiveData(message?.Trim() ?? string.Empty);
 
-                AppLogger.Debug($"[PushNotificationService] Preparing native OS push notification: Title='{cleanTitle}', Category='{category}', MessageLength={cleanMessage.Length} chars on {RuntimeInformation.OSDescription}...");
+                AppLogger.Debug($"[PushNotificationService:Dispatch] Preparing notification: Title='{cleanTitle}', Category='{category}', Length={cleanMessage.Length} chars...");
 
                 var manager = NativeNotificationManager.Current;
                 if (manager == null)
                 {
-                    AppLogger.Warn("[PushNotificationService] NativeNotificationManager.Current is null. Native notification subsystem is unavailable on this platform.");
+                    AppLogger.Warn("[PushNotificationService:Dispatch] NativeNotificationManager.Current is null.");
                     return;
                 }
 
@@ -177,12 +177,10 @@ public static class PushNotificationService
                         notification.Icon = appIcon;
                     }
 
-                    AppLogger.Debug($"[PushNotificationService] Created notification instance: Id={notification.Id}, Category='{notification.Category}', ActionsCount={notification.Actions?.Count ?? 0}, HasIcon={notification.Icon != null}. Invoking .Show()...");
-
                     notification.Show();
                     sw.Stop();
 
-                    AppLogger.Info($"[PushNotificationService] Native push notification successfully dispatched in {sw.ElapsedMilliseconds} ms: '{cleanTitle}' (Id: #{notification.Id}, Category: [{category}])");
+                    AppLogger.Info($"[PushNotificationService:Dispatch] Notification displayed in {sw.ElapsedMilliseconds}ms: '{cleanTitle}' (Id: #{notification.Id}, Category: [{category}])");
 
                     AppLogger.TrackEvent("push_notification_dispatched", new Dictionary<string, object>
                     {
@@ -196,39 +194,39 @@ public static class PushNotificationService
                 else
                 {
                     sw.Stop();
-                    AppLogger.Warn($"[PushNotificationService] Failed creating native notification instance for category '{category}' after {sw.ElapsedMilliseconds} ms.");
+                    AppLogger.Warn($"[PushNotificationService:Dispatch] Failed creating notification for category '{category}' after {sw.ElapsedMilliseconds}ms.");
                 }
             }
             catch (COMException comEx)
             {
                 sw.Stop();
-                AppLogger.Error($"[PushNotificationService] Windows COM error delivering native notification (HRESULT: 0x{comEx.HResult:X8}): {comEx.Message}", comEx, new Dictionary<string, object?>
+                AppLogger.Error($"[PushNotificationService:Dispatch] Windows COM error (0x{comEx.HResult:X8}): {comEx.Message}", comEx, new Dictionary<string, object?>
                 {
                     ["title"] = title,
                     ["category"] = category,
                     ["hresult"] = comEx.HResult
                 });
-                ToastNotificationService.Instance.ShowWarning("Native Notification Warning", "Windows notification service was unable to display the system push notification.");
+                ToastNotificationService.Instance.ShowWarning("Native Notification Warning", "Windows notification service could not display the push notification.");
             }
             catch (UnauthorizedAccessException authEx)
             {
                 sw.Stop();
-                AppLogger.Warn($"[PushNotificationService] Access denied creating notification: {authEx.Message}", authEx);
+                AppLogger.Warn($"[PushNotificationService:Dispatch] Access denied: {authEx.Message}", authEx);
             }
             catch (InvalidOperationException invEx)
             {
                 sw.Stop();
-                AppLogger.Warn($"[PushNotificationService] Notification operation invalid in current state: {invEx.Message}", invEx);
+                AppLogger.Warn($"[PushNotificationService:Dispatch] Invalid operation: {invEx.Message}", invEx);
             }
             catch (TimeoutException timeEx)
             {
                 sw.Stop();
-                AppLogger.Warn($"[PushNotificationService] Native notification dispatch timed out: {timeEx.Message}", timeEx);
+                AppLogger.Warn($"[PushNotificationService:Dispatch] Dispatch timed out: {timeEx.Message}", timeEx);
             }
             catch (OperationCanceledException opEx)
             {
                 sw.Stop();
-                AppLogger.Trace($"[PushNotificationService] Notification dispatch canceled: {opEx.Message}");
+                AppLogger.Trace($"[PushNotificationService:Dispatch] Dispatch canceled: {opEx.Message}");
             }
         });
     }

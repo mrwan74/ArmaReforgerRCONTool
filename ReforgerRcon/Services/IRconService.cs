@@ -21,8 +21,8 @@ public interface IRconService : IDisposable
     event EventHandler<(int AdminId, string Endpoint)>? AdminConnectedStream;
     event EventHandler<string>? ConnectionLost;
 
-    Task<bool> ConnectAsync(ServerProfile profile);
-    Task DisconnectAsync();
+    Task<bool> ConnectAsync(ServerProfile profile, CancellationToken cancellationToken = default);
+    Task DisconnectAsync(CancellationToken cancellationToken = default);
 
     Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default);
     Task<List<BanModel>> GetBansAsync(CancellationToken cancellationToken = default);
@@ -35,11 +35,11 @@ public interface IRconService : IDisposable
     Task<bool> OfflineBanAsync(string identity, long durationSeconds, string reason, bool isIp, CancellationToken cancellationToken = default);
     Task<bool> RemoveBanAsync(BanModel ban, CancellationToken cancellationToken = default);
 
-    Task SendCommandAsync(string rawCommand);
+    Task SendCommandAsync(string rawCommand, CancellationToken cancellationToken = default);
     Task RestartServerAsync(CancellationToken cancellationToken = default);
     Task ShutdownServerAsync(CancellationToken cancellationToken = default);
     Task SendGlobalMessageAsync(string message, CancellationToken cancellationToken = default);
     Task SendAnnouncementAsync(string title, string message, CancellationToken cancellationToken = default);
-    Task UpdatePlayerCommentAsync(string uid, string comment);
-    Task ClearDatabaseAsync();
+    Task UpdatePlayerCommentAsync(string uid, string comment, CancellationToken cancellationToken = default);
+    Task ClearDatabaseAsync(CancellationToken cancellationToken = default);
 }

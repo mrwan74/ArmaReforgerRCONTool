@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -21,6 +22,7 @@ public static partial class CrashReportService
     private const uint MbIconError = 0x00000010;
     private static readonly string CrashDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
     public static event Action<ErrorReportModel>? UnhandledErrorCaptured;
+    private static readonly ConcurrentQueue<ErrorReportModel> PendingReports = new();
     private static int _isHandlingCrash;
 
     [LibraryImport("user32.dll", EntryPoint = "MessageBoxW", StringMarshalling = StringMarshalling.Utf16)]
@@ -60,12 +62,15 @@ public static partial class CrashReportService
 
     public static void Initialize()
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             if (!Directory.Exists(CrashDirectory))
             {
                 Directory.CreateDirectory(CrashDirectory);
+                SafeLogAppInfo("[CrashReportService:Init] Created crash directory at '" + CrashDirectory + "'.");
             }
+            SafeLogAppInfo("[CrashReportService:Init] Crash reporting engine initialized in " + Stopwatch.GetElapsedTime(start).TotalMilliseconds.ToString("F2", CultureInfo.InvariantCulture) + "ms.");
         }
         catch (IOException ex)
         {
@@ -81,11 +86,22 @@ public static partial class CrashReportService
         }
     }
 
+    public static IReadOnlyList<ErrorReportModel> GetAndClearPendingReports()
+    {
+        var list = new List<ErrorReportModel>();
+        while (PendingReports.TryDequeue(out var report))
+        {
+            list.Add(report);
+        }
+        return list;
+    }
+
     public static void HandleFatalException(string source, Exception ex, bool isTerminating)
     {
+        var crashStart = Stopwatch.GetTimestamp();
         if (Interlocked.CompareExchange(ref _isHandlingCrash, 1, 0) != 0 && !isTerminating)
         {
-            SafeLogAppWarn($"[CrashReportService] Concurrent fault suppressed while another report is active ({source}).");
+            SafeLogAppWarn("[CrashReportService:Handler] Suppressed concurrent fault while report is active (" + source + ").");
             return;
         }
 
@@ -94,12 +110,15 @@ public static partial class CrashReportService
             var demystifiedEx = ex.Demystify();
             var timestamp = DateTime.UtcNow;
             var crashId = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
-            var textFileName = $"crash_{timestamp:yyyyMMdd_HHmmss}_{crashId}.txt";
+            var textFileName = "crash_" + timestamp.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + "_" + crashId + ".txt";
             var textFilePath = Path.Combine(CrashDirectory, textFileName);
-            var dumpFileName = $"crash_{timestamp:yyyyMMdd_HHmmss}_{crashId}.dmp";
+            var dumpFileName = "crash_" + timestamp.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + "_" + crashId + ".dmp";
             var dumpFilePath = Path.Combine(CrashDirectory, dumpFileName);
 
+            var dumpStart = Stopwatch.GetTimestamp();
             bool dumpGenerated = TryWriteMemoryDump(dumpFilePath, out long dumpSize);
+            var dumpElapsed = Stopwatch.GetElapsedTime(dumpStart).TotalMilliseconds;
+
             var breadcrumbs = SafeGetBreadcrumbs();
             var uptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime.ToUniversalTime();
             var ramMb = Environment.WorkingSet / (1024.0 * 1024.0);
@@ -122,7 +141,7 @@ public static partial class CrashReportService
                 }
                 catch (Exception aptaEx)
                 {
-                    SafeLogAppWarn($"[CrashReportService] Aptabase dispatch notice: {aptaEx.Message}");
+                    SafeLogAppWarn("[CrashReportService:Aptabase] Dispatch notice: " + aptaEx.Message);
                 }
             }
 
@@ -152,13 +171,13 @@ public static partial class CrashReportService
             }
             catch (Exception sentryEx)
             {
-                SafeLogAppWarn($"[CrashReportService] Sentry telemetry dispatch bypassed during crash reporting: {sentryEx.Message}");
+                SafeLogAppWarn("[CrashReportService:Sentry] Telemetry bypassed: " + sentryEx.Message);
             }
 
             string memoryDumpStatus;
             if (dumpGenerated)
             {
-                memoryDumpStatus = $"{dumpFileName} ({dumpSize / (1024.0 * 1024.0):F2} MB)";
+                memoryDumpStatus = dumpFileName + " (" + (dumpSize / (1024.0 * 1024.0)).ToString("F2", CultureInfo.InvariantCulture) + " MB, written in " + dumpElapsed.ToString("F2", CultureInfo.InvariantCulture) + "ms)";
             }
             else if (OperatingSystem.IsWindows())
             {
@@ -228,7 +247,7 @@ public static partial class CrashReportService
                 DumpFilePath = dumpGenerated ? dumpFilePath : string.Empty,
                 DumpFileSizeBytes = dumpSize,
                 OsVersion = RuntimeInformation.OSDescription,
-                Architecture = string.Create(CultureInfo.InvariantCulture, $"{RuntimeInformation.ProcessArchitecture} ({Environment.ProcessorCount} Cores)"),
+                Architecture = RuntimeInformation.ProcessArchitecture.ToString() + " (" + Environment.ProcessorCount.ToString(CultureInfo.InvariantCulture) + " Cores)",
                 ClrVersion = RuntimeInformation.FrameworkDescription,
                 RamWorkingSetMb = ramMb,
                 ProcessUptime = uptime,
@@ -238,7 +257,10 @@ public static partial class CrashReportService
                 FullReportText = fullReportText
             };
 
-            SafeLogAppFatal(string.Create(CultureInfo.InvariantCulture, $"CRITICAL ERROR [{source}] (CrashId: {crashId}, InstallId: {AppLogger.InstallationId}, Terminating: {isTerminating}, OS: {RuntimeInformation.OSDescription})"), demystifiedEx);
+            PendingReports.Enqueue(report);
+
+            var totalReportMs = Stopwatch.GetElapsedTime(crashStart).TotalMilliseconds;
+            SafeLogAppFatal("[CrashReportService:Fatal] CRITICAL ERROR [" + source + "] in " + totalReportMs.ToString("F2", CultureInfo.InvariantCulture) + "ms (CrashId: " + crashId + ", InstallId: " + AppLogger.InstallationId + ", Terminating: " + isTerminating.ToString() + ", OS: " + RuntimeInformation.OSDescription + ")", demystifiedEx);
 
             try
             {
@@ -253,48 +275,40 @@ public static partial class CrashReportService
                 SafeLogAppError("Failed writing crash text dump file to disk.", writeEx);
             }
 
+            bool dispatchedToUi = false;
             try
             {
-                Dispatcher.UIThread.Post(() =>
+                if (Dispatcher.UIThread is { } uiDispatcher)
                 {
-                    try
+                    uiDispatcher.Post(() =>
                     {
-                        UnhandledErrorCaptured?.Invoke(report);
-                        SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
-                        ToastNotificationService.Instance.ShowError(
-                            $"System Fault [{crashId}]",
-                            $"{demystifiedEx.GetType().Name}: {demystifiedEx.Message}",
-                            "CRASH_DIAGNOSTIC"
-                        );
-                    }
-                    catch (Exception dispatchEx)
-                    {
-                        SafeLogAppError("Failed dispatching crash report to UI layer.", dispatchEx);
-                    }
-                });
+                        try
+                        {
+                            UnhandledErrorCaptured?.Invoke(report);
+                            SoundNotificationService.PlayAlert(SoundAlertType.CriticalError);
+                            ToastNotificationService.Instance.ShowError(
+                                "System Fault [" + crashId + "]",
+                                demystifiedEx.GetType().Name + ": " + demystifiedEx.Message,
+                                "CRASH_DIAGNOSTIC"
+                            );
+                        }
+                        catch (Exception dispatchEx)
+                        {
+                            SafeLogAppError("Failed dispatching crash report to UI layer.", dispatchEx);
+                            ShowNativeFallbackDialog(source, demystifiedEx, crashId, textFilePath, dumpFilePath, dumpGenerated, isTerminating);
+                        }
+                    });
+                    dispatchedToUi = true;
+                }
             }
             catch (Exception postEx)
             {
                 SafeLogAppError("Dispatcher failed posting crash event to UI thread.", postEx);
+            }
 
-                if (OperatingSystem.IsWindows())
-                {
-                    var outcomeText = isTerminating
-                        ? "The application will now shut down."
-                        : "The application will attempt to continue running.";
-
-                    var dialogMessage = string.Create(CultureInfo.InvariantCulture,
-                        $"A critical application fault occurred:\n\nSource: {source}\nException: {demystifiedEx.GetType().Name}\nMessage: {demystifiedEx.Message}\n\nCrash ID: #{crashId}\nInstallation ID: {AppLogger.InstallationId}\nDiagnostic Report: {textFilePath}\nMemory Dump: {(dumpGenerated ? dumpFilePath : "Unavailable")}\n\n{outcomeText}");
-
-                    MessageBox(IntPtr.Zero, dialogMessage, isTerminating ? "ARMA Reforger RCON - Fatal Error" : "ARMA Reforger RCON - System Fault", MbIconError);
-                }
-                else
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.Error.WriteLine($"[CRITICAL FAULT] {source} (Install ID: {AppLogger.InstallationId}) -> {demystifiedEx.GetType().Name}: {demystifiedEx.Message}");
-                    Console.Error.WriteLine($"Report written to: {textFilePath}");
-                    Console.ResetColor();
-                }
+            if (!dispatchedToUi || isTerminating)
+            {
+                ShowNativeFallbackDialog(source, demystifiedEx, crashId, textFilePath, dumpFilePath, dumpGenerated, isTerminating);
             }
         }
         catch (Exception unhandled)
@@ -310,6 +324,36 @@ public static partial class CrashReportService
         }
     }
 
+    private static void ShowNativeFallbackDialog(string source, Exception ex, string crashId, string textFilePath, string dumpFilePath, bool dumpGenerated, bool isTerminating)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var outcomeText = isTerminating
+                ? "The application will now terminate."
+                : "The application captured the fault and will attempt to continue.";
+
+            var dialogMessage =
+                "An unexpected application error occurred:\n\n" +
+                "Handler Source: " + source + "\n" +
+                "Exception Type: " + ex.GetType().Name + "\n" +
+                "Error Message:  " + ex.Message + "\n\n" +
+                "Crash ID:        #" + crashId + "\n" +
+                "Installation ID: " + AppLogger.InstallationId + "\n" +
+                "Diagnostic Log:  " + textFilePath + "\n" +
+                "Memory Dump:     " + (dumpGenerated ? dumpFilePath : "Unavailable") + "\n\n" +
+                outcomeText;
+
+            MessageBox(IntPtr.Zero, dialogMessage, isTerminating ? "ARMA Reforger RCON - Fatal Error" : "ARMA Reforger RCON - System Fault", MbIconError);
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Error.WriteLine("[CRITICAL FAULT] " + source + " (Install ID: " + AppLogger.InstallationId + ") -> " + ex.GetType().Name + ": " + ex.Message);
+            Console.Error.WriteLine("Report written to: " + textFilePath);
+            Console.ResetColor();
+        }
+    }
+
     private static bool TryWriteMemoryDump(string dmpPath, out long dumpSize)
     {
         dumpSize = 0;
@@ -318,6 +362,7 @@ public static partial class CrashReportService
             return false;
         }
 
+        var start = Stopwatch.GetTimestamp();
         try
         {
             using var process = Process.GetCurrentProcess();
@@ -343,22 +388,23 @@ public static partial class CrashReportService
             {
                 fileStream.Flush();
                 dumpSize = new FileInfo(dmpPath).Length;
-                SafeLogAppInfo(string.Create(CultureInfo.InvariantCulture, $"[CrashReportService] Memory dump successfully created at '{dmpPath}' ({dumpSize / 1024} KB)."));
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                SafeLogAppInfo("[CrashReportService:MiniDump] Memory dump created at '" + dmpPath + "' (" + (dumpSize / 1024).ToString(CultureInfo.InvariantCulture) + " KB) in " + elapsedMs.ToString("F2", CultureInfo.InvariantCulture) + "ms.");
                 return true;
             }
 
             int errorCode = Marshal.GetLastWin32Error();
-            SafeLogAppError(string.Create(CultureInfo.InvariantCulture, $"[CrashReportService] MiniDumpWriteDump returned false with Win32 Error Code: {errorCode}."), new Win32Exception(errorCode));
+            SafeLogAppError("[CrashReportService:MiniDump] MiniDumpWriteDump returned false with Win32 Error Code: " + errorCode.ToString(CultureInfo.InvariantCulture) + ".", new Win32Exception(errorCode));
             return false;
         }
         catch (IOException ioEx)
         {
-            SafeLogAppError(string.Create(CultureInfo.InvariantCulture, $"[CrashReportService] I/O error creating dump file '{dmpPath}': {ioEx.Message}"), ioEx);
+            SafeLogAppError("[CrashReportService:MiniDump] I/O error creating dump file '" + dmpPath + "': " + ioEx.Message, ioEx);
             return false;
         }
         catch (Exception ex)
         {
-            SafeLogAppError(string.Create(CultureInfo.InvariantCulture, $"[CrashReportService] Failed generating memory dump at '{dmpPath}'."), ex);
+            SafeLogAppError("[CrashReportService:MiniDump] Failed generating memory dump at '" + dmpPath + "'.", ex);
             return false;
         }
     }
@@ -384,12 +430,12 @@ public static partial class CrashReportService
     private static void SafeLogAppError(string msg, Exception ex)
     {
         try { AppLogger.Error(msg, ex); }
-        catch { System.Diagnostics.Debug.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{msg} - {ex.Message}")); }
+        catch { System.Diagnostics.Debug.WriteLine(msg + " - " + ex.Message); }
     }
 
     private static void SafeLogAppFatal(string msg, Exception ex)
     {
         try { AppLogger.Fatal(msg, ex); }
-        catch { System.Diagnostics.Debug.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{msg} - {ex.Message}")); }
+        catch { System.Diagnostics.Debug.WriteLine(msg + " - " + ex.Message); }
     }
 }

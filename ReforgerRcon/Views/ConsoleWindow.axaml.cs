@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using LuminaUI.Controls;
@@ -14,11 +15,13 @@ public partial class ConsoleWindow : LuminaWindow
 
     public ConsoleWindow()
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             InitializeComponent();
             ApplyInitialGlassSetting();
             WindowStateStorageService.BindWindowPersistence(this, "ConsoleWindow");
+            AppLogger.Debug($"[ConsoleWindow:Init] Standalone console window initialized in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -34,6 +37,7 @@ public partial class ConsoleWindow : LuminaWindow
         {
             try
             {
+                AppLogger.Info("[ConsoleWindow:Close] Closed. Invoking reattach callback...");
                 _onReattach?.Invoke();
             }
             catch (Exception ex)
@@ -55,13 +59,13 @@ public partial class ConsoleWindow : LuminaWindow
                 if (settings != null)
                 {
                     UseWindowGlass = settings.EnableWindowGlass;
-                    AppLogger.Debug($"[ConsoleWindow] Initialized UseWindowGlass={UseWindowGlass}");
+                    AppLogger.Debug($"[ConsoleWindow:Glass] Initialized UseWindowGlass={UseWindowGlass}");
                 }
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[ConsoleWindow] Non-fatal glass setting inspection notice: {ex.Message}");
+            AppLogger.Trace($"[ConsoleWindow:Glass] Inspection notice: {ex.Message}");
         }
     }
 }

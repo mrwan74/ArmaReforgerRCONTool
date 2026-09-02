@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -13,6 +14,7 @@ public partial class DatabaseTabView : UserControl
 {
     public DatabaseTabView()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
             InitializeComponent();
@@ -23,19 +25,21 @@ public partial class DatabaseTabView : UserControl
             {
                 if (DataContext is DatabaseViewModel vm)
                 {
+                    var loadStart = Stopwatch.GetTimestamp();
                     try
                     {
-                        AppLogger.Debug("[DatabaseTabView] Tab Loaded event triggered: refreshing SQLite database records...");
+                        AppLogger.Debug("[DatabaseTabView:Loaded] Refreshing database records on tab loaded...");
                         await vm.LoadDbAsync().ConfigureAwait(false);
+                        AppLogger.Debug($"[DatabaseTabView:Loaded] Sync finished in {Stopwatch.GetElapsedTime(loadStart).TotalMilliseconds:F2}ms.");
                     }
                     catch (OperationCanceledException opEx)
                     {
-                        AppLogger.Debug($"[DatabaseTabView] Database load operation canceled on load: {opEx.Message}");
+                        AppLogger.Debug($"[DatabaseTabView:Loaded] Load canceled: {opEx.Message}");
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("[DatabaseTabView] Failed loading database records on tab loaded event.", ex);
-                        ToastNotificationService.Instance.ShowError("Database Load Error", "Failed retrieving historical records from database.");
+                        AppLogger.Error("[DatabaseTabView:Loaded] Error loading database on tab loaded.", ex);
+                        ToastNotificationService.Instance.ShowError("Database Load Error", "Failed retrieving records.");
                     }
                 }
             };
@@ -44,6 +48,7 @@ public partial class DatabaseTabView : UserControl
             {
                 if (DataContext is DatabaseViewModel vm)
                 {
+                    var bindStart = Stopwatch.GetTimestamp();
                     try
                     {
                         var gridKey = vm.IsBattlEyeProtocol ? "DatabaseGrid_BattlEye" : "DatabaseGrid_Reforger";
@@ -66,28 +71,31 @@ public partial class DatabaseTabView : UserControl
                             }
                             catch (Exception propEx)
                             {
-                                AppLogger.Error("[DatabaseTabView] Error handling property change event for database grid layout.", propEx);
+                                AppLogger.Error("[DatabaseTabView] Error handling property change: " + propEx.Message, propEx);
                             }
                         };
+                        AppLogger.Debug($"[DatabaseTabView:Bind] DataContext configured in {Stopwatch.GetElapsedTime(bindStart).TotalMilliseconds:F2}ms.");
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("Failed configuring DatabaseTabView data context bindings.", ex);
+                        AppLogger.Error("Failed configuring DatabaseTabView bindings.", ex);
                     }
                 }
             };
 
             DebugLayoutLoggerService.RegisterDataGrid("DatabaseGrid", DatabaseGrid);
+            AppLogger.Debug($"[DatabaseTabView:Init] Initialized in {Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("Failed during DatabaseTabView constructor initialization.", ex);
+            AppLogger.Error("Failed during DatabaseTabView initialization.", ex);
             CrashReportService.HandleFatalException("DatabaseTabView.Constructor", ex, isTerminating: false);
         }
     }
 
     private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             e.Handled = true;
@@ -97,14 +105,15 @@ public partial class DatabaseTabView : UserControl
                 vm.CycleColumnSort(tag);
                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
             }
+            AppLogger.Trace($"[DatabaseTabView:Sort] Handled in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (ArgumentException argEx)
         {
-            AppLogger.Warn($"[DatabaseTabView] Invalid column sorting parameter: {argEx.Message}", argEx);
+            AppLogger.Warn($"[DatabaseTabView:Sort] Invalid sorting parameter: {argEx.Message}", argEx);
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[DatabaseTabView] Unexpected exception in OnDataGridSorting.", ex);
+            AppLogger.Error("[DatabaseTabView:Sort] Error in sorting: " + ex.Message, ex);
             ToastNotificationService.Instance.ShowWarning("Sort Error", "Unable to cycle sort for selected column.");
         }
     }
@@ -117,6 +126,7 @@ public partial class DatabaseTabView : UserControl
 
     private void UpdateColumnSortGlyphs(string sortField, bool isAscending)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             foreach (var col in DatabaseGrid.Columns)
@@ -138,10 +148,11 @@ public partial class DatabaseTabView : UserControl
                     col.Header = cleanHeader;
                 }
             }
+            AppLogger.Trace($"[DatabaseTabView:SortGlyph] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[DatabaseTabView] Sort glyph update notice: {ex.Message}");
+            AppLogger.Trace($"[DatabaseTabView:SortGlyph] Update notice: {ex.Message}");
         }
     }
 
@@ -149,6 +160,7 @@ public partial class DatabaseTabView : UserControl
     {
         if (DataContext is not DatabaseViewModel vm) return;
 
+        var start = Stopwatch.GetTimestamp();
         try
         {
             foreach (var col in DatabaseGrid.Columns)
@@ -178,6 +190,7 @@ public partial class DatabaseTabView : UserControl
                         break;
                 }
             }
+            AppLogger.Trace($"[DatabaseTabView:Visibility] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -205,11 +218,11 @@ public partial class DatabaseTabView : UserControl
         }
         catch (InvalidOperationException invOpEx)
         {
-            AppLogger.Trace($"[DatabaseTabView] Visual ancestor lookup invalid state on pointer press: {invOpEx.Message}");
+            AppLogger.Trace($"[DatabaseTabView:Pointer] Lookup notice: {invOpEx.Message}");
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[DatabaseTabView] OnGridPointerPressed handled visual lookup notice: {ex.Message}");
+            AppLogger.Trace($"[DatabaseTabView:Pointer] Lookup notice: {ex.Message}");
         }
     }
 
@@ -232,18 +245,19 @@ public partial class DatabaseTabView : UserControl
         }
         catch (InvalidOperationException invOpEx)
         {
-            AppLogger.Trace($"[DatabaseTabView] Visual ancestor lookup invalid state on context request: {invOpEx.Message}");
+            AppLogger.Trace($"[DatabaseTabView:Context] Lookup notice: {invOpEx.Message}");
             e.Handled = true;
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[DatabaseTabView] OnGridContextRequested handled visual lookup notice: {ex.Message}");
+            AppLogger.Trace($"[DatabaseTabView:Context] Lookup notice: {ex.Message}");
             e.Handled = true;
         }
     }
 
     private void OnGridDoubleTapped(object? sender, TappedEventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             if (e.Source is Visual visual && visual.FindAncestorOfType<Button>() != null)
@@ -255,16 +269,17 @@ public partial class DatabaseTabView : UserControl
             {
                 vm.OpenPlayerDetails(player);
                 e.Handled = true;
+                AppLogger.Trace($"[DatabaseTabView:DoubleTap] Dispatched in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
             }
         }
         catch (InvalidOperationException invOpEx)
         {
-            AppLogger.Warn($"[DatabaseTabView] Double tap action invalid in current visual state: {invOpEx.Message}", invOpEx);
+            AppLogger.Warn($"[DatabaseTabView:DoubleTap] Double tap invalid: {invOpEx.Message}", invOpEx);
         }
         catch (Exception ex)
         {
             AppLogger.Error("Error handling DatabaseGrid double tap event.", ex);
-            ToastNotificationService.Instance.ShowError("Dialog Error", "Failed to open player details dialog.");
+            ToastNotificationService.Instance.ShowError("Dialog Error", "Failed to open player details.");
         }
     }
 }

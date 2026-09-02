@@ -178,7 +178,7 @@
                       Command="{Binding OpenProtocolHelpCommand}"
                       Width="26" Height="26">
                 <ToolTip.Tip>
-                  <TextBlock Text="Help: Learn about BattlEye RCON vs. Reforger Built-in RCON differences &amp; setup"
+                  <TextBlock Text="Help: Learn about BattlEye RCON vs. Reforger Built-in RCON differences and setup"
                              TextWrapping="Wrap"
                              MaxWidth="320" />
                 </ToolTip.Tip>
@@ -199,14 +199,18 @@
             </StackPanel>
             <StackPanel Grid.Column="1" Spacing="4">
               <TextBlock Text="Port" Classes="Label" />
-              <TextBox Text="{Binding Port}" PlaceholderText="19999" />
+              <TextBox x:Name="PortInputBox" 
+                       Text="{Binding PortText}" 
+                       PlaceholderText="19999" 
+                       MaxLength="5" />
             </StackPanel>
           </Grid>
 
           <StackPanel Spacing="4">
             <TextBlock Text="RCON Password" Classes="Label" />
             <TextBox Text="{Binding Password}" 
-                     PasswordChar="{Binding PasswordMaskChar}" 
+                     PasswordChar="•"
+                     RevealPassword="{Binding IsPasswordRevealed}"
                      PlaceholderText="Enter RCON password...">
               <TextBox.InnerRightContent>
                 <Button Classes="Ghost Icon" 

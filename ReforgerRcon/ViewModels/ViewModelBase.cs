@@ -307,7 +307,7 @@ public abstract class ViewModelBase : ObservableObject
         }
         catch (Exception aptaEx)
         {
-            System.Diagnostics.Debug.WriteLine($"[ViewModelBase] TrackAptabaseError notice: {aptaEx.Message}");
+            System.Diagnostics.Debug.WriteLine($"[ViewModelBase:Aptabase] Error notice: {aptaEx.Message}");
         }
     }
 

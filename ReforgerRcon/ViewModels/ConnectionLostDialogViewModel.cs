@@ -35,22 +35,22 @@ public partial class ConnectionLostDialogViewModel(
         {
             IsReconnecting = true;
             ErrorMessage = string.Empty;
-            var sw = Stopwatch.StartNew();
-            AppLogger.Info($"[ConnectionLostDialog] Reconnection attempt initiated to {_profile.ServerIp}:{_profile.Port} ({_profile.Protocol})...");
+            var start = Stopwatch.GetTimestamp();
+            AppLogger.Info($"[ConnectionLostDialog:Reconnect] Reconnecting to {_profile.ServerIp}:{_profile.Port} ({_profile.Protocol})...");
 
             var success = await _rconService.ConnectAsync(_profile);
-            sw.Stop();
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
             if (success)
             {
-                AppLogger.Info($"[ConnectionLostDialog] Reconnected successfully to server in {sw.ElapsedMilliseconds} ms.");
+                AppLogger.Info($"[ConnectionLostDialog:Reconnect] Reconnected in {elapsedMs:F2}ms.");
                 ToastNotificationService.Instance.ShowToast("Reconnected", $"Re-established connection to {_profile.ServerIp}:{_profile.Port}");
                 _onReconnected();
             }
             else
             {
                 ErrorMessage = "Failed to reconnect. The game server is still offline or unreachable.";
-                AppLogger.Warn($"[ConnectionLostDialog] Reconnection to {_profile.ServerIp}:{_profile.Port} failed after {sw.ElapsedMilliseconds} ms.");
+                AppLogger.Warn($"[ConnectionLostDialog:Reconnect] Reconnection failed after {elapsedMs:F2}ms.");
             }
         });
         IsReconnecting = false;
@@ -59,7 +59,7 @@ public partial class ConnectionLostDialogViewModel(
     [RelayCommand]
     private Task<bool> ReturnToLoginAsync() => ExecuteSafeAsync(async () =>
     {
-        AppLogger.Info("[ConnectionLostDialog] Operator selected 'Return to Login'. Executing complete session teardown...");
+        AppLogger.Info("[ConnectionLostDialog:ReturnToLogin] Returning to login screen...");
         await _rconService.DisconnectAsync();
         _onReturnToLogin();
     });
@@ -69,7 +69,7 @@ public partial class ConnectionLostDialogViewModel(
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Debug("[ConnectionLostDialog] Operator closed disconnection notice.");
+            AppLogger.Debug("[ConnectionLostDialog:Dismiss] Dismissed.");
             _onDismiss();
         });
     }

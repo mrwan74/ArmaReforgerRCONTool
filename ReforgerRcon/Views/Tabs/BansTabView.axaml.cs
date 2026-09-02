@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -13,6 +14,7 @@ public partial class BansTabView : UserControl
 {
     public BansTabView()
     {
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
             InitializeComponent();
@@ -23,6 +25,7 @@ public partial class BansTabView : UserControl
             {
                 if (DataContext is BansViewModel vm)
                 {
+                    var bindStart = Stopwatch.GetTimestamp();
                     try
                     {
                         var gridKey = vm.IsBattlEyeProtocol ? "BansGrid_BattlEye" : "BansGrid_Reforger";
@@ -41,24 +44,27 @@ public partial class BansTabView : UserControl
                                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
                             }
                         };
+                        AppLogger.Debug($"[BansTabView:Bind] DataContext bound in {Stopwatch.GetElapsedTime(bindStart).TotalMilliseconds:F2}ms.");
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("Failed configuring BansTabView data context bindings.", ex);
+                        AppLogger.Error("Failed configuring BansTabView bindings.", ex);
                     }
                 }
             };
 
             DebugLayoutLoggerService.RegisterDataGrid("BansGrid", BansGrid);
+            AppLogger.Debug($"[BansTabView:Init] Initialized in {Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("Failed during BansTabView constructor initialization.", ex);
+            AppLogger.Error("Failed during BansTabView initialization.", ex);
         }
     }
 
     private void OnDataGridSorting(object? sender, DataGridColumnEventArgs e)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             e.Handled = true;
@@ -68,10 +74,11 @@ public partial class BansTabView : UserControl
                 vm.CycleColumnSort(tag);
                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
             }
+            AppLogger.Trace($"[BansTabView:Sort] Handled in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("[BansTabView] Error in OnDataGridSorting.", ex);
+            AppLogger.Error("[BansTabView:Sort] Error in sorting: " + ex.Message, ex);
         }
     }
 
@@ -83,6 +90,7 @@ public partial class BansTabView : UserControl
 
     private void UpdateColumnSortGlyphs(string sortField, bool isAscending)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             foreach (var col in BansGrid.Columns)
@@ -104,15 +112,17 @@ public partial class BansTabView : UserControl
                     col.Header = cleanHeader;
                 }
             }
+            AppLogger.Trace($"[BansTabView:SortGlyph] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[BansTabView] Sort glyph update notice: {ex.Message}");
+            AppLogger.Trace($"[BansTabView:SortGlyph] Update notice: {ex.Message}");
         }
     }
 
     private void UpdateColumnVisibilities(BansViewModel vm)
     {
+        var start = Stopwatch.GetTimestamp();
         try
         {
             foreach (var col in BansGrid.Columns)
@@ -137,6 +147,7 @@ public partial class BansTabView : UserControl
                         break;
                 }
             }
+            AppLogger.Trace($"[BansTabView:Visibility] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -164,7 +175,7 @@ public partial class BansTabView : UserControl
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"OnGridPointerPressed handled non-fatal visual lookup: {ex.Message}");
+            AppLogger.Trace($"[BansTabView:Pointer] Lookup notice: {ex.Message}");
         }
     }
 
@@ -187,7 +198,7 @@ public partial class BansTabView : UserControl
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"OnGridContextRequested handled non-fatal visual lookup: {ex.Message}");
+            AppLogger.Trace($"[BansTabView:Context] Lookup notice: {ex.Message}");
             e.Handled = true;
         }
     }
