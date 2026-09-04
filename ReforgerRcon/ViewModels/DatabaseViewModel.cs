@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
@@ -13,6 +15,8 @@ using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
+[SuppressMessage("Major Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Instance property for XAML data binding")]
+[SuppressMessage("Minor Code Smell", "S1125:Boolean literals should not be redundant", Justification = "Nullable boolean comparison")]
 public partial class DatabaseViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
     public const string DefaultSortKey = "Default";
@@ -25,8 +29,84 @@ public partial class DatabaseViewModel(IRconService rconService, DashboardViewMo
     [ObservableProperty] public partial ObservableCollection<DatabasePlayerModel> Players { get; set; } = [];
     [ObservableProperty] public partial DatabasePlayerModel? SelectedPlayer { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
-    [ObservableProperty] public partial bool IsAllSelected { get; set; }
+    [ObservableProperty] public partial int SelectedCount { get; set; }
+
+    private bool? _isAllSelected = false;
+    public bool? IsAllSelected
+    {
+        get => _isAllSelected;
+        set
+        {
+            if (SetProperty(ref _isAllSelected, value))
+            {
+                OnPropertyChanged(nameof(SelectAllTooltipText));
+                OnPropertyChanged(nameof(SelectAllButtonText));
+
+                // Propagate selection to all database players when toggled by user
+                if (!_isUpdatingSelection && value.HasValue)
+                {
+                    ApplySelectAll(value.Value);
+                }
+            }
+        }
+    }
+
+    public string SelectAllTooltipText => IsAllSelected is true
+        ? "Click to deselect all"
+        : "Click to select all (Ctrl+A)";
+
+    public string SelectAllButtonText => IsAllSelected is true
+        ? "Deselect All"
+        : "Select All";
+
     [ObservableProperty] public partial string DatabaseStatsSummary { get; set; } = "Initializing database...";
+
+    partial void OnIsMultiSelectModeChanged(bool value)
+    {
+        if (!value)
+        {
+            foreach (var p in Players) p.IsSelected = false;
+            UpdateSelectedState();
+        }
+    }
+
+    [RelayCommand]
+    public void ToggleSelectAll() => ExecuteSafe(() =>
+    {
+        if (Players.Count == 0) return;
+        if (!IsMultiSelectMode) IsMultiSelectMode = true;
+
+        bool targetState = IsAllSelected is not true;
+        ApplySelectAll(targetState);
+    });
+
+    private void ApplySelectAll(bool isSelected)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplySelectAll(isSelected));
+            return;
+        }
+
+        ExecuteSafe(() =>
+        {
+            _isUpdatingSelection = true;
+            try
+            {
+                foreach (var p in Players)
+                {
+                    p.IsSelected = isSelected;
+                }
+                SelectedCount = isSelected ? Players.Count : 0;
+                IsAllSelected = isSelected;
+                AppLogger.Debug($"[DatabaseViewModel:SelectAll] Toggled select-all: {isSelected} ({SelectedCount} selected).");
+            }
+            finally
+            {
+                _isUpdatingSelection = false;
+            }
+        });
+    }
 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
@@ -41,7 +121,18 @@ public partial class DatabaseViewModel(IRconService rconService, DashboardViewMo
         using var timing = AppLogger.Measure($"DatabaseViewModel.LoadDbAsync({_rconService.CurrentProtocol})");
         AppLogger.Debug("[DatabaseViewModel:LoadDb] Querying historical players from SQLite database...");
 
+        // Preserve database player selections across refresh
+        var selectedUids = new HashSet<string>(
+            _allDbPlayers.Where(p => p.IsSelected).Select(p => p.Uid), StringComparer.OrdinalIgnoreCase);
+        bool wasAllSelected = IsAllSelected is true;
+
         _allDbPlayers = await _rconService.GetDatabasePlayersAsync().ConfigureAwait(false);
+
+        foreach (var p in _allDbPlayers.Where(p => wasAllSelected || selectedUids.Contains(p.Uid)))
+        {
+            p.IsSelected = true;
+        }
+
         var stats = await PlayerDatabaseStorageService.GetDatabaseStatisticsAsync().ConfigureAwait(false);
 
         var protocolCount = IsBattlEyeProtocol ? stats.TotalBattlEyePlayers : stats.TotalReforgerPlayers;
@@ -49,10 +140,11 @@ public partial class DatabaseViewModel(IRconService rconService, DashboardViewMo
 
         var summary = $"{protocolName} Records: {protocolCount:N0} | {stats.OnlinePlayers:N0} online | {stats.WatchlistedPlayers:N0} watchlisted | Size: {stats.DatabaseSizeBytes / 1024.0:F1} KB";
 
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
             DatabaseStatsSummary = summary;
             ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+            UpdateSelectedState();
         });
 
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
@@ -117,7 +209,7 @@ public partial class DatabaseViewModel(IRconService rconService, DashboardViewMo
         var start = Stopwatch.GetTimestamp();
         AppLogger.Info("[DatabaseViewModel:PostOfflineBan] Refreshing historical database and bans tab after offline ban...");
         await _dashboard.BansTab.RefreshBansAsync().ConfigureAwait(false);
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count);
+        await Dispatcher.UIThread.InvokeAsync(() => _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count);
         await LoadDbAsync().ConfigureAwait(false);
         AppLogger.Debug($"[DatabaseViewModel:PostOfflineBan] Refresh completed in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
@@ -132,6 +224,12 @@ public partial class DatabaseViewModel(IRconService rconService, DashboardViewMo
 
     public void ApplyFilter(string query, string searchType)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyFilter(query, searchType));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
@@ -217,39 +315,39 @@ public partial class DatabaseViewModel(IRconService rconService, DashboardViewMo
         }
     }
 
-    partial void OnIsAllSelectedChanged(bool value)
-    {
-        ExecuteSafe(() =>
-        {
-            if (_isUpdatingSelection) return;
-            _isUpdatingSelection = true;
-            try
-            {
-                foreach (var p in Players)
-                {
-                    p.IsSelected = value;
-                }
-                AppLogger.Debug($"[DatabaseViewModel:SelectAll] Toggled IsAllSelected to {value} across {Players.Count} entries.");
-            }
-            finally
-            {
-                _isUpdatingSelection = false;
-            }
-        });
-    }
-
     private void UpdateSelectedState()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateSelectedState);
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             if (_isUpdatingSelection) return;
-            bool allSelected = Players.Count > 0 && Players.All(p => p.IsSelected);
-            if (IsAllSelected != allSelected)
+            SelectedCount = Players.Count(p => p.IsSelected);
+
+            bool? newSelectionState;
+            if (Players.Count == 0 || SelectedCount == 0)
+            {
+                newSelectionState = false;
+            }
+            else if (SelectedCount == Players.Count)
+            {
+                newSelectionState = true;
+            }
+            else
+            {
+                newSelectionState = null;
+            }
+
+            if (_isAllSelected != newSelectionState)
             {
                 _isUpdatingSelection = true;
                 try
                 {
-                    IsAllSelected = allSelected;
+                    IsAllSelected = newSelectionState;
                 }
                 finally
                 {

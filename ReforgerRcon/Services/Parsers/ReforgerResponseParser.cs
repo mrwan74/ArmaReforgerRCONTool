@@ -14,20 +14,62 @@ public static partial class ReforgerResponseParser
     private const string DefaultServerBanReason = "Server Ban";
     private const string DefaultUnknownRegion = "Unknown Region";
 
-    [GeneratedRegex(@"^\s*(\d+)\s*;\s*([a-fA-F0-9\-]{36}|[a-zA-Z0-9_\-]+)\s*;\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*(\d+)\s*;\s*([a-fA-F0-9\-]{36}|[a-zA-Z0-9_\-]+)\s*;\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
     private static partial Regex PlayerRowRegex();
 
-    [GeneratedRegex(@"^\s*(?:-\s*)?([a-fA-F0-9\-]{36}|[a-zA-Z0-9_\-]+)\s*(?:[\|\;])\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*(?:-\s*)?([a-fA-F0-9\-]{36}|[a-zA-Z0-9_\-]+)\s*(?:[\|\;])\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
     private static partial Regex BanRowWithSeparatorRegex();
 
-    [GeneratedRegex(@"^\s*(?:-\s*)?([a-fA-F0-9\-]{36})\s*$", RegexOptions.Compiled, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"^\s*(?:-\s*)?([a-fA-F0-9\-]{36})\s*$", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
     private static partial Regex BanRowIdentityOnlyRegex();
 
-    [GeneratedRegex(@"[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{4,}", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"[\u0300-\u036F\u1DC0-\u1DFF\u20D0-\u20FF\uFE20-\uFE2F]{4,}", RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     private static partial Regex ExcessiveZalgoRegex();
 
-    [GeneratedRegex(@"\x1B\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"\x1B\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     private static partial Regex AnsiEscapeRegex();
+
+    [GeneratedRegex(@"RCon\s+admin\s+#\d+\s+\([^)]+\)\s+logged\s+in", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
+    private static partial Regex BattlEyeAdminLoginRegex();
+
+    [GeneratedRegex(@"\(\d+\s+players\s+in\s+total\)", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
+    private static partial Regex TotalPlayersCountRegex();
+
+    public static RconProtocol? DetectProtocol(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        if (text.Contains("Logged In! Client ID:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Processing Command:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Players on server: [Player#]", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("[Player#] ; [Player UID] ; [Player Name]", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("- Identity Id | Banned name", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("Help for ban command", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("#ban create", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("#ban list", StringComparison.OrdinalIgnoreCase))
+        {
+            return RconProtocol.ReforgerBuiltIn;
+        }
+
+        if (BattlEyeAdminLoginRegex().IsMatch(text) ||
+            text.Contains("Connected RCon admins:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("List of available commands:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("[#] [IP Address]:[Port] [Ping] [GUID]", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("GUID Bans:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("IP Bans:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("(0 players in total)", StringComparison.OrdinalIgnoreCase) ||
+            TotalPlayersCountRegex().IsMatch(text))
+        {
+            return RconProtocol.BattlEye;
+        }
+
+        return null;
+    }
+
+    public static bool HasReforgerSignature(string? text) => DetectProtocol(text) == RconProtocol.ReforgerBuiltIn;
+
+    public static bool HasBattlEyeSignature(string? text) => DetectProtocol(text) == RconProtocol.BattlEye;
 
     public static string SanitizeText(string? raw, string fallback = "")
     {
@@ -36,7 +78,26 @@ public static partial class ReforgerResponseParser
             return fallback;
         }
 
+        bool hasSpecialChar = false;
+        for (int i = 0; i < raw.Length; i++)
+        {
+            char c = raw[i];
+            if (c < 32 || c > 126)
+            {
+                hasSpecialChar = true;
+                break;
+            }
+        }
+
+        if (!hasSpecialChar)
+        {
+            var trimmed = raw.Trim();
+            if (trimmed.Length > 120) trimmed = trimmed[..120].TrimEnd();
+            return string.IsNullOrWhiteSpace(trimmed) ? fallback : trimmed;
+        }
+
         var sb = new StringBuilder(raw.Length);
+        bool containsEscape = false;
 
         for (int i = 0; i < raw.Length; i++)
         {
@@ -45,6 +106,12 @@ public static partial class ReforgerResponseParser
             if (c is '\r' or '\n' or '\t')
             {
                 sb.Append(' ');
+                continue;
+            }
+
+            if (c == '\x1B')
+            {
+                containsEscape = true;
                 continue;
             }
 
@@ -65,28 +132,16 @@ public static partial class ReforgerResponseParser
 
         var sanitized = sb.ToString();
 
-        try
+        if (containsEscape)
         {
-            if (AnsiEscapeRegex().IsMatch(sanitized))
+            try
             {
                 sanitized = AnsiEscapeRegex().Replace(sanitized, string.Empty);
             }
-        }
-        catch (RegexMatchTimeoutException regexEx)
-        {
-            AppLogger.Trace($"[ReforgerResponseParser:Sanitize] Regex timeout on ANSI escape filter: {regexEx.Message}");
-        }
-
-        try
-        {
-            if (ExcessiveZalgoRegex().IsMatch(sanitized))
+            catch (RegexMatchTimeoutException)
             {
-                sanitized = ExcessiveZalgoRegex().Replace(sanitized, string.Empty);
+                // Ignore timeout
             }
-        }
-        catch (RegexMatchTimeoutException regexEx)
-        {
-            AppLogger.Trace($"[ReforgerResponseParser:Sanitize] Regex timeout on Zalgo filter: {regexEx.Message}");
         }
 
         sanitized = sanitized.Trim();
@@ -105,19 +160,17 @@ public static partial class ReforgerResponseParser
     public static List<PlayerModel> ParsePlayers(string rawResponse)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure("ReforgerResponseParser.ParsePlayers", slowThresholdMs: 15.0);
+        using var timing = AppLogger.Measure("ReforgerResponseParser.ParsePlayers");
         var players = new List<PlayerModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
-            AppLogger.Trace("[ReforgerResponseParser:Players] Empty response buffer.");
             return players;
         }
 
         try
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            AppLogger.Debug($"[ReforgerResponseParser:Players] Processing {lines.Length} line(s) ({rawResponse.Length} chars)...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -125,7 +178,6 @@ public static partial class ReforgerResponseParser
 
                 if (IsKnownPlayerHeaderLine(rawLine))
                 {
-                    AppLogger.Trace($"[ReforgerResponseParser:Players] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -133,14 +185,10 @@ public static partial class ReforgerResponseParser
                 {
                     players.Add(player);
                 }
-                else
-                {
-                    LogParserAnomaly("Reforger Player List", i + 1, rawLine, "Line did not match standard '[Player#] ; [Player UID] ; [Player Name]' and heuristic reconstruction failed.");
-                }
             }
 
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[ReforgerResponseParser:Players] Parsed {players.Count} Reforger player(s) in {elapsedMs:F2}ms.");
+            AppLogger.Debug($"[ReforgerResponseParser:Players] Parsed {players.Count} Reforger player(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -168,10 +216,44 @@ public static partial class ReforgerResponseParser
     {
         player = null;
 
+        var firstSemi = line.IndexOf(';');
+        if (firstSemi > 0)
+        {
+            var secondSemi = line.IndexOf(';', firstSemi + 1);
+            if (secondSemi > firstSemi)
+            {
+                var idSpan = line.AsSpan(0, firstSemi).Trim();
+                var uidSpan = line.AsSpan(firstSemi + 1, secondSemi - firstSemi - 1).Trim();
+                var nameSpan = line.AsSpan(secondSemi + 1).Trim();
+
+                if (int.TryParse(idSpan, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id) && uidSpan.Length >= 8)
+                {
+                    var uid = uidSpan.ToString();
+                    var cleanName = SanitizePlayerName(nameSpan.ToString());
+
+                    player = new PlayerModel
+                    {
+                        Id = id,
+                        Uid = uid,
+                        Guid = string.Empty,
+                        ReforgerUid = uid,
+                        BattlEyeGuid = string.Empty,
+                        Name = cleanName,
+                        Ip = "N/A",
+                        Port = 0,
+                        Ping = 0,
+                        Country = new CountryInfo { Code = "xx", Name = DefaultUnknownRegion },
+                        DisplayLocation = string.Empty
+                    };
+                    return true;
+                }
+            }
+        }
+
         try
         {
             var match = PlayerRowRegex().Match(line);
-            if (match.Success && int.TryParse(match.Groups[1].Value, out int id))
+            if (match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
             {
                 var uid = match.Groups[2].Value.Trim();
                 var rawName = match.Groups[3].Value;
@@ -192,50 +274,12 @@ public static partial class ReforgerResponseParser
                     Country = new CountryInfo { Code = "xx", Name = DefaultUnknownRegion },
                     DisplayLocation = string.Empty
                 };
-
-                AppLogger.Trace($"[ReforgerResponseParser:Players] Parsed player #{id} ('{sanitizedName}', UID: '{uid}').");
                 return true;
             }
         }
-        catch (RegexMatchTimeoutException regexEx)
+        catch (RegexMatchTimeoutException)
         {
-            AppLogger.Warn($"[ReforgerResponseParser:Players] Regex timeout on line '{line}': {regexEx.Message}");
-        }
-
-        return TryHeuristicPlayerLine(line, out player);
-    }
-
-    private static bool TryHeuristicPlayerLine(string line, out PlayerModel? player)
-    {
-        player = null;
-
-        var tokens = line.Split(';', 3, StringSplitOptions.TrimEntries);
-        if (tokens.Length >= 3 && int.TryParse(tokens[0], out int id))
-        {
-            var uid = tokens[1].Trim();
-            var rawName = tokens[2].Trim();
-
-            if (uid.Length >= 8)
-            {
-                string sanitizedName = SanitizePlayerName(rawName);
-                AppLogger.Warn($"[ReforgerResponseParser:Heuristic] Salvaged player #{id} ('{sanitizedName}', UID: '{uid}') from '{line}'");
-
-                player = new PlayerModel
-                {
-                    Id = id,
-                    Uid = uid,
-                    Guid = string.Empty,
-                    ReforgerUid = uid,
-                    BattlEyeGuid = string.Empty,
-                    Name = sanitizedName,
-                    Ip = "N/A",
-                    Port = 0,
-                    Ping = 0,
-                    Country = new CountryInfo { Code = "xx", Name = DefaultUnknownRegion },
-                    DisplayLocation = string.Empty
-                };
-                return true;
-            }
+            // Fallback
         }
 
         return false;
@@ -244,12 +288,11 @@ public static partial class ReforgerResponseParser
     public static List<BanModel> ParseBans(string rawResponse)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure("ReforgerResponseParser.ParseBans", slowThresholdMs: 15.0);
+        using var timing = AppLogger.Measure("ReforgerResponseParser.ParseBans");
         var bans = new List<BanModel>();
 
         if (string.IsNullOrWhiteSpace(rawResponse))
         {
-            AppLogger.Trace("[ReforgerResponseParser:Bans] Empty response buffer.");
             return bans;
         }
 
@@ -257,7 +300,6 @@ public static partial class ReforgerResponseParser
         {
             var lines = rawResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             int banSequence = 1;
-            AppLogger.Debug($"[ReforgerResponseParser:Bans] Processing {lines.Length} line(s) for bans...");
 
             for (int i = 0; i < lines.Length; i++)
             {
@@ -265,7 +307,6 @@ public static partial class ReforgerResponseParser
 
                 if (IsKnownBanHeaderLine(rawLine))
                 {
-                    AppLogger.Trace($"[ReforgerResponseParser:Bans] Skipped header line #{i + 1}: '{rawLine}'");
                     continue;
                 }
 
@@ -274,14 +315,10 @@ public static partial class ReforgerResponseParser
                     bans.Add(ban);
                     banSequence++;
                 }
-                else
-                {
-                    LogParserAnomaly("Reforger Ban List", i + 1, rawLine, "Line does not conform to standard '- <IdentityId> | <BannedName>' or identity-only syntax.");
-                }
             }
 
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[ReforgerResponseParser:Bans] Parsed {bans.Count} Reforger ban(s) in {elapsedMs:F2}ms.");
+            AppLogger.Debug($"[ReforgerResponseParser:Bans] Parsed {bans.Count} Reforger ban(s) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -322,6 +359,28 @@ public static partial class ReforgerResponseParser
             return false;
         }
 
+        var pipeIdx = line.IndexOf('|');
+        if (pipeIdx > 0)
+        {
+            var idPart = line.AsSpan(0, pipeIdx).Trim().TrimStart('-').Trim().ToString();
+            var namePart = line.AsSpan(pipeIdx + 1).Trim().ToString();
+
+            if (idPart.Length >= 10 && !idPart.Equals("Identity Id", StringComparison.OrdinalIgnoreCase))
+            {
+                string sanitizedName = SanitizePlayerName(namePart);
+                ban = new BanModel
+                {
+                    BanNumber = banIndex,
+                    IdentityId = idPart,
+                    BannedName = sanitizedName,
+                    Reason = DefaultServerBanReason,
+                    DurationSeconds = 0,
+                    BannedAt = DateTime.UtcNow
+                };
+                return true;
+            }
+        }
+
         try
         {
             var matchWithSeparator = BanRowWithSeparatorRegex().Match(line);
@@ -347,8 +406,6 @@ public static partial class ReforgerResponseParser
                     DurationSeconds = 0,
                     BannedAt = DateTime.UtcNow
                 };
-
-                AppLogger.Trace($"[ReforgerResponseParser:Bans] Parsed row #{banIndex}: '{sanitizedBannedName}' (Identity: '{identityId}')");
                 return true;
             }
 
@@ -365,38 +422,12 @@ public static partial class ReforgerResponseParser
                     DurationSeconds = 0,
                     BannedAt = DateTime.UtcNow
                 };
-
-                AppLogger.Trace($"[ReforgerResponseParser:Bans] Parsed identity-only row #{banIndex}: '{identityId}'");
                 return true;
             }
         }
-        catch (RegexMatchTimeoutException regexEx)
+        catch (RegexMatchTimeoutException)
         {
-            AppLogger.Warn($"[ReforgerResponseParser:Bans] Regex timeout on ban line '{line}': {regexEx.Message}");
-        }
-
-        if (line.Contains('|'))
-        {
-            var parts = line.Split('|', 2, StringSplitOptions.TrimEntries);
-            var idPart = parts[0].TrimStart('-', ' ').Trim();
-            var namePart = parts[1].Trim();
-
-            if (idPart.Length >= 10 && !idPart.Equals("Identity Id", StringComparison.OrdinalIgnoreCase))
-            {
-                string sanitizedName = SanitizePlayerName(namePart);
-
-                ban = new BanModel
-                {
-                    BanNumber = banIndex,
-                    IdentityId = idPart,
-                    BannedName = sanitizedName,
-                    Reason = DefaultServerBanReason,
-                    DurationSeconds = 0,
-                    BannedAt = DateTime.UtcNow
-                };
-                AppLogger.Warn($"[ReforgerResponseParser:Heuristic] Salvaged row #{banIndex}: '{sanitizedName}' (Identity: '{idPart}')");
-                return true;
-            }
+            // Ignore
         }
 
         return false;
@@ -404,38 +435,7 @@ public static partial class ReforgerResponseParser
 
     public static void LogParserAnomaly(string parserContext, int lineIndex, string rawLine, string reason)
     {
-        var startTimestamp = Stopwatch.GetTimestamp();
-        var forensicDump = ToForensicDump(rawLine);
-        var charBreakdown = GenerateCharacterForensics(rawLine);
-        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-
-        AppLogger.Warn(
-            $"[PARSER_ANOMALY] Context: [{parserContext}] | Line #{lineIndex} failed parsing (Analysis: {elapsedMs:F2}ms).\n" +
-            $"  Reason:        {reason}\n" +
-            $"  Raw Line:      \"{rawLine}\"\n" +
-            $"  Hex & Length Dump:\n{forensicDump}\n" +
-            $"  Character Forensics:\n{charBreakdown}"
-        );
-    }
-
-    public static string GenerateCharacterForensics(string? input)
-    {
-        if (string.IsNullOrEmpty(input)) return "    (Empty / Null string input)";
-
-        var sb = new StringBuilder();
-        for (int i = 0; i < input.Length; i++)
-        {
-            char c = input[i];
-            var category = char.GetUnicodeCategory(c);
-            var isControl = char.IsControl(c);
-            var isSurrogate = char.IsSurrogate(c);
-            var utf8Hex = Convert.ToHexString(Encoding.UTF8.GetBytes([c]));
-
-            sb.AppendLine(CultureInfo.InvariantCulture,
-                $"    [{i:D2}] Char='{(isControl ? ' ' : c)}' | U+{(int)c:X4} | Cat={category,-22} | Ctrl={isControl,-5} | Surr={isSurrogate,-5} | UTF8=[{utf8Hex}]");
-        }
-
-        return sb.ToString().TrimEnd();
+        AppLogger.Warn($"[PARSER_ANOMALY] Context: [{parserContext}] | Line #{lineIndex}: {reason} | Raw: \"{rawLine}\"");
     }
 
     public static string ToForensicDump(string? input)
@@ -447,23 +447,6 @@ public static partial class ReforgerResponseParser
 
         sb.AppendLine(CultureInfo.InvariantCulture, $"  Length:        {input.Length} char(s) ({utf8Bytes.Length} UTF-8 bytes)");
         sb.AppendLine(CultureInfo.InvariantCulture, $"  Hex Dump:      {Convert.ToHexString(utf8Bytes)}");
-
-        var nonAsciiOrControl = input
-            .Select((c, idx) => (Char: c, Index: idx))
-            .Where(x => char.IsControl(x.Char) || x.Char > 127)
-            .Take(40)
-            .ToList();
-
-        if (nonAsciiOrControl.Count > 0)
-        {
-            sb.AppendLine("  Special / Non-ASCII / Control Characters (Up to 40):");
-            foreach (var (c, idx) in nonAsciiOrControl)
-            {
-                sb.AppendLine(CultureInfo.InvariantCulture,
-                    $"    - Char[{idx}]: '{(char.IsControl(c) ? ' ' : c)}' (U+{(int)c:X4}, Category: {char.GetUnicodeCategory(c)})");
-            }
-        }
-
         return sb.ToString().TrimEnd();
     }
 }

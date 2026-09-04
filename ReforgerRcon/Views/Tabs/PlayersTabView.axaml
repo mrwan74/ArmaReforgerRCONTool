@@ -11,8 +11,8 @@
   <UserControl.Styles>
     <Style Selector="DataGridColumnHeader">
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Padding" Value="10,0" />
-      <Setter Property="ToolTip.Tip" Value="Click to cycle sort: Ascending → Descending → Default" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
     </Style>
     <Style Selector="DataGridCell">
       <Setter Property="Focusable" Value="False" />
@@ -28,6 +28,10 @@
       <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
   </UserControl.Styles>
+
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
+  </UserControl.KeyBindings>
 
   <Grid RowDefinitions="Auto,*,Auto">
     <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" Padding="16,8" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
@@ -71,6 +75,10 @@
               Margin="0"
               x:CompileBindings="False">
 
+      <DataGrid.KeyBindings>
+        <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
+      </DataGrid.KeyBindings>
+
       <DataGrid.ContextMenu>
         <ContextMenu>
           <MenuItem Header="Player Details" Command="{Binding OpenPlayerDetailsCommand}" CommandParameter="{Binding SelectedPlayer}" />
@@ -89,6 +97,7 @@
       </DataGrid.ContextMenu>
 
       <DataGrid.Columns>
+        <!-- Select / Select All Checkbox Column -->
         <DataGridTemplateColumn Tag="ColSelect" 
                                 Width="50" 
                                 MinWidth="50" 
@@ -97,21 +106,23 @@
                                 CanUserSort="False" 
                                 CanUserReorder="False"
                                 IsVisible="False">
-          <DataGridTemplateColumn.Header>
-            <Border x:Name="SelectAllHeaderBorder"
-                    HorizontalAlignment="Stretch" 
-                    VerticalAlignment="Stretch" 
-                    Background="Transparent"
-                    Cursor="Hand"
-                    ToolTip.Tip="Select all players">
-              <CheckBox x:Name="SelectAllCheckBox"
-                        HorizontalAlignment="Center" 
-                        VerticalAlignment="Center"
-                        Margin="0" Padding="0" 
-                        MinWidth="0" MinHeight="0"
-                        ToolTip.Tip="Select all players" />
-            </Border>
-          </DataGridTemplateColumn.Header>
+          <DataGridTemplateColumn.HeaderTemplate>
+            <DataTemplate>
+              <Grid Width="50" Height="36" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">
+                <CheckBox IsChecked="{Binding IsAllSelected, Mode=TwoWay}"
+                          HorizontalAlignment="Center" 
+                          VerticalAlignment="Center"
+                          Margin="0" 
+                          Padding="0" 
+                          MinWidth="0" 
+                          MinHeight="0"
+                          IsThreeState="True"
+                          Focusable="False"
+                          Cursor="Hand"
+                          ToolTip.Tip="{Binding SelectAllTooltipText}" />
+              </Grid>
+            </DataTemplate>
+          </DataGridTemplateColumn.HeaderTemplate>
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <Border HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -192,7 +203,7 @@
         <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
-              <TextBlock Text="{Binding Ping, StringFormat='{}{0} ms'}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
+              <TextBlock Text="{Binding PingDisplay}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
@@ -223,7 +234,10 @@
             BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"
             IsVisible="{Binding IsMultiSelectMode}">
       <Grid ColumnDefinitions="Auto,*,Auto">
-        <TextBlock Text="{Binding SelectedCount, StringFormat='Selected: {0} player(s)'}" FontWeight="Bold" VerticalAlignment="Center" />
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedCount, StringFormat='Selected: {0} player(s)'}" FontWeight="Bold" VerticalAlignment="Center" />
+          <Button Classes="Outline Small" Content="{Binding SelectAllButtonText}" Command="{Binding ToggleSelectAllCommand}" ToolTip.Tip="Toggle selection for all rows (Ctrl+A)" />
+        </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
           <Button Classes="Danger Small" Content="Kick Selected" Command="{Binding KickSelectedCommand}" />

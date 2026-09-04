@@ -43,7 +43,7 @@ public static partial class AppLogger
     private const int MaxBreadcrumbs = 2000;
 
     private static readonly ConcurrentQueue<(LogEventLevel Level, string Message, Exception? Exception, string CallerContext)> EarlyLogBuffer = new();
-    private static Serilog.ILogger? _serilogLogger;
+    private static Serilog.ILogger? _logger;
     private static int _isInDispatchFailure;
     private static long _totalLogsDispatched;
     private static long _totalSanitizationsExecuted;
@@ -169,7 +169,7 @@ public static partial class AppLogger
                     }
 
                     Log.Logger = config.CreateLogger();
-                    _serilogLogger = Log.Logger;
+                    _logger = Log.Logger;
                     _isSerilogInitialized = true;
 
                     while (EarlyLogBuffer.TryDequeue(out var item))
@@ -178,11 +178,11 @@ public static partial class AppLogger
                         {
                             if (item.Exception != null)
                             {
-                                _serilogLogger.Write(item.Level, item.Exception, SerilogMessageTemplate, item.Message);
+                                _logger.Write(item.Level, item.Exception, SerilogMessageTemplate, item.Message);
                             }
                             else
                             {
-                                _serilogLogger.Write(item.Level, SerilogMessageTemplate, item.Message);
+                                _logger.Write(item.Level, SerilogMessageTemplate, item.Message);
                             }
                         }
                     }
@@ -390,9 +390,9 @@ public static partial class AppLogger
     public static void Fatal(string message, Exception? ex, IReadOnlyDictionary<string, object?>? context, [CallerMemberName] string member = "", [CallerFilePath] string path = "", [CallerLineNumber] int line = 0)
         => Dispatch(LogLevel.Fatal, message, ex, context, member, path, line);
 
-    public static TimingScope Measure(string operationName, double slowThresholdMs = 25.0, [CallerMemberName] string member = "", [CallerFilePath] string path = "", [CallerLineNumber] int line = 0)
+    public static TimingScope Measure(string operationName, [CallerMemberName] string member = "", [CallerFilePath] string path = "", [CallerLineNumber] int line = 0)
     {
-        return new TimingScope(operationName, slowThresholdMs, member, path, line);
+        return new TimingScope(operationName, member, path, line);
     }
 
     private static void Dispatch(LogLevel level, string message, Exception? ex, IReadOnlyDictionary<string, object?>? context, string member, string path, int line)
@@ -457,13 +457,13 @@ public static partial class AppLogger
                 _ => LogEventLevel.Information
             };
 
-            if (_serilogLogger != null)
+            if (_logger != null)
             {
                 using (LogContext.PushProperty(CallerContextPropertyName, callerContext))
                 {
                     if (demystifiedEx != null)
                     {
-                        _serilogLogger.Write(serilogLevel, demystifiedEx, SerilogMessageTemplate, cleanMessage);
+                        _logger.Write(serilogLevel, demystifiedEx, SerilogMessageTemplate, cleanMessage);
 
                         if (level is LogLevel.Error or LogLevel.Fatal)
                         {
@@ -497,7 +497,7 @@ public static partial class AppLogger
                     }
                     else
                     {
-                        _serilogLogger.Write(serilogLevel, SerilogMessageTemplate, cleanMessage);
+                        _logger.Write(serilogLevel, SerilogMessageTemplate, cleanMessage);
 
                         if (level == LogLevel.Fatal)
                         {
@@ -572,7 +572,6 @@ public static partial class AppLogger
     public sealed class TimingScope : IDisposable
     {
         private readonly string _operationName;
-        private readonly double _slowThresholdMs;
         private readonly string _member;
         private readonly string _path;
         private readonly int _line;
@@ -580,10 +579,9 @@ public static partial class AppLogger
         private readonly long _initialMemory;
         private bool _isDisposed;
 
-        public TimingScope(string operationName, double slowThresholdMs, string member, string path, int line)
+        public TimingScope(string operationName, string member, string path, int line)
         {
             _operationName = operationName;
-            _slowThresholdMs = slowThresholdMs;
             _member = member;
             _path = path;
             _line = line;
@@ -603,10 +601,7 @@ public static partial class AppLogger
                 var memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - _initialMemory;
                 var memFormatted = memoryAllocated >= 1024 ? $"{memoryAllocated / 1024.0:F1} KB" : $"{memoryAllocated} B";
 
-                var level = elapsed.TotalMilliseconds >= _slowThresholdMs ? LogLevel.Warn : LogLevel.Debug;
-                var prefix = elapsed.TotalMilliseconds >= _slowThresholdMs ? "[TIMING:SLOW]" : "[TIMING:COMPLETED]";
-
-                Dispatch(level, $"{prefix} {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted}, Threshold: {_slowThresholdMs:F0}ms)", null, null, _member, _path, _line);
+                Dispatch(LogLevel.Debug, $"[TIMING] {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted})", null, null, _member, _path, _line);
             }
             catch
             {

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
@@ -179,7 +180,7 @@ public partial class BanDialogViewModel : ViewModelBase
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];
-                ProgressStatus = $"Banning {player.Name} ({i + 1}/{total})...";
+                await Dispatcher.UIThread.InvokeAsync(() => ProgressStatus = $"Banning {player.Name} ({i + 1}/{total})...");
                 AppLogger.Info($"[BanDialog:Execute] Target {i + 1}/{total}: '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}, IP: {player.Ip})...");
 
                 bool isSuccess = await _rconService.BanPlayerWithOptionalIpAsync(player, totalSec, Reason, AlsoBanIpAddress).ConfigureAwait(false);
@@ -221,7 +222,8 @@ public partial class BanDialogViewModel : ViewModelBase
 
             AppLogger.Info($"[BanDialog:Execute] Ban execution complete (Success: {successCount}, Failed: {failedCount}).");
 
-            _parent.CloseDialog();
+            await Dispatcher.UIThread.InvokeAsync(() => _parent.CloseDialog());
+
             await _parent.TriggerPostBanRefreshAsync().ConfigureAwait(false);
 
             if (total > 1)
@@ -241,8 +243,11 @@ public partial class BanDialogViewModel : ViewModelBase
         }
         finally
         {
-            IsExecuting = false;
-            ProgressStatus = string.Empty;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsExecuting = false;
+                ProgressStatus = string.Empty;
+            });
         }
     });
 

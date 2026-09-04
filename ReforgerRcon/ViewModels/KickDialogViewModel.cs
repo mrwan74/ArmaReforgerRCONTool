@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
@@ -16,7 +17,7 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
     private readonly PlayersViewModel _parent = parent;
 
     [ObservableProperty] public partial string TargetNames { get; set; } = string.Join(", ", targets.Select(t => $"{t.Name} (ID: {t.Id})"));
-    [ObservableProperty] public partial string Reason { get; set; } = "Kicked by Administrator";
+    [ObservableProperty] public partial string Reason { get; set; } = "Kicked by Admin";
     [ObservableProperty] public partial bool IsExecuting { get; set; }
     [ObservableProperty] public partial string ProgressStatus { get; set; } = string.Empty;
 
@@ -38,7 +39,7 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];
-                ProgressStatus = $"Kicking {player.Name} ({i + 1}/{total})...";
+                await Dispatcher.UIThread.InvokeAsync(() => ProgressStatus = $"Kicking {player.Name} ({i + 1}/{total})...");
                 AppLogger.Info($"[KickDialog:Execute] Target {i + 1}/{total}: '{player.Name}' (ID: #{player.Id}, UID: {player.Uid})...");
 
                 bool isSuccess = await _rconService.KickPlayerAsync(player, Reason).ConfigureAwait(false);
@@ -68,7 +69,8 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
 
             AppLogger.Info($"[KickDialog:Execute] Kick execution complete (Success: {successCount}, Failed: {failedCount}).");
 
-            _parent.CloseDialog();
+            await Dispatcher.UIThread.InvokeAsync(() => _parent.CloseDialog());
+
             await _parent.RefreshPlayersAsync().ConfigureAwait(false);
 
             if (total > 1)
@@ -88,8 +90,11 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
         }
         finally
         {
-            IsExecuting = false;
-            ProgressStatus = string.Empty;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                IsExecuting = false;
+                ProgressStatus = string.Empty;
+            });
         }
     });
 

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
@@ -18,20 +19,36 @@ using ReforgerRcon.Views;
 
 namespace ReforgerRcon.ViewModels;
 
+[SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Partial callback methods are invoked by CommunityToolkit.Mvvm generated property setters")]
 public partial class DashboardViewModel : ViewModelBase
 {
     private readonly IRconService _rconService;
     private readonly Action _onDisconnectRequested;
+    private readonly Func<ServerProfile, RconProtocol, Task>? _onSwitchProtocolRequested;
     private readonly DispatcherTimer _timer;
     private readonly ConcurrentDictionary<string, long> _activeJoinToasts = new(StringComparer.OrdinalIgnoreCase);
     private ConsoleWindow? _detachedConsoleWindow;
+    private bool _hasPromptedProtocolMismatch;
 
     [ObservableProperty] public partial ServerProfile Profile { get; set; }
     [ObservableProperty] public partial int OnlinePlayersCount { get; set; }
     [ObservableProperty] public partial int ActiveBansCount { get; set; }
     [ObservableProperty] public partial int ConnectedAdminsCount { get; set; }
-    [ObservableProperty] public partial int RefreshCountdown { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RefreshCountdownText))]
+    public partial int RefreshCountdown { get; set; }
+
     [ObservableProperty] public partial double RefreshProgress { get; set; } = 100;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RefreshCountdownText))]
+    public partial bool IsAutoRefreshEnabled { get; set; } = true;
+
+    public string RefreshCountdownText => IsAutoRefreshEnabled
+        ? $"Refresh in {RefreshCountdown}s"
+        : "Auto-refresh paused";
+
     [ObservableProperty] public partial string LastPacketTimerText { get; set; } = "0s ago";
     [ObservableProperty] public partial int Ping { get; set; } = 25;
     [ObservableProperty] public partial bool IsHeartbeatVisible { get; set; } = true;
@@ -60,12 +77,17 @@ public partial class DashboardViewModel : ViewModelBase
     public bool IsReforgerProtocol => Profile.Protocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => Profile.Protocol == RconProtocol.BattlEye;
 
-    public DashboardViewModel(ServerProfile profile, IRconService rconService, Action onDisconnectRequested)
+    public DashboardViewModel(
+        ServerProfile profile,
+        IRconService rconService,
+        Action onDisconnectRequested,
+        Func<ServerProfile, RconProtocol, Task>? onSwitchProtocolRequested = null)
     {
         var start = Stopwatch.GetTimestamp();
         Profile = profile;
         _rconService = rconService;
         _onDisconnectRequested = onDisconnectRequested;
+        _onSwitchProtocolRequested = onSwitchProtocolRequested;
 
         SettingsTab = new SettingsViewModel(this);
         PlayersTab = new PlayersViewModel(_rconService, this);
@@ -81,6 +103,7 @@ public partial class DashboardViewModel : ViewModelBase
         _rconService.PlayerKickedStream += OnPlayerKickedStream;
         _rconService.PlayerBannedStream += OnPlayerBannedStream;
         _rconService.AdminConnectedStream += OnAdminConnectedStream;
+        _rconService.ProtocolMismatchDetected += OnProtocolMismatchDetected;
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += OnTimerTick;
@@ -93,7 +116,65 @@ public partial class DashboardViewModel : ViewModelBase
     public void Initialize()
     {
         AppLogger.Debug("[DashboardViewModel:Init] Triggering progressive initial synchronization...");
+
+        if (_rconService.DetectedProtocolMismatch.HasValue)
+        {
+            HandleProtocolMismatch(_rconService.DetectedProtocolMismatch.Value);
+        }
+
         _ = Task.Run(RefreshInitialConnectAsync);
+    }
+
+    partial void OnIsAutoRefreshEnabledChanged(bool value)
+    {
+        if (ConsoleTab != null && ConsoleTab.IsAutoRefreshEnabled != value)
+        {
+            ConsoleTab.IsAutoRefreshEnabled = value;
+        }
+
+        if (value)
+        {
+            RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
+            RefreshProgress = 100;
+        }
+        AppLogger.Debug($"[DashboardViewModel:AutoRefresh] Auto-refresh toggled: {value}");
+    }
+
+    private void OnProtocolMismatchDetected(object? sender, RconProtocol detectedProtocol) =>
+        Dispatcher.UIThread.Post(() => ExecuteSafe(() => HandleProtocolMismatch(detectedProtocol)));
+
+    public void HandleProtocolMismatch(RconProtocol detectedProtocol)
+    {
+        if (_hasPromptedProtocolMismatch || IsDialogVisible) return;
+        _hasPromptedProtocolMismatch = true;
+
+        var detectedName = detectedProtocol == RconProtocol.ReforgerBuiltIn ? "Reforger Built-in RCON" : "BattlEye RCON";
+        var currentName = Profile.Protocol == RconProtocol.ReforgerBuiltIn ? "Reforger Built-in RCON" : "BattlEye RCON";
+
+        AppLogger.Warn($"[DashboardViewModel:ProtocolMismatch] Prompting protocol switch dialog: {currentName} -> {detectedName}");
+
+        ShowDialog(new ConfirmDialogViewModel(
+            "Protocol Mismatch Detected",
+            $"The server at {Profile.ServerIp}:{Profile.Port} responded with {detectedName} format, but ARRT is currently connected using {currentName}.\n\nWould you like to switch to {detectedName} and reconnect automatically?",
+            $"Switch to {detectedName}",
+            false,
+            async () =>
+            {
+                AppLogger.Info($"[DashboardViewModel:SwitchProtocol] User confirmed protocol switch to {detectedProtocol} on {Profile.ServerIp}:{Profile.Port}...");
+                CloseDialog();
+                await DisconnectAsync().ConfigureAwait(false);
+
+                if (_onSwitchProtocolRequested != null)
+                {
+                    await _onSwitchProtocolRequested(Profile, detectedProtocol).ConfigureAwait(false);
+                }
+            },
+            () =>
+            {
+                CloseDialog();
+                _hasPromptedProtocolMismatch = false;
+            }
+        ));
     }
 
     private async Task RefreshInitialConnectAsync()
@@ -103,22 +184,19 @@ public partial class DashboardViewModel : ViewModelBase
         {
             AppLogger.Info($"[DashboardViewModel:InitSync] Beginning progressive initial sync for {Profile.ServerIp}:{Profile.Port} ({Profile.Protocol})...");
 
-            // 1. Query & display players first (instant visual feedback in ~200ms)
             var pStart = Stopwatch.GetTimestamp();
             await PlayersTab.RefreshPlayersAsync().ConfigureAwait(false);
             Dispatcher.UIThread.Post(() => OnlinePlayersCount = PlayersTab.Players.Count);
-            AppLogger.Debug($"[DashboardViewModel:InitSync] Step 1: Players loaded and visible in {Stopwatch.GetElapsedTime(pStart).TotalMilliseconds:F2}ms ({PlayersTab.Players.Count} players).");
+            AppLogger.Debug($"[DashboardViewModel:InitSync] Step 1: Players loaded in {Stopwatch.GetElapsedTime(pStart).TotalMilliseconds:F2}ms ({PlayersTab.Players.Count} players).");
 
-            // 2. Query & display bans next as soon as packet arrives
             if (SettingsTab.Settings.AutoRefreshBans)
             {
                 var bStart = Stopwatch.GetTimestamp();
                 await BansTab.RefreshBansAsync().ConfigureAwait(false);
                 Dispatcher.UIThread.Post(() => ActiveBansCount = BansTab.Bans.Count);
-                AppLogger.Debug($"[DashboardViewModel:InitSync] Step 2: Bans loaded and visible in {Stopwatch.GetElapsedTime(bStart).TotalMilliseconds:F2}ms ({BansTab.Bans.Count} bans).");
+                AppLogger.Debug($"[DashboardViewModel:InitSync] Step 2: Bans loaded in {Stopwatch.GetElapsedTime(bStart).TotalMilliseconds:F2}ms ({BansTab.Bans.Count} bans).");
             }
 
-            // 3. Query & display connected admins next (BattlEye only)
             if (IsBattlEyeProtocol)
             {
                 var aStart = Stopwatch.GetTimestamp();
@@ -127,7 +205,6 @@ public partial class DashboardViewModel : ViewModelBase
                 AppLogger.Debug($"[DashboardViewModel:InitSync] Step 3: Admins loaded in {Stopwatch.GetElapsedTime(aStart).TotalMilliseconds:F2}ms ({admins.Count} admins).");
             }
 
-            // 4. Load historical database records
             var dStart = Stopwatch.GetTimestamp();
             await DatabaseTab.LoadDbAsync().ConfigureAwait(false);
             AppLogger.Debug($"[DashboardViewModel:InitSync] Step 4: Database loaded in {Stopwatch.GetElapsedTime(dStart).TotalMilliseconds:F2}ms.");
@@ -454,7 +531,7 @@ public partial class DashboardViewModel : ViewModelBase
                         IsConnected = true;
                         CloseDialog();
                         _timer.Start();
-                        _ = RefreshAllAsync(forceBans: true);
+                        _ = RefreshAllInternalAsync(forceBans: true);
                     },
                     onReturnToLogin: () =>
                     {
@@ -482,6 +559,12 @@ public partial class DashboardViewModel : ViewModelBase
 
     public void ShowDialog(ViewModelBase dialog)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ShowDialog(dialog));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             AppLogger.Debug($"[DashboardViewModel:Dialog] Displaying overlay: {dialog.GetType().Name}");
@@ -493,6 +576,12 @@ public partial class DashboardViewModel : ViewModelBase
     [RelayCommand]
     public void CloseDialog()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(CloseDialog);
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             if (ActiveDialog != null)
@@ -515,15 +604,19 @@ public partial class DashboardViewModel : ViewModelBase
                 return;
             }
 
-            RefreshCountdown--;
-            if (RefreshCountdown <= 0)
+            if (IsAutoRefreshEnabled)
             {
-                RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
-                AppLogger.Trace("[DashboardViewModel:Timer] Auto-refresh triggered by countdown timer.");
-                await RefreshAllAsync(forceBans: false).ConfigureAwait(false);
+                RefreshCountdown--;
+                if (RefreshCountdown <= 0)
+                {
+                    RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
+                    AppLogger.Trace("[DashboardViewModel:Timer] Auto-refresh triggered by countdown timer.");
+                    await RefreshAllInternalAsync(forceBans: false).ConfigureAwait(false);
+                }
+
+                RefreshProgress = (double)RefreshCountdown / Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds) * 100;
             }
 
-            RefreshProgress = (double)RefreshCountdown / Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds) * 100;
             var diff = (DateTime.UtcNow - _rconService.LastPacketTime).TotalSeconds;
             LastPacketTimerText = $"{(int)diff}s ago";
             Ping = _rconService.PingMs;
@@ -531,7 +624,15 @@ public partial class DashboardViewModel : ViewModelBase
         }).ConfigureAwait(false);
     }
 
-    public Task<bool> RefreshAllAsync(bool forceBans = false)
+    [RelayCommand]
+    public Task<bool> RefreshAllAsync()
+    {
+        RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
+        RefreshProgress = 100;
+        return RefreshAllInternalAsync(forceBans: true);
+    }
+
+    public Task<bool> RefreshAllInternalAsync(bool forceBans = false)
     {
         return ExecuteSafeAsync(async () =>
         {
@@ -544,20 +645,19 @@ public partial class DashboardViewModel : ViewModelBase
             var start = Stopwatch.GetTimestamp();
             using var timing = AppLogger.Measure($"DashboardViewModel.RefreshAllAsync(ForceBans: {forceBans})");
 
-            // Progressive pipeline during scheduled refresh
             await PlayersTab.RefreshPlayersAsync().ConfigureAwait(false);
-            Dispatcher.UIThread.Post(() => OnlinePlayersCount = PlayersTab.Players.Count);
+            await Dispatcher.UIThread.InvokeAsync(() => OnlinePlayersCount = PlayersTab.Players.Count);
 
             if (forceBans || SettingsTab.Settings.AutoRefreshBans)
             {
                 await BansTab.RefreshBansAsync().ConfigureAwait(false);
-                Dispatcher.UIThread.Post(() => ActiveBansCount = BansTab.Bans.Count);
+                await Dispatcher.UIThread.InvokeAsync(() => ActiveBansCount = BansTab.Bans.Count);
             }
 
             if (IsBattlEyeProtocol)
             {
                 var admins = await _rconService.GetAdminsAsync().ConfigureAwait(false);
-                Dispatcher.UIThread.Post(() => ConnectedAdminsCount = admins.Count);
+                await Dispatcher.UIThread.InvokeAsync(() => ConnectedAdminsCount = admins.Count);
             }
 
             await DatabaseTab.LoadDbAsync().ConfigureAwait(false);
@@ -706,6 +806,7 @@ public partial class DashboardViewModel : ViewModelBase
             _rconService.PlayerKickedStream -= OnPlayerKickedStream;
             _rconService.PlayerBannedStream -= OnPlayerBannedStream;
             _rconService.AdminConnectedStream -= OnAdminConnectedStream;
+            _rconService.ProtocolMismatchDetected -= OnProtocolMismatchDetected;
             _detachedConsoleWindow?.Close();
             _detachedConsoleWindow = null;
             await _rconService.DisconnectAsync().ConfigureAwait(false);

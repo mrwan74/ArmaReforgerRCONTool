@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
@@ -14,6 +16,8 @@ using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 
+[SuppressMessage("Major Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Instance property for XAML data binding")]
+[SuppressMessage("Minor Code Smell", "S1125:Boolean literals should not be redundant", Justification = "Nullable boolean comparison")]
 public partial class PlayersViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
     public const string DefaultSortKey = "Default";
@@ -30,16 +34,40 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
     [ObservableProperty] public partial int SelectedCount { get; set; }
 
-    private bool _isAllSelected;
-    public bool IsAllSelected
+    private bool? _isAllSelected = false;
+    public bool? IsAllSelected
     {
         get => _isAllSelected;
         set
         {
             if (SetProperty(ref _isAllSelected, value))
             {
-                ApplySelectAll(value);
+                OnPropertyChanged(nameof(SelectAllTooltipText));
+                OnPropertyChanged(nameof(SelectAllButtonText));
+
+                // Propagate selection to all players when toggled by user
+                if (!_isUpdatingSelection && value.HasValue)
+                {
+                    ApplySelectAll(value.Value);
+                }
             }
+        }
+    }
+
+    public string SelectAllTooltipText => IsAllSelected is true
+        ? "Click to deselect all"
+        : "Click to select all (Ctrl+A)";
+
+    public string SelectAllButtonText => IsAllSelected is true
+        ? "Deselect All"
+        : "Select All";
+
+    partial void OnIsMultiSelectModeChanged(bool value)
+    {
+        if (!value)
+        {
+            foreach (var p in Players) p.IsSelected = false;
+            UpdateSelectedCount();
         }
     }
 
@@ -56,12 +84,62 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         using var timing = AppLogger.Measure("PlayersViewModel.RefreshPlayersAsync");
         AppLogger.Debug($"[PlayersViewModel:Refresh] Querying live player list ({_rconService.CurrentProtocol})...");
 
-        _allPlayers = await _rconService.GetPlayersAsync().ConfigureAwait(false);
-        ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+        // Preserve current selections across auto-refresh
+        var selectedUids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = new HashSet<int>();
+        bool wasAllSelected = IsAllSelected is true;
 
-        _dashboard.OnlinePlayersCount = Players.Count;
+        foreach (var p in _allPlayers)
+        {
+            if (p.IsSelected)
+            {
+                selectedIds.Add(p.Id);
+                var uid = !string.IsNullOrWhiteSpace(p.Guid) && !p.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
+                    ? p.Guid
+                    : p.Uid;
+                if (!string.IsNullOrWhiteSpace(uid)) selectedUids.Add(uid);
+            }
+        }
+
+        _allPlayers = await _rconService.GetPlayersAsync().ConfigureAwait(false);
+
+        // Auto-resolve GeoIP and restore selections
+        foreach (var p in _allPlayers)
+        {
+            if ((p.Country == null || p.Country.Code == "xx") &&
+                !string.IsNullOrWhiteSpace(p.Ip) &&
+                !p.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
+            {
+                var resolved = GeoIpService.GetLocation(p.Ip);
+                if (resolved.CountryCode != "xx")
+                {
+                    p.Country = new CountryInfo { Code = resolved.CountryCode, Name = resolved.CountryName };
+                    p.DisplayLocation = resolved.NaturalLocation;
+                    p.TimeZone = resolved.TimeZone;
+                    p.LocationCity = resolved.CityName;
+                    p.LocationState = resolved.SubdivisionName;
+                }
+            }
+
+            var uid = !string.IsNullOrWhiteSpace(p.Guid) && !p.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
+                ? p.Guid
+                : p.Uid;
+
+            if (wasAllSelected || selectedIds.Contains(p.Id) || (!string.IsNullOrEmpty(uid) && selectedUids.Contains(uid)))
+            {
+                p.IsSelected = true;
+            }
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+            _dashboard.OnlinePlayersCount = Players.Count;
+            UpdateSelectedCount();
+        });
+
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[PlayersViewModel:Refresh] Refreshed {_allPlayers.Count} players ({Players.Count} visible) in {elapsedMs:F2}ms.");
+        AppLogger.Info($"[PlayersViewModel:Refresh] Refreshed {_allPlayers.Count} players ({Players.Count} visible, {SelectedCount} selected) in {elapsedMs:F2}ms.");
     });
 
     public static string MapColumnTagToSortField(string? tag)
@@ -119,6 +197,12 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
     public void AddOrUpdatePlayer(PlayerModel player)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => AddOrUpdatePlayer(player));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
@@ -129,8 +213,20 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 existing.Name = player.Name;
                 if (!string.IsNullOrEmpty(player.Ip) && !player.Ip.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)) existing.Ip = player.Ip;
                 if (player.Port > 0) existing.Port = player.Port;
-                if (player.Country != null && player.Country.Code != "xx") existing.Country = player.Country;
-                if (!string.IsNullOrEmpty(player.DisplayLocation)) existing.DisplayLocation = player.DisplayLocation;
+                if (player.Country != null && player.Country.Code != "xx")
+                {
+                    existing.Country = player.Country;
+                }
+                else if (existing.Country == null || existing.Country.Code == "xx")
+                {
+                    var resolved = GeoIpService.GetLocation(existing.Ip);
+                    if (resolved.CountryCode != "xx")
+                    {
+                        existing.Country = new CountryInfo { Code = resolved.CountryCode, Name = resolved.CountryName };
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(player.DisplayLocation) && !player.DisplayLocation.Equals("Unknown Region", StringComparison.OrdinalIgnoreCase)) existing.DisplayLocation = player.DisplayLocation;
                 if (!string.IsNullOrEmpty(player.TimeZone)) existing.TimeZone = player.TimeZone;
                 if (!string.IsNullOrEmpty(player.Guid) && !player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)) existing.Guid = player.Guid;
                 if (!string.IsNullOrEmpty(player.Uid) && !player.Uid.StartsWith("init", StringComparison.OrdinalIgnoreCase)) existing.Uid = player.Uid;
@@ -150,6 +246,12 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
     public void RemovePlayerFromList(PlayerModel player)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => RemovePlayerFromList(player));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
@@ -175,7 +277,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         AppLogger.Info("[PlayersViewModel:PostBan] Triggering post-ban refresh...");
         await RefreshPlayersAsync().ConfigureAwait(false);
         await _dashboard.BansTab.RefreshBansAsync().ConfigureAwait(false);
-        _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count;
+        await Dispatcher.UIThread.InvokeAsync(() => _dashboard.ActiveBansCount = _dashboard.BansTab.Bans.Count);
         AppLogger.Debug($"[PlayersViewModel:PostBan] Post-ban refresh complete in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
@@ -188,6 +290,12 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
     public void ApplyFilter(string query, string searchType)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyFilter(query, searchType));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
@@ -298,13 +406,25 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     }
 
     [RelayCommand]
-    public void ToggleSelectAll() => ExecuteSafe(() => IsAllSelected = !IsAllSelected);
+    public void ToggleSelectAll() => ExecuteSafe(() =>
+    {
+        if (Players.Count == 0) return;
+        if (!IsMultiSelectMode) IsMultiSelectMode = true;
+
+        bool targetState = IsAllSelected is not true;
+        ApplySelectAll(targetState);
+    });
 
     private void ApplySelectAll(bool isSelected)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplySelectAll(isSelected));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
-            if (_isUpdatingSelection) return;
             _isUpdatingSelection = true;
             try
             {
@@ -313,6 +433,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                     p.IsSelected = isSelected;
                 }
                 SelectedCount = isSelected ? Players.Count : 0;
+                IsAllSelected = isSelected;
                 AppLogger.Debug($"[PlayersViewModel:SelectAll] Toggled select-all: {isSelected} ({SelectedCount} selected).");
             }
             finally
@@ -325,17 +446,37 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public void UpdateSelectedCount()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateSelectedCount);
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             if (_isUpdatingSelection) return;
             SelectedCount = Players.Count(p => p.IsSelected);
-            bool allSelected = Players.Count > 0 && SelectedCount == Players.Count;
-            if (_isAllSelected != allSelected)
+
+            bool? newSelectionState;
+            if (Players.Count == 0 || SelectedCount == 0)
+            {
+                newSelectionState = false;
+            }
+            else if (SelectedCount == Players.Count)
+            {
+                newSelectionState = true;
+            }
+            else
+            {
+                newSelectionState = null;
+            }
+
+            if (_isAllSelected != newSelectionState)
             {
                 _isUpdatingSelection = true;
                 try
                 {
-                    IsAllSelected = allSelected;
+                    IsAllSelected = newSelectionState;
                 }
                 finally
                 {

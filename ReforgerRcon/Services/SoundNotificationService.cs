@@ -87,45 +87,10 @@ public static partial class SoundNotificationService
                 sw.Stop();
                 AppLogger.Debug($"[SoundNotificationService:Play] Platform sound fallback complete for {alertType} in {sw.ElapsedMilliseconds}ms.");
             }
-            catch (Win32Exception winEx)
+            catch (Exception ex)
             {
                 sw.Stop();
-                AppLogger.Error($"[SoundNotificationService:Play] Win32 audio error for {alertType} (Code: {winEx.NativeErrorCode}): {winEx.Message}", winEx, new Dictionary<string, object?>
-                {
-                    ["alert_type"] = alertType.ToString(),
-                    ["win32_code"] = winEx.NativeErrorCode,
-                    ["os"] = RuntimeInformation.OSDescription
-                });
-            }
-            catch (FileNotFoundException fnfEx)
-            {
-                sw.Stop();
-                AppLogger.Warn($"[SoundNotificationService:Play] Audio file not found for {alertType}: {fnfEx.FileName}", fnfEx);
-            }
-            catch (DirectoryNotFoundException dnfEx)
-            {
-                sw.Stop();
-                AppLogger.Warn($"[SoundNotificationService:Play] Directory missing: {dnfEx.Message}", dnfEx);
-            }
-            catch (UnauthorizedAccessException authEx)
-            {
-                sw.Stop();
-                AppLogger.Warn($"[SoundNotificationService:Play] Access denied for {alertType}: {authEx.Message}", authEx);
-            }
-            catch (IOException ioEx)
-            {
-                sw.Stop();
-                AppLogger.Warn($"[SoundNotificationService:Play] I/O error for {alertType}: {ioEx.Message}", ioEx);
-            }
-            catch (InvalidOperationException invEx)
-            {
-                sw.Stop();
-                AppLogger.Warn($"[SoundNotificationService:Play] Invalid operation in NetCoreAudio: {invEx.Message}", invEx);
-            }
-            catch (OperationCanceledException opEx)
-            {
-                sw.Stop();
-                AppLogger.Trace($"[SoundNotificationService:Play] Audio playback canceled for {alertType}: {opEx.Message}");
+                AppLogger.Trace($"[SoundNotificationService:Play] Non-fatal audio notice for {alertType}: {ex.Message}");
             }
         });
     }
@@ -149,17 +114,9 @@ public static partial class SoundNotificationService
                         return true;
                     }
                 }
-                catch (FileNotFoundException fnfEx)
+                catch (Exception ex)
                 {
-                    AppLogger.Trace($"[SoundNotificationService:Asset] Asset not found '{avaresUri}': {fnfEx.Message}");
-                }
-                catch (IOException ioEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Asset] I/O error on '{avaresUri}': {ioEx.Message}", ioEx);
-                }
-                catch (UnauthorizedAccessException authEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Asset] Access denied on '{avaresUri}': {authEx.Message}", authEx);
+                    AppLogger.Trace($"[SoundNotificationService:Asset] Asset notice for '{avaresUri}': {ex.Message}");
                 }
             }
 
@@ -176,17 +133,9 @@ public static partial class SoundNotificationService
                         return true;
                     }
                 }
-                catch (FileNotFoundException fnfEx)
+                catch (Exception ex)
                 {
-                    AppLogger.Trace($"[SoundNotificationService:Asset] Root asset not found '{rootAvaresUri}': {fnfEx.Message}");
-                }
-                catch (IOException ioEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Asset] I/O error on '{rootAvaresUri}': {ioEx.Message}", ioEx);
-                }
-                catch (UnauthorizedAccessException authEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Asset] Access denied on '{rootAvaresUri}': {authEx.Message}", authEx);
+                    AppLogger.Trace($"[SoundNotificationService:Asset] Root asset notice for '{rootAvaresUri}': {ex.Message}");
                 }
             }
 
@@ -208,25 +157,9 @@ public static partial class SoundNotificationService
                     AppLogger.Info($"[SoundNotificationService:Disk] Playback started for '{diskPath}'");
                     return true;
                 }
-                catch (FileNotFoundException fnfEx)
+                catch (Exception ex)
                 {
-                    AppLogger.Trace($"[SoundNotificationService:Disk] File missing '{diskPath}': {fnfEx.Message}");
-                }
-                catch (DirectoryNotFoundException dnfEx)
-                {
-                    AppLogger.Trace($"[SoundNotificationService:Disk] Directory missing '{diskPath}': {dnfEx.Message}");
-                }
-                catch (IOException ioEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Disk] I/O error for '{diskPath}': {ioEx.Message}", ioEx);
-                }
-                catch (UnauthorizedAccessException authEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Disk] Access denied for '{diskPath}': {authEx.Message}", authEx);
-                }
-                catch (InvalidOperationException invEx)
-                {
-                    AppLogger.Warn($"[SoundNotificationService:Disk] NetCoreAudio error playing '{diskPath}': {invEx.Message}", invEx);
+                    AppLogger.Trace($"[SoundNotificationService:Disk] Play notice for '{diskPath}': {ex.Message}");
                 }
             }
         }
@@ -249,22 +182,20 @@ public static partial class SoundNotificationService
             }
 
             AppLogger.Debug($"[SoundNotificationService:Stream] Extracted audio to '{tempFile}'. Calling Play()...");
-            await AudioPlayer.Play(tempFile).ConfigureAwait(false);
-            return true;
+            try
+            {
+                await AudioPlayer.Play(tempFile).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[SoundNotificationService:Stream] Play notice: {ex.Message}");
+                return false;
+            }
         }
-        catch (IOException ioEx)
+        catch (Exception ex)
         {
-            AppLogger.Error($"[SoundNotificationService:Stream] I/O error extracting stream: {ioEx.Message}", ioEx);
-            return false;
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            AppLogger.Error($"[SoundNotificationService:Stream] Access denied writing temp audio: {authEx.Message}", authEx);
-            return false;
-        }
-        catch (InvalidOperationException invEx)
-        {
-            AppLogger.Error($"[SoundNotificationService:Stream] NetCoreAudio failure: {invEx.Message}", invEx);
+            AppLogger.Trace($"[SoundNotificationService:Stream] Stream copy notice: {ex.Message}");
             return false;
         }
         finally
@@ -272,7 +203,7 @@ public static partial class SoundNotificationService
             if (tempFile != null)
             {
                 var fileToDelete = tempFile;
-                _ = Task.Delay(12000).ContinueWith(_ =>
+                _ = Task.Delay(15000).ContinueWith(_ =>
                 {
                     try
                     {
@@ -282,15 +213,11 @@ public static partial class SoundNotificationService
                             AppLogger.Trace($"[SoundNotificationService:Stream] Cleaned up temporary audio: {fileToDelete}");
                         }
                     }
-                    catch (IOException ioEx)
+                    catch
                     {
-                        AppLogger.Trace($"[SoundNotificationService:Stream] File deletion locked: {ioEx.Message}");
+                        // Ignore locked deletion attempts
                     }
-                    catch (UnauthorizedAccessException authEx)
-                    {
-                        AppLogger.Trace($"[SoundNotificationService:Stream] Deletion permission notice: {authEx.Message}");
-                    }
-                });
+                }, TaskScheduler.Default);
             }
         }
     }
@@ -351,7 +278,7 @@ public static partial class SoundNotificationService
         }
         catch (Win32Exception winEx)
         {
-            AppLogger.Error($"[SoundNotificationService:Windows] Win32 MessageBeep exception: {winEx.Message}", winEx);
+            AppLogger.Trace($"[SoundNotificationService:Windows] Win32 MessageBeep notice: {winEx.Message}");
         }
     }
 }

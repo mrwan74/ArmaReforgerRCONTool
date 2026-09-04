@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
@@ -13,6 +15,8 @@ using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 
+[SuppressMessage("Major Code Smell", "S2325:Methods and properties that don't access instance data should be static", Justification = "Instance property for XAML data binding")]
+[SuppressMessage("Minor Code Smell", "S1125:Boolean literals should not be redundant", Justification = "Nullable boolean comparison")]
 public partial class BansViewModel(IRconService rconService, DashboardViewModel dashboard) : ViewModelBase
 {
     public const string DefaultSortKey = "Default";
@@ -25,7 +29,82 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
     [ObservableProperty] public partial ObservableCollection<BanModel> Bans { get; set; } = [];
     [ObservableProperty] public partial BanModel? SelectedBan { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
-    [ObservableProperty] public partial bool IsAllSelected { get; set; }
+    [ObservableProperty] public partial int SelectedCount { get; set; }
+
+    private bool? _isAllSelected = false;
+    public bool? IsAllSelected
+    {
+        get => _isAllSelected;
+        set
+        {
+            if (SetProperty(ref _isAllSelected, value))
+            {
+                OnPropertyChanged(nameof(SelectAllTooltipText));
+                OnPropertyChanged(nameof(SelectAllButtonText));
+
+                // Propagate selection to all bans when toggled by user
+                if (!_isUpdatingSelection && value.HasValue)
+                {
+                    ApplySelectAll(value.Value);
+                }
+            }
+        }
+    }
+
+    public string SelectAllTooltipText => IsAllSelected is true
+        ? "Click to deselect all"
+        : "Click to select all (Ctrl+A)";
+
+    public string SelectAllButtonText => IsAllSelected is true
+        ? "Deselect All"
+        : "Select All";
+
+    partial void OnIsMultiSelectModeChanged(bool value)
+    {
+        if (!value)
+        {
+            foreach (var b in Bans) b.IsSelected = false;
+            UpdateSelectedState();
+        }
+    }
+
+    [RelayCommand]
+    public void ToggleSelectAll() => ExecuteSafe(() =>
+    {
+        if (Bans.Count == 0) return;
+        if (!IsMultiSelectMode) IsMultiSelectMode = true;
+
+        bool targetState = IsAllSelected is not true;
+        ApplySelectAll(targetState);
+    });
+
+    private void ApplySelectAll(bool isSelected)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplySelectAll(isSelected));
+            return;
+        }
+
+        ExecuteSafe(() =>
+        {
+            _isUpdatingSelection = true;
+            try
+            {
+                foreach (var b in Bans)
+                {
+                    b.IsSelected = isSelected;
+                }
+                SelectedCount = isSelected ? Bans.Count : 0;
+                IsAllSelected = isSelected;
+                AppLogger.Debug($"[BansViewModel:SelectAll] Toggled select-all: {isSelected} ({SelectedCount} selected).");
+            }
+            finally
+            {
+                _isUpdatingSelection = false;
+            }
+        });
+    }
 
     public bool IsReforgerProtocol => _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn;
     public bool IsBattlEyeProtocol => _rconService.CurrentProtocol == RconProtocol.BattlEye;
@@ -40,12 +119,29 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         using var timing = AppLogger.Measure("BansViewModel.RefreshBansAsync");
         AppLogger.Debug($"[BansViewModel:Refresh] Fetching ban records from server ({_rconService.CurrentProtocol})...");
 
-        _allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
-        ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+        // Preserve ban selections across auto-refresh
+        var selectedIdentities = new HashSet<string>(
+            _allBans.Where(b => b.IsSelected).Select(b => b.IdentityId), StringComparer.OrdinalIgnoreCase);
+        var selectedBanNos = new HashSet<int>(
+            _allBans.Where(b => b.IsSelected).Select(b => b.BanNumber));
+        bool wasAllSelected = IsAllSelected is true;
 
-        _dashboard.ActiveBansCount = _allBans.Count;
+        _allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
+
+        foreach (var b in _allBans.Where(b => wasAllSelected || selectedBanNos.Contains(b.BanNumber) || selectedIdentities.Contains(b.IdentityId)))
+        {
+            b.IsSelected = true;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+            _dashboard.ActiveBansCount = _allBans.Count;
+            UpdateSelectedState();
+        });
+
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[BansViewModel:Refresh] Loaded {_allBans.Count} ban records ({Bans.Count} visible) in {elapsedMs:F2}ms.");
+        AppLogger.Info($"[BansViewModel:Refresh] Loaded {_allBans.Count} ban records ({Bans.Count} visible, {SelectedCount} selected) in {elapsedMs:F2}ms.");
     });
 
     public static string MapColumnTagToSortField(string? tag)
@@ -99,6 +195,12 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
     public void RemoveBanFromList(BanModel ban)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => RemoveBanFromList(ban));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
@@ -107,6 +209,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             var match = Bans.FirstOrDefault(b => b.IdentityId == ban.IdentityId || (b.BanNumber == ban.BanNumber && b.BanNumber != 0));
             if (match != null)
             {
+                match.PropertyChanged -= OnBanPropertyChanged;
                 Bans.Remove(match);
             }
 
@@ -119,6 +222,12 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
 
     public void ApplyFilter(string query, string searchType)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyFilter(query, searchType));
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
@@ -186,39 +295,39 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
         }
     }
 
-    partial void OnIsAllSelectedChanged(bool value)
-    {
-        ExecuteSafe(() =>
-        {
-            if (_isUpdatingSelection) return;
-            _isUpdatingSelection = true;
-            try
-            {
-                foreach (var b in Bans)
-                {
-                    b.IsSelected = value;
-                }
-                AppLogger.Debug($"[BansViewModel:SelectAll] Toggled IsAllSelected to {value} across {Bans.Count} entries.");
-            }
-            finally
-            {
-                _isUpdatingSelection = false;
-            }
-        });
-    }
-
     private void UpdateSelectedState()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateSelectedState);
+            return;
+        }
+
         ExecuteSafe(() =>
         {
             if (_isUpdatingSelection) return;
-            bool allSelected = Bans.Count > 0 && Bans.All(b => b.IsSelected);
-            if (IsAllSelected != allSelected)
+            SelectedCount = Bans.Count(b => b.IsSelected);
+
+            bool? newSelectionState;
+            if (Bans.Count == 0 || SelectedCount == 0)
+            {
+                newSelectionState = false;
+            }
+            else if (SelectedCount == Bans.Count)
+            {
+                newSelectionState = true;
+            }
+            else
+            {
+                newSelectionState = null;
+            }
+
+            if (_isAllSelected != newSelectionState)
             {
                 _isUpdatingSelection = true;
                 try
                 {
-                    IsAllSelected = allSelected;
+                    IsAllSelected = newSelectionState;
                 }
                 finally
                 {
@@ -337,7 +446,7 @@ public partial class BansViewModel(IRconService rconService, DashboardViewModel 
             }
         }
 
-        IsMultiSelectMode = false;
+        await Dispatcher.UIThread.InvokeAsync(() => IsMultiSelectMode = false);
         AppLogger.Info($"[BansViewModel:BatchRemove] Batch ban removal completed (Success: {successCount}, Failed: {failedCount}).");
 
         if (failedCount == 0)

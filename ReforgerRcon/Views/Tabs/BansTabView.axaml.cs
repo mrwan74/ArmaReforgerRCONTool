@@ -12,6 +12,9 @@ namespace ReforgerRcon.Views.Tabs;
 
 public partial class BansTabView : UserControl
 {
+    private const string ColSelectTag = "ColSelect";
+    private const string ColActionsTag = "ColActions";
+
     public BansTabView()
     {
         var startTimestamp = Stopwatch.GetTimestamp();
@@ -28,6 +31,14 @@ public partial class BansTabView : UserControl
                     var bindStart = Stopwatch.GetTimestamp();
                     try
                     {
+                        foreach (var col in BansGrid.Columns)
+                        {
+                            if (col.Tag?.ToString() == ColSelectTag)
+                            {
+                                col.Header = vm;
+                            }
+                        }
+
                         var gridKey = vm.IsBattlEyeProtocol ? "BansGrid_BattlEye" : "BansGrid_Reforger";
                         ColumnLayoutStorageService.BindPersistence(BansGrid, gridKey);
 
@@ -67,8 +78,14 @@ public partial class BansTabView : UserControl
         var start = Stopwatch.GetTimestamp();
         try
         {
+            var tag = e.Column.Tag?.ToString() ?? string.Empty;
+            if (tag is ColSelectTag or ColActionsTag)
+            {
+                e.Handled = true;
+                return;
+            }
+
             e.Handled = true;
-            var tag = e.Column.Tag?.ToString() ?? "";
             if (DataContext is BansViewModel vm)
             {
                 vm.CycleColumnSort(tag);
@@ -95,7 +112,9 @@ public partial class BansTabView : UserControl
         {
             foreach (var col in BansGrid.Columns)
             {
-                var tag = col.Tag?.ToString() ?? "";
+                var tag = col.Tag?.ToString() ?? string.Empty;
+                if (tag is ColSelectTag or ColActionsTag) continue;
+
                 var field = BansViewModel.MapColumnTagToSortField(tag);
                 var cleanHeader = GetCleanHeader(col);
 
@@ -132,8 +151,9 @@ public partial class BansTabView : UserControl
 
                 switch (tag)
                 {
-                    case "ColSelect":
+                    case ColSelectTag:
                         col.IsVisible = vm.IsMultiSelectMode;
+                        col.Header = vm;
                         break;
                     case "ColReforgerBannedName":
                     case "ColReforgerIdentity":
@@ -160,6 +180,18 @@ public partial class BansTabView : UserControl
         try
         {
             var point = e.GetCurrentPoint(this);
+
+            if (point.Properties.IsLeftButtonPressed && e.Source is Visual leftVisual)
+            {
+                var header = leftVisual.FindAncestorOfType<DataGridColumnHeader>();
+                if (header?.FindDescendantOfType<CheckBox>() is not null && leftVisual.FindAncestorOfType<CheckBox>() is null && DataContext is BansViewModel vm)
+                {
+                    vm.ToggleSelectAll();
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             if (point.Properties.IsRightButtonPressed && e.Source is Visual visual)
             {
                 var row = visual.FindAncestorOfType<DataGridRow>();

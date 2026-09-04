@@ -12,7 +12,8 @@ namespace ReforgerRcon.Views.Tabs;
 
 public partial class PlayersTabView : UserControl
 {
-    private bool _isSyncingHeaderCheck;
+    private const string ColSelectTag = "ColSelect";
+    private const string ColActionsTag = "ColActions";
 
     public PlayersTabView()
     {
@@ -24,30 +25,6 @@ public partial class PlayersTabView : UserControl
             AddHandler(PointerPressedEvent, OnGridPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel);
             AddHandler(ContextRequestedEvent, OnGridContextRequested, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
-            if (this.FindControl<CheckBox>("SelectAllCheckBox") is { } selectAllBox)
-            {
-                selectAllBox.IsCheckedChanged += (_, _) =>
-                {
-                    if (_isSyncingHeaderCheck) return;
-                    if (DataContext is PlayersViewModel vm)
-                    {
-                        vm.IsAllSelected = selectAllBox.IsChecked == true;
-                    }
-                };
-            }
-
-            if (this.FindControl<Border>("SelectAllHeaderBorder") is { } selectAllBorder)
-            {
-                selectAllBorder.PointerPressed += (_, e) =>
-                {
-                    if (DataContext is PlayersViewModel vm)
-                    {
-                        vm.IsAllSelected = !vm.IsAllSelected;
-                        e.Handled = true;
-                    }
-                };
-            }
-
             DataContextChanged += (_, _) =>
             {
                 if (DataContext is PlayersViewModel vm)
@@ -55,6 +32,14 @@ public partial class PlayersTabView : UserControl
                     var bindStart = Stopwatch.GetTimestamp();
                     try
                     {
+                        foreach (var col in PlayersGrid.Columns)
+                        {
+                            if (col.Tag?.ToString() == ColSelectTag)
+                            {
+                                col.Header = vm;
+                            }
+                        }
+
                         var gridKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
                         ColumnLayoutStorageService.BindPersistence(PlayersGrid, gridKey);
 
@@ -63,24 +48,9 @@ public partial class PlayersTabView : UserControl
 
                         vm.PropertyChanged += (s, e) =>
                         {
-                            if (e.PropertyName == nameof(PlayersViewModel.IsAllSelected))
-                            {
-                                if (this.FindControl<CheckBox>("SelectAllCheckBox") is { } box && box.IsChecked != vm.IsAllSelected)
-                                {
-                                    _isSyncingHeaderCheck = true;
-                                    try
-                                    {
-                                        box.IsChecked = vm.IsAllSelected;
-                                    }
-                                    finally
-                                    {
-                                        _isSyncingHeaderCheck = false;
-                                    }
-                                }
-                            }
-                            else if (e.PropertyName is nameof(PlayersViewModel.IsMultiSelectMode) or
-                                                     nameof(PlayersViewModel.IsReforgerProtocol) or
-                                                     nameof(PlayersViewModel.IsBattlEyeProtocol))
+                            if (e.PropertyName is nameof(PlayersViewModel.IsMultiSelectMode) or
+                                                 nameof(PlayersViewModel.IsReforgerProtocol) or
+                                                 nameof(PlayersViewModel.IsBattlEyeProtocol))
                             {
                                 var activeKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
                                 ColumnLayoutStorageService.RestoreGridState(PlayersGrid, activeKey);
@@ -111,8 +81,14 @@ public partial class PlayersTabView : UserControl
         var start = Stopwatch.GetTimestamp();
         try
         {
+            var tag = e.Column.Tag?.ToString() ?? string.Empty;
+            if (tag is ColSelectTag or ColActionsTag)
+            {
+                e.Handled = true;
+                return;
+            }
+
             e.Handled = true;
-            var tag = e.Column.Tag?.ToString() ?? "";
             if (DataContext is PlayersViewModel vm)
             {
                 vm.CycleColumnSort(tag);
@@ -139,7 +115,9 @@ public partial class PlayersTabView : UserControl
         {
             foreach (var col in PlayersGrid.Columns)
             {
-                var tag = col.Tag?.ToString() ?? "";
+                var tag = col.Tag?.ToString() ?? string.Empty;
+                if (tag is ColSelectTag or ColActionsTag) continue;
+
                 var field = PlayersViewModel.MapColumnTagToSortField(tag);
                 var cleanHeader = GetCleanHeader(col);
 
@@ -178,8 +156,9 @@ public partial class PlayersTabView : UserControl
 
                 switch (tag)
                 {
-                    case "ColSelect":
+                    case ColSelectTag:
                         col.IsVisible = vm.IsMultiSelectMode;
+                        col.Header = vm;
                         break;
                     case "ColReforgerId":
                     case "ColReforgerName":
@@ -209,6 +188,17 @@ public partial class PlayersTabView : UserControl
         try
         {
             var point = e.GetCurrentPoint(this);
+
+            if (point.Properties.IsLeftButtonPressed && e.Source is Visual leftVisual)
+            {
+                var header = leftVisual.FindAncestorOfType<DataGridColumnHeader>();
+                if (header?.FindDescendantOfType<CheckBox>() is not null && leftVisual.FindAncestorOfType<CheckBox>() is null && DataContext is PlayersViewModel vm)
+                {
+                    vm.ToggleSelectAll();
+                    e.Handled = true;
+                    return;
+                }
+            }
 
             if (point.Properties.IsRightButtonPressed && e.Source is Visual visual)
             {
@@ -258,7 +248,7 @@ public partial class PlayersTabView : UserControl
         var start = Stopwatch.GetTimestamp();
         try
         {
-            if (e.Source is Visual visual && visual.FindAncestorOfType<Button>() != null)
+            if (e.Source is Visual visual && (visual.FindAncestorOfType<Button>() != null || visual.FindAncestorOfType<CheckBox>() != null || visual.FindAncestorOfType<DataGridColumnHeader>() != null))
             {
                 return;
             }

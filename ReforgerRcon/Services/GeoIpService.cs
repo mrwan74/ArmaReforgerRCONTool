@@ -255,40 +255,38 @@ public static class GeoIpService
 
     public static void Initialize()
     {
-        _ = Task.Run(() =>
+        EnsureInitialized();
+
+        if (HasCustomCredentials)
         {
-            var startTimestamp = Stopwatch.GetTimestamp();
-            try
+            _periodicUpdateCts?.Cancel();
+            _periodicUpdateCts?.Dispose();
+            _periodicUpdateCts = new CancellationTokenSource();
+
+            var token = _periodicUpdateCts.Token;
+            _ = Task.Run(() => UpdateDatabasesAsync(force: false, progress: null, token), token);
+            _ = StartPeriodicUpdateLoopAsync(token);
+        }
+    }
+
+    private static void EnsureInitialized()
+    {
+        if (_cityReader == null && _countryReader == null)
+        {
+            lock (ReaderLock)
             {
-                if (!Directory.Exists(GeoIpDirectory))
+                if (_cityReader == null && _countryReader == null)
                 {
-                    Directory.CreateDirectory(GeoIpDirectory);
-                }
+                    if (!Directory.Exists(GeoIpDirectory))
+                    {
+                        Directory.CreateDirectory(GeoIpDirectory);
+                    }
 
-                DeployBundledDatabasesIfMissing();
-
-                AppLogger.Info("[GeoIpService:Init] Initializing GeoIP database readers...");
-                ReloadReaders();
-                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                AppLogger.Info($"[GeoIpService:Init] GeoIP engine ready in {elapsedMs:F2}ms (CityDB={IsCityDbLoaded}, CountryDB={IsCountryDbLoaded}, HasCredentials={HasCustomCredentials}).");
-
-                if (HasCustomCredentials)
-                {
-                    _periodicUpdateCts?.Cancel();
-                    _periodicUpdateCts?.Dispose();
-                    _periodicUpdateCts = new CancellationTokenSource();
-
-                    var token = _periodicUpdateCts.Token;
-                    AppLogger.Info("[GeoIpService:Init] Starting periodic 12-hour sync worker loop...");
-                    _ = Task.Run(() => UpdateDatabasesAsync(force: false, progress: null, token), token);
-                    _ = StartPeriodicUpdateLoopAsync(token);
+                    DeployBundledDatabasesIfMissing();
+                    ReloadReaders();
                 }
             }
-            catch (Exception ex)
-            {
-                AppLogger.Error($"[GeoIpService:Init] Fatal error initializing GeoIP engine: {ex.Message}", ex);
-            }
-        }, CancellationToken.None);
+        }
     }
 
     public static void Shutdown()
@@ -535,7 +533,8 @@ public static class GeoIpService
             return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         }
 
-        if (LookupCache.TryGetValue(ip, out var cached))
+        // Return from cache only if already resolved to a valid non-fallback country
+        if (LookupCache.TryGetValue(ip, out var cached) && cached.CountryCode != "xx")
         {
             return cached;
         }
@@ -554,8 +553,14 @@ public static class GeoIpService
             return localResult;
         }
 
+        // Guarantee database readers are loaded on-demand
+        EnsureInitialized();
+
+        bool hasActiveReaders;
         lock (ReaderLock)
         {
+            hasActiveReaders = _cityReader != null || _countryReader != null;
+
             if (_cityReader != null)
             {
                 try
@@ -623,7 +628,10 @@ public static class GeoIpService
         }
 
         var fallbackResult = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
-        LookupCache[ip] = fallbackResult;
+        if (hasActiveReaders)
+        {
+            LookupCache[ip] = fallbackResult;
+        }
         return fallbackResult;
     }
 
@@ -649,7 +657,7 @@ public static class GeoIpService
         }
 
         var updateStartTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure($"GeoIpService.UpdateDatabasesAsync(Force: {force})", slowThresholdMs: 5000);
+        using var timing = AppLogger.Measure($"GeoIpService.UpdateDatabasesAsync(Force: {force})");
         var report = new GeoIpProgressReport();
 
         var (accountId, licenseKey) = ResolveCredentials();

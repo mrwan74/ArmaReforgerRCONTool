@@ -13,6 +13,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -87,33 +88,37 @@ internal static partial class Program
 
     public static void StartDeferredBackgroundServices()
     {
-        _ = Task.Run(async () =>
+        _ = Task.Run(() =>
         {
-            await Task.Delay(3000).ConfigureAwait(false);
-            AppLogger.InitializeFullLoggingBackground();
-
-            if (AppSettings.IsCrashReportingEnabled())
-            {
-                InitSentrySdkDeferred();
-            }
-
-            // Warm up SQLite, TimeZone database, GeoIP, PushNotifications, and SVG rasterization engine
-            SQLitePCL.Batteries_V2.Init();
-            _ = PlayerDatabaseStorageService.InitializeAsync();
-            _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
-            GeoIpService.Initialize();
-            PushNotificationService.Initialize();
-
             try
             {
+                // Initialize database, GeoIP, and Notifications immediately without artificial delays
+                SQLitePCL.Batteries_V2.Init();
+                _ = PlayerDatabaseStorageService.InitializeAsync();
+                _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
+                GeoIpService.Initialize();
+                PushNotificationService.Initialize();
+
                 using var dummySvg = new SKSvg();
-                await using var dummyStream = new MemoryStream("<svg width='1' height='1'></svg>"u8.ToArray());
+                using var dummyStream = new MemoryStream("<svg width='1' height='1'></svg>"u8.ToArray());
                 _ = dummySvg.Load(dummyStream);
             }
-            catch
+            catch (Exception ex)
             {
-                // Suppress SVG engine pre-warm notice
+                AppLogger.Trace($"[Program:Background] Pre-warm notice: {ex.Message}");
             }
+
+            // Defer full logging and Sentry initialization slightly to prioritize UI responsiveness
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1500).ConfigureAwait(false);
+                AppLogger.InitializeFullLoggingBackground();
+
+                if (AppSettings.IsCrashReportingEnabled())
+                {
+                    InitSentrySdkDeferred();
+                }
+            }, CancellationToken.None);
         }, CancellationToken.None);
     }
 
@@ -136,7 +141,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@0.8.64";
+                options.Release = "ReforgerRcon@0.8.82";
 
                 options.SetBeforeSend((sentryEvent, _) => AppSettings.IsCrashReportingEnabled() ? sentryEvent : null);
                 options.SetBeforeSendTransaction((tx, _) => AppSettings.IsCrashReportingEnabled() ? tx : null);
@@ -157,7 +162,15 @@ internal static partial class Program
 
     private static void OnFirstChanceException(object? sender, FirstChanceExceptionEventArgs e)
     {
-        if (e.Exception is OperationCanceledException or TaskCanceledException) return;
+        if (e.Exception is OperationCanceledException
+            or TaskCanceledException
+            or SocketException
+            or IOException
+            or ObjectDisposedException)
+        {
+            return;
+        }
+
         AppLogger.Trace($"[FirstChanceException] {e.Exception.GetType().FullName}: {e.Exception.Message}");
     }
 

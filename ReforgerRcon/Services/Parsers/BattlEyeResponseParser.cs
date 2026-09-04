@@ -72,7 +72,7 @@ public static partial class BattlEyeResponseParser
                 }
                 else
                 {
-                    ReforgerResponseParser.LogParserAnomaly("BattlEye Player List", i + 1, rawLine, "Line did not match standard '[#] [IP:Port] [Ping] [GUID] [Name]' and failed heuristic recovery.");
+                    ReforgerResponseParser.LogParserAnomaly("BattlEye Player List", i + 1, rawLine, "Line did not match standard '[#] [IP:Port] [Ping] [GUID] [Name]'.");
                 }
             }
 
@@ -231,10 +231,10 @@ public static partial class BattlEyeResponseParser
             AppLogger.Warn($"[BattlEyeResponseParser:Players] Regex timeout on line #{lineIndex + 1}: '{line}': {regexEx.Message}");
         }
 
-        return TryHeuristicPlayerLine(line, lineIndex, out player);
+        return TryHeuristicPlayerLine(line, out player);
     }
 
-    private static bool TryHeuristicPlayerLine(string line, int lineIndex, out PlayerModel? player)
+    private static bool TryHeuristicPlayerLine(string line, out PlayerModel? player)
     {
         player = null;
 
@@ -258,8 +258,6 @@ public static partial class BattlEyeResponseParser
                 }
 
                 var geo = GeoIpService.GetLocation(ip);
-
-                AppLogger.Warn($"[BattlEyeResponseParser:Heuristic] Salvaged player row #{lineIndex + 1}: ID #{id} ('{cleanName}', Endpoint: {ip}:{port}, GUID: '{guid}')");
 
                 player = new PlayerModel
                 {
@@ -405,7 +403,6 @@ public static partial class BattlEyeResponseParser
             }
 
             var cleanReason = ReforgerResponseParser.SanitizeReason(rawReason);
-            AppLogger.Warn($"[BattlEyeResponseParser:Heuristic] Salvaged Ban #{fallbackBanNo} on line #{lineIndex + 1}: Identity='{identity}', Duration='{durationStr}m', Reason='{cleanReason}'");
 
             ban = new BanModel
             {

@@ -144,7 +144,7 @@
           <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Name:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Name}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
-            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Name}" ToolTip.Tip="Copy Name">
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Name}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
@@ -152,7 +152,7 @@
           <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="BattlEye GUID:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.Guid}" VerticalAlignment="Center" TextWrapping="Wrap" FontFamily="Consolas, monospace" FontSize="12" />
-            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Guid}" ToolTip.Tip="Copy GUID">
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Guid}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
@@ -160,14 +160,14 @@
           <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="IP:Port:" Classes="Caption" VerticalAlignment="Center" />
             <TextBlock Grid.Column="1" Text="{Binding Player.FormattedEndpoint}" VerticalAlignment="Center" FontFamily="Consolas, monospace" FontSize="12" />
-            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.FormattedEndpoint}" ToolTip.Tip="Copy IP:Port">
+            <Button Grid.Column="2" Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.FormattedEndpoint}">
               <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
             </Button>
           </Grid>
 
           <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
             <TextBlock Text="Ping:" Classes="Caption" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding Player.Ping, StringFormat='{}{0} ms'}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding Player.PingDisplay}" VerticalAlignment="Center" />
           </Grid>
 
           <Grid ColumnDefinitions="110,*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
@@ -177,7 +177,7 @@
               <Button Classes="Ghost Icon" Command="{Binding EditCommentCommand}" ToolTip.Tip="Edit Comment">
                 <icons:MaterialIcon Kind="PencilOutline" Width="14" Height="14" />
               </Button>
-              <Button Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Comment}" ToolTip.Tip="Copy Comment">
+              <Button Classes="Ghost Icon" Command="{Binding CopyFieldCommand}" CommandParameter="{Binding Player.Comment}">
                 <icons:MaterialIcon Kind="ContentCopy" Width="14" Height="14" />
               </Button>
             </StackPanel>

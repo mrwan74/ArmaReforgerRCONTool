@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
@@ -11,6 +13,7 @@ using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
+[SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Partial callback methods are invoked by CommunityToolkit.Mvvm generated property setters")]
 public partial class ConsoleViewModel : ViewModelBase
 {
     private const int MaxLogHistoryCount = 2500;
@@ -23,6 +26,7 @@ public partial class ConsoleViewModel : ViewModelBase
     [ObservableProperty] public partial ObservableCollection<LogEntryModel> FilteredLogs { get; set; } = [];
     [ObservableProperty] public partial string CommandInput { get; set; } = string.Empty;
     [ObservableProperty] public partial bool AutoScroll { get; set; } = true;
+    [ObservableProperty] public partial bool IsAutoRefreshEnabled { get; set; } = true;
     [ObservableProperty] public partial bool IsFullscreen { get; set; }
     [ObservableProperty] public partial bool IsDetached { get; set; }
     [ObservableProperty] public partial LogCategory SelectedTab { get; set; } = LogCategory.All;
@@ -44,6 +48,15 @@ public partial class ConsoleViewModel : ViewModelBase
 
         AddLog(LogCategory.System, LogType.System, $"RCON console initialized for {_rconService.CurrentProtocol}.");
         AppLogger.Debug($"[ConsoleViewModel:Init] Initialized for protocol: {_rconService.CurrentProtocol}");
+    }
+
+    partial void OnIsAutoRefreshEnabledChanged(bool value)
+    {
+        if (_dashboard != null && _dashboard.IsAutoRefreshEnabled != value)
+        {
+            _dashboard.IsAutoRefreshEnabled = value;
+        }
+        AppLogger.Debug($"[ConsoleViewModel:AutoRefresh] Auto-refresh toggled: {value}");
     }
 
     private void OnOutputReceived(object? sender, string rawMessage)
@@ -83,11 +96,17 @@ public partial class ConsoleViewModel : ViewModelBase
             cleanMessage = rawMessage["[ERROR]".Length..].Trim();
         }
 
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => AddLog(category, type, cleanMessage));
+        Dispatcher.UIThread.Post(() => AddLog(category, type, cleanMessage));
     }
 
     private void AddLog(LogCategory category, LogType type, string message)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => AddLog(category, type, message));
+            return;
+        }
+
         var entry = new LogEntryModel
         {
             Category = category,
@@ -156,6 +175,12 @@ public partial class ConsoleViewModel : ViewModelBase
 
     private void ApplyTabFilter()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(ApplyTabFilter);
+            return;
+        }
+
         using var timing = AppLogger.Measure($"ConsoleViewModel.ApplyTabFilter('{SelectedTab}')");
         FilteredLogs.Clear();
         var matching = SelectedTab == LogCategory.All
@@ -209,6 +234,12 @@ public partial class ConsoleViewModel : ViewModelBase
     [RelayCommand]
     private void ClearLogs()
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(ClearLogs);
+            return;
+        }
+
         int count = _allLogs.Count;
         _allLogs.Clear();
         FilteredLogs.Clear();

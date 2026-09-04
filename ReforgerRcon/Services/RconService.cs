@@ -32,6 +32,7 @@ public sealed class RconService : IRconService
 
     private BattlEyeClient? _client;
     private ServerProfile? _currentProfile;
+    private string _lastConnectionError = string.Empty;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<string>> _pendingCommands = new();
     private readonly ConcurrentDictionary<string, long> _recentlyAnnouncedJoins = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, long> _recentlyAnnouncedLeaves = new(StringComparer.OrdinalIgnoreCase);
@@ -43,6 +44,7 @@ public sealed class RconService : IRconService
     private bool _isDisposed;
     private volatile bool _hasInitialPlayerSnapshot;
     private volatile bool _isInitialConnectPhase;
+    private int _protocolMismatchFired;
 
     private readonly SemaphoreSlim _rconStateSemaphore = new(1, 1);
     private readonly SemaphoreSlim _playersSemaphore = new(1, 1);
@@ -66,6 +68,8 @@ public sealed class RconService : IRconService
     public bool IsConnected => _client is { Connected: true };
     public int PingMs => _smoothedPingMs > 0 ? _smoothedPingMs : (_client?.LastPingMs ?? 0);
     public DateTime LastPacketTime { get; private set; } = DateTime.UtcNow;
+    public string LastConnectionError => !string.IsNullOrWhiteSpace(_client?.LastErrorDiagnostic) ? _client.LastErrorDiagnostic : _lastConnectionError;
+    public RconProtocol? DetectedProtocolMismatch { get; private set; }
 
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<PlayerModel>? PlayerJoined;
@@ -74,6 +78,7 @@ public sealed class RconService : IRconService
     public event EventHandler<(string Name, int Id, string Guid, string Reason)>? PlayerBannedStream;
     public event EventHandler<(int AdminId, string Endpoint)>? AdminConnectedStream;
     public event EventHandler<string>? ConnectionLost;
+    public event EventHandler<RconProtocol>? ProtocolMismatchDetected;
 
     private void RaiseOutputReceived(string message)
     {
@@ -85,6 +90,19 @@ public sealed class RconService : IRconService
         catch (Exception ex)
         {
             AppLogger.Error($"[RconService] Error in OutputReceived handler: {ex.Message}", ex);
+        }
+    }
+
+    private void CheckProtocolMismatch(string message)
+    {
+        if (_protocolMismatchFired != 0) return;
+
+        var detected = ReforgerResponseParser.DetectProtocol(message);
+        if (detected.HasValue && detected.Value != CurrentProtocol && Interlocked.CompareExchange(ref _protocolMismatchFired, 1, 0) == 0)
+        {
+            DetectedProtocolMismatch = detected.Value;
+            AppLogger.Warn($"[RconService:ProtocolMismatch] Detected {detected.Value} signature while connected in {CurrentProtocol} mode! Payload: '{AppLogger.SanitizeSensitiveData(message)}'");
+            ProtocolMismatchDetected?.Invoke(this, detected.Value);
         }
     }
 
@@ -181,15 +199,18 @@ public sealed class RconService : IRconService
         ArgumentException.ThrowIfNullOrWhiteSpace(profile.ServerIp);
 
         var totalStartTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure($"RconService.ConnectAsync({profile.ServerIp}:{profile.Port}, {profile.Protocol})", slowThresholdMs: 3000);
+        using var timing = AppLogger.Measure($"RconService.ConnectAsync({profile.ServerIp}:{profile.Port}, {profile.Protocol})");
 
         AppLogger.Debug($"[RconService:Connect] Acquiring state lock for {profile.ServerIp}:{profile.Port}...");
         await _rconStateSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             _currentProfile = profile;
+            _lastConnectionError = string.Empty;
             _hasInitialPlayerSnapshot = false;
             _isInitialConnectPhase = true;
+            DetectedProtocolMismatch = null;
+            _protocolMismatchFired = 0;
             _recentlyAnnouncedJoins.Clear();
             _recentlyAnnouncedLeaves.Clear();
 
@@ -223,18 +244,35 @@ public sealed class RconService : IRconService
             {
                 var dnsStart = Stopwatch.GetTimestamp();
                 AppLogger.Debug($"[RconService:Connect] Resolving DNS for '{profile.ServerIp}'...");
-                var addresses = await Dns.GetHostAddressesAsync(profile.ServerIp, cancellationToken).ConfigureAwait(false);
-                var dnsElapsedMs = Stopwatch.GetElapsedTime(dnsStart).TotalMilliseconds;
-                if (addresses.Length > 0)
+                try
                 {
-                    ip = addresses[0];
-                    AppLogger.Info($"[RconService:Connect] DNS resolved '{profile.ServerIp}' -> {ip} in {dnsElapsedMs:F2}ms (Candidates={addresses.Length}).");
+                    var addresses = await Dns.GetHostAddressesAsync(profile.ServerIp, cancellationToken).ConfigureAwait(false);
+                    var dnsElapsedMs = Stopwatch.GetElapsedTime(dnsStart).TotalMilliseconds;
+                    if (addresses.Length > 0)
+                    {
+                        ip = addresses[0];
+                        AppLogger.Info($"[RconService:Connect] DNS resolved '{profile.ServerIp}' -> {ip} in {dnsElapsedMs:F2}ms (Candidates={addresses.Length}).");
+                    }
+                    else
+                    {
+                        _lastConnectionError = $"DNS resolution returned no IP addresses for host '{profile.ServerIp}'.";
+                    }
+                }
+                catch (Exception dnsEx)
+                {
+                    _lastConnectionError = $"DNS resolution failed for '{profile.ServerIp}': {dnsEx.Message}";
+                    AppLogger.Error($"[RconService:Connect] {_lastConnectionError}", dnsEx);
                 }
             }
 
             if (ip == null)
             {
-                AppLogger.Error($"[RconService:Connect] DNS resolution failed for '{profile.ServerIp}'. Aborting.");
+                if (string.IsNullOrWhiteSpace(_lastConnectionError))
+                {
+                    _lastConnectionError = $"Unable to resolve host '{profile.ServerIp}' to a valid IP address.";
+                }
+
+                AppLogger.Error($"[RconService:Connect] {_lastConnectionError} Aborting.");
                 transaction.Finish(SpanStatus.InvalidArgument);
                 return false;
             }
@@ -254,7 +292,14 @@ public sealed class RconService : IRconService
 
             _client.BattlEyeDisconnected += async args =>
             {
-                AppLogger.Warn($"[RconService:Callback] BattlEyeDisconnected: Type={args.DisconnectionType}, Message='{args.Message}'");
+                if (args.DisconnectionType == BattlEyeDisconnectionType.Manual)
+                {
+                    AppLogger.Info($"[RconService:Callback] BattlEyeDisconnected: Type=Manual, Message='{args.Message}'");
+                }
+                else
+                {
+                    AppLogger.Warn($"[RconService:Callback] BattlEyeDisconnected: Type={args.DisconnectionType}, Message='{args.Message}'");
+                }
                 RaiseOutputReceived($"[SYSTEM] Disconnected: {args.Message}");
 
                 StopBackgroundPingMonitor();
@@ -286,12 +331,12 @@ public sealed class RconService : IRconService
             _client.BattlEyeMessageReceived += OnBattlEyeMessageReceived;
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(6.0));
+            cts.CancelAfter(TimeSpan.FromSeconds(5.0));
             cts.Token.Register(() =>
             {
                 if (!connectTcs.Task.IsCompleted)
                 {
-                    AppLogger.Warn($"[RconService:Connect] Handshake timeout (6000ms) reached for {ip}:{profile.Port}.");
+                    AppLogger.Warn($"[RconService:Connect] Handshake timeout reached for {ip}:{profile.Port}.");
                     connectTcs.TrySetResult(false);
                 }
             });
@@ -321,13 +366,19 @@ public sealed class RconService : IRconService
             }
             else
             {
-                AppLogger.Warn($"[RconService:Connect] Connection failed or timed out for {profile.ServerIp}:{profile.Port} after {totalElapsedMs:F2}ms.");
+                if (string.IsNullOrWhiteSpace(_lastConnectionError))
+                {
+                    _lastConnectionError = _client.LastErrorDiagnostic;
+                }
+
+                AppLogger.Warn($"[RconService:Connect] Connection failed for {profile.ServerIp}:{profile.Port} after {totalElapsedMs:F2}ms. Reason: {LastConnectionError}");
                 transaction.Finish(SpanStatus.DeadlineExceeded);
 
                 AppLogger.TrackEvent("rcon_connect_failed", new Dictionary<string, object>
                 {
                     [ProtocolMetricKey] = profile.Protocol.ToString(),
-                    ["duration_ms"] = totalElapsedMs
+                    ["duration_ms"] = totalElapsedMs,
+                    ["reason"] = LastConnectionError
                 });
             }
 
@@ -335,16 +386,19 @@ public sealed class RconService : IRconService
         }
         catch (SocketException sockEx)
         {
+            _lastConnectionError = $"Socket error ({sockEx.SocketErrorCode}): {sockEx.Message}";
             AppLogger.Error($"[RconService:Connect] SocketException on connect: {sockEx.SocketErrorCode} ({sockEx.NativeErrorCode}): {sockEx.Message}", sockEx);
             return false;
         }
         catch (OperationCanceledException opEx)
         {
+            _lastConnectionError = "Connection attempt timed out or was canceled.";
             AppLogger.Trace($"[RconService:Connect] Connect cancelled: {opEx.Message}");
             return false;
         }
         catch (Exception ex)
         {
+            _lastConnectionError = $"Connection error: {ex.Message}";
             AppLogger.Error($"[RconService:Connect] Unexpected error during connect: {ex.Message}", ex);
             return false;
         }
@@ -357,7 +411,7 @@ public sealed class RconService : IRconService
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure("RconService.DisconnectAsync", slowThresholdMs: 250);
+        using var timing = AppLogger.Measure("RconService.DisconnectAsync");
         AppLogger.Info("[RconService:Disconnect] Commencing graceful disconnect sequence...");
 
         await _rconStateSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -559,6 +613,7 @@ public sealed class RconService : IRconService
             var message = args.Message;
 
             AppendToBuffer(message);
+            CheckProtocolMismatch(message);
 
             if (args.Id != 256 && _pendingCommands.TryRemove(args.Id, out var tcs))
             {
@@ -624,6 +679,19 @@ public sealed class RconService : IRconService
                     _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync(liveParsedPlayers, CurrentProtocol);
                     return;
                 }
+                else if (message.Contains("Players on server:", StringComparison.OrdinalIgnoreCase))
+                {
+                    _playersSemaphore.Wait(CancellationToken.None);
+                    try
+                    {
+                        _lastKnownPlayers.Clear();
+                    }
+                    finally
+                    {
+                        _playersSemaphore.Release();
+                    }
+                    _ = PlayerDatabaseStorageService.RecordSeenPlayersAsync([], CurrentProtocol);
+                }
             }
 
             var disconnMatch = BattlEyeResponseParser.PlayerDisconnectedStreamRegex().Match(message);
@@ -637,7 +705,7 @@ public sealed class RconService : IRconService
                     matched = _lastKnownPlayers.FirstOrDefault(p =>
                         p.Id == discId ||
                         (!string.IsNullOrEmpty(name) && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
-                        ?? new PlayerModel { Id = discId, Name = name };
+                        ?? new PlayerModel { Id = discId, Name = name, Ping = 0 };
 
                     _lastKnownPlayers.RemoveAll(p => IsSamePlayer(p, matched));
                 }
@@ -645,6 +713,10 @@ public sealed class RconService : IRconService
                 {
                     _playersSemaphore.Release();
                 }
+
+                var identifier = CurrentProtocol == RconProtocol.BattlEye ? matched.BattlEyeGuid : matched.ReforgerUid;
+                if (string.IsNullOrWhiteSpace(identifier)) identifier = matched.Uid;
+                _ = PlayerDatabaseStorageService.SetPlayerOfflineAsync(identifier, CurrentProtocol);
 
                 AppLogger.Info($"[RconService:StreamEvent] Player Disconnected stream matched: '{name}' (ID: #{discId}). Remaining online: {_lastKnownPlayers.Count}");
                 RaisePlayerLeft(matched);
@@ -676,7 +748,8 @@ public sealed class RconService : IRconService
                             Id = guidPlayerId,
                             Name = name,
                             Guid = guid,
-                            BattlEyeGuid = guid
+                            BattlEyeGuid = guid,
+                            Ping = 0
                         };
                         _lastKnownPlayers.Add(matched);
                         isNew = true;
@@ -712,7 +785,7 @@ public sealed class RconService : IRconService
                         p.Id == banId ||
                         (!string.IsNullOrEmpty(guid) && p.Guid == guid) ||
                         (!string.IsNullOrEmpty(name) && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
-                        ?? new PlayerModel { Id = banId, Name = name, Guid = guid, BattlEyeGuid = guid };
+                        ?? new PlayerModel { Id = banId, Name = name, Guid = guid, BattlEyeGuid = guid, Ping = 0 };
 
                     _lastKnownPlayers.RemoveAll(p => IsSamePlayer(p, matched));
                 }
@@ -720,6 +793,10 @@ public sealed class RconService : IRconService
                 {
                     _playersSemaphore.Release();
                 }
+
+                var identifier = CurrentProtocol == RconProtocol.BattlEye ? matched.BattlEyeGuid : matched.ReforgerUid;
+                if (string.IsNullOrWhiteSpace(identifier)) identifier = matched.Uid;
+                _ = PlayerDatabaseStorageService.SetPlayerOfflineAsync(identifier, CurrentProtocol);
 
                 AppLogger.Warn($"[RconService:StreamEvent] Player Banned stream matched: '{name}' (ID: #{banId}, GUID: '{guid}', Reason: '{reason}').");
                 RaisePlayerLeft(matched);
@@ -742,7 +819,7 @@ public sealed class RconService : IRconService
                         p.Id == kickId ||
                         (!string.IsNullOrEmpty(guid) && p.Guid == guid) ||
                         (!string.IsNullOrEmpty(name) && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)))
-                        ?? new PlayerModel { Id = kickId, Name = name, Guid = guid, BattlEyeGuid = guid };
+                        ?? new PlayerModel { Id = kickId, Name = name, Guid = guid, BattlEyeGuid = guid, Ping = 0 };
 
                     _lastKnownPlayers.RemoveAll(p => IsSamePlayer(p, matched));
                 }
@@ -750,6 +827,10 @@ public sealed class RconService : IRconService
                 {
                     _playersSemaphore.Release();
                 }
+
+                var identifier = CurrentProtocol == RconProtocol.BattlEye ? matched.BattlEyeGuid : matched.ReforgerUid;
+                if (string.IsNullOrWhiteSpace(identifier)) identifier = matched.Uid;
+                _ = PlayerDatabaseStorageService.SetPlayerOfflineAsync(identifier, CurrentProtocol);
 
                 AppLogger.Warn($"[RconService:StreamEvent] Player Kicked stream matched: '{name}' (ID: #{kickId}, GUID: '{guid}', Reason: '{reason}').");
                 RaisePlayerLeft(matched);
@@ -771,6 +852,7 @@ public sealed class RconService : IRconService
                     Name = name,
                     Ip = ip,
                     Port = port,
+                    Ping = 0,
                     Country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName },
                     LocationCity = geo.CityName,
                     LocationState = geo.SubdivisionName,
@@ -851,14 +933,14 @@ public sealed class RconService : IRconService
         }
 
         var startTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure($"RconService.GetPlayersAsync({CurrentProtocol})", slowThresholdMs: 1500);
+        using var timing = AppLogger.Measure($"RconService.GetPlayersAsync({CurrentProtocol})");
 
         try
         {
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#players" : "players";
             AppLogger.Debug($"[RconService:GetPlayers] Dispatching query command '{command}' ({CurrentProtocol})...");
 
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(2.5), cancellationToken).ConfigureAwait(false);
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(3.0), cancellationToken).ConfigureAwait(false);
 
             var parseStart = Stopwatch.GetTimestamp();
             List<PlayerModel> currentPlayers = CurrentProtocol == RconProtocol.ReforgerBuiltIn
@@ -866,24 +948,6 @@ public sealed class RconService : IRconService
                 : BattlEyeResponseParser.ParsePlayers(rawResponse);
             var parseElapsed = Stopwatch.GetElapsedTime(parseStart).TotalMilliseconds;
 
-            if (currentPlayers.Count == 0 && CurrentProtocol == RconProtocol.ReforgerBuiltIn)
-            {
-                await _playersSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    if (_lastKnownPlayers.Count > 0)
-                    {
-                        currentPlayers = [.. _lastKnownPlayers];
-                        AppLogger.Debug($"[RconService:GetPlayers] Retrieved {currentPlayers.Count} Reforger players from live stream state.");
-                    }
-                }
-                finally
-                {
-                    _playersSemaphore.Release();
-                }
-            }
-
-            // Asynchronous fire-and-forget SQLite database upsert (does not block UI response)
             _ = Task.Run(() => PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol), CancellationToken.None);
 
             await _playersSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -961,14 +1025,14 @@ public sealed class RconService : IRconService
         }
 
         var startTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure($"RconService.GetBansAsync({CurrentProtocol})", slowThresholdMs: 1500);
+        using var timing = AppLogger.Measure($"RconService.GetBansAsync({CurrentProtocol})");
 
         try
         {
             string command = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? "#ban list" : "bans";
             AppLogger.Debug($"[RconService:GetBans] Dispatching ban query '{command}' ({CurrentProtocol})...");
 
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(2.0), cancellationToken).ConfigureAwait(false);
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync(command, TimeSpan.FromSeconds(2.5), cancellationToken).ConfigureAwait(false);
 
             var parseStart = Stopwatch.GetTimestamp();
             var bans = CurrentProtocol == RconProtocol.ReforgerBuiltIn
@@ -1007,12 +1071,12 @@ public sealed class RconService : IRconService
         }
 
         var startTimestamp = Stopwatch.GetTimestamp();
-        using var timing = AppLogger.Measure("RconService.GetAdminsAsync", slowThresholdMs: 1000);
+        using var timing = AppLogger.Measure("RconService.GetAdminsAsync");
 
         try
         {
             AppLogger.Debug("[RconService:GetAdmins] Dispatching BattlEye 'admins' query...");
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("admins", TimeSpan.FromSeconds(1.2), cancellationToken).ConfigureAwait(false);
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("admins", TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
             var admins = BattlEyeResponseParser.ParseAdmins(rawResponse);
             var totalElapsed = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
             AppLogger.Debug($"[RconService:GetAdmins] GetAdminsAsync complete in {totalElapsed:F2}ms (Count={admins.Count}).");
@@ -1065,6 +1129,24 @@ public sealed class RconService : IRconService
 
         string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
         bool success = VerifyModerationSuccess(response, [TokenKicked, TokenAdminKick, ProcessingCommandToken]);
+
+        if (success)
+        {
+            await _playersSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _lastKnownPlayers.RemoveAll(p => IsSamePlayer(p, player));
+            }
+            finally
+            {
+                _playersSemaphore.Release();
+            }
+
+            var identifier = CurrentProtocol == RconProtocol.BattlEye ? player.BattlEyeGuid : player.ReforgerUid;
+            if (string.IsNullOrWhiteSpace(identifier)) identifier = player.Uid;
+            _ = PlayerDatabaseStorageService.SetPlayerOfflineAsync(identifier, CurrentProtocol);
+        }
+
         var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
         AppLogger.Info($"[RconService:Moderation] KickPlayerAsync complete in {elapsedMs:F2}ms. Success={success}, Response='{AppLogger.SanitizeSensitiveData(response)}'");
         return success;
@@ -1120,6 +1202,23 @@ public sealed class RconService : IRconService
             string response = await ExecuteCommandWithAggregateResponseAsync(cmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
             bool success = VerifyModerationSuccess(response, [TokenBanCreated, TokenBanned, ProcessingCommandToken]);
+
+            if (success)
+            {
+                await _playersSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    _lastKnownPlayers.RemoveAll(p => IsSamePlayer(p, player));
+                }
+                finally
+                {
+                    _playersSemaphore.Release();
+                }
+
+                var identifier = !string.IsNullOrWhiteSpace(player.ReforgerUid) ? player.ReforgerUid : player.Uid;
+                _ = PlayerDatabaseStorageService.SetPlayerOfflineAsync(identifier, CurrentProtocol);
+            }
+
             AppLogger.Info($"[RconService:Moderation] Reforger ban execution complete in {elapsedMs:F2}ms: Success={success}, Response='{AppLogger.SanitizeSensitiveData(response)}'");
             return success;
         }
@@ -1127,6 +1226,23 @@ public sealed class RconService : IRconService
         string beCmd = BuildBattlEyeBanCommand(player.Id, beMinutes, cleanReason);
         string beResponse = await ExecuteCommandWithAggregateResponseAsync(beCmd, TimeSpan.FromSeconds(1.5), cancellationToken).ConfigureAwait(false);
         bool banSuccess = VerifyModerationSuccess(beResponse, [TokenAdminBan, "kicked by BattlEye", TokenBanned]);
+
+        if (banSuccess)
+        {
+            await _playersSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _lastKnownPlayers.RemoveAll(p => IsSamePlayer(p, player));
+            }
+            finally
+            {
+                _playersSemaphore.Release();
+            }
+
+            var identifier = !string.IsNullOrWhiteSpace(player.BattlEyeGuid) ? player.BattlEyeGuid : player.Guid;
+            if (string.IsNullOrWhiteSpace(identifier)) identifier = player.Uid;
+            _ = PlayerDatabaseStorageService.SetPlayerOfflineAsync(identifier, CurrentProtocol);
+        }
 
         if (banIp && !string.IsNullOrWhiteSpace(player.Ip) && !player.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) && IPAddress.TryParse(player.Ip, out _))
         {
@@ -1322,6 +1438,7 @@ public sealed class RconService : IRconService
                 string directResponse = await client.SendCommandWithResponseAsync(command, TimeSpan.FromMilliseconds(400), cancellationToken).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(directResponse) && !directResponse.StartsWith('\0'))
                 {
+                    CheckProtocolMismatch(directResponse);
                     var directElapsed = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                     AppLogger.Debug($"[RconService:Aggregate] Direct response received for '{AppLogger.SanitizeSensitiveData(command)}' in {directElapsed:F2}ms ({directResponse.Length} chars).");
                     return directResponse;
@@ -1344,6 +1461,7 @@ public sealed class RconService : IRconService
             var quietThreshold = TimeSpan.FromMilliseconds(400);
             var timeoutLimit = DateTime.UtcNow.Add(maxTimeout);
             var startTime = DateTime.UtcNow;
+            int initialWaitThresholdMs = Math.Max(2800, PingMs * 6);
 
             while (DateTime.UtcNow < timeoutLimit)
             {
@@ -1356,6 +1474,8 @@ public sealed class RconService : IRconService
                     var timeSinceLastChunk = DateTime.UtcNow - _lastMessageChunkUtc;
                     var chunksCount = _messageChunksCount;
                     var currentText = _aggregatedBuffer.ToString();
+
+                    CheckProtocolMismatch(currentText);
 
                     if (CheckUniversalErrorTokens(currentText))
                     {
@@ -1377,9 +1497,9 @@ public sealed class RconService : IRconService
                         break;
                     }
 
-                    if (chunksCount == 0 && (DateTime.UtcNow - startTime).TotalMilliseconds >= 1800)
+                    if (chunksCount == 0 && (DateTime.UtcNow - startTime).TotalMilliseconds >= initialWaitThresholdMs)
                     {
-                        AppLogger.Trace($"[RconService:Aggregate] No initial packet arrived after {(DateTime.UtcNow - startTime).TotalMilliseconds:F0}ms. Halting aggregation.");
+                        AppLogger.Trace($"[RconService:Aggregate] No initial packet arrived after {(DateTime.UtcNow - startTime).TotalMilliseconds:F0}ms (Threshold: {initialWaitThresholdMs}ms). Halting aggregation.");
                         break;
                     }
                 }
@@ -1393,6 +1513,7 @@ public sealed class RconService : IRconService
             try
             {
                 var aggregated = _aggregatedBuffer.ToString();
+                CheckProtocolMismatch(aggregated);
                 var totalElapsed = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 AppLogger.Debug($"[RconService:Aggregate] Aggregation complete for '{AppLogger.SanitizeSensitiveData(command)}' in {totalElapsed:F2}ms: {aggregated.Length} chars across {_messageChunksCount} chunks.");
                 return aggregated;

@@ -13,6 +13,7 @@ public partial class ConsoleTabView : UserControl
 {
     private readonly ScrollViewer? _logScrollViewer;
     private ConsoleViewModel? _currentViewModel;
+    private bool _isScrollPending;
 
     public ConsoleTabView()
     {
@@ -71,18 +72,20 @@ public partial class ConsoleTabView : UserControl
 
     private void OnScrollToEndRequested()
     {
+        if (_isScrollPending) return;
+        _isScrollPending = true;
+
         Dispatcher.UIThread.Post(() =>
         {
-            var scrollStart = Stopwatch.GetTimestamp();
+            _isScrollPending = false;
             try
             {
                 _logScrollViewer?.ScrollToEnd();
-                AppLogger.Trace($"[ConsoleTabView:Scroll] ScrollToEnd in {Stopwatch.GetElapsedTime(scrollStart).TotalMilliseconds:F2}ms.");
             }
             catch (Exception ex)
             {
                 AppLogger.Debug($"[ConsoleTabView:Scroll] Non-fatal notice: {ex.Message}");
             }
-        }, DispatcherPriority.Loaded);
+        }, DispatcherPriority.Background);
     }
 }

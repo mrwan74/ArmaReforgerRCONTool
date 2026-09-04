@@ -16,7 +16,11 @@ public partial class DatabasePlayerModel : ObservableObject
     [ObservableProperty] public partial string ReforgerUid { get; set; } = string.Empty;
     [ObservableProperty] public partial string BattlEyeGuid { get; set; } = string.Empty;
     [ObservableProperty] public partial string LastIpPort { get; set; } = string.Empty;
-    [ObservableProperty] public partial int Ping { get; set; } = 25;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PingDisplay))]
+    public partial int Ping { get; set; }
+
     [ObservableProperty] public partial bool IsOnline { get; set; }
     [ObservableProperty] public partial string Comment { get; set; } = string.Empty;
 
@@ -75,6 +79,6 @@ public partial class DatabasePlayerModel : ObservableObject
 
     public string FormattedEndpoint => !string.IsNullOrWhiteSpace(LastIpPort) && !LastIpPort.Equals("N/A", StringComparison.OrdinalIgnoreCase) ? LastIpPort : "N/A";
     public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);
-    public string PingDisplay => Ping > 0 ? $"{Ping} ms" : "N/A";
+    public string PingDisplay => $"{Ping} ms";
     public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
 }

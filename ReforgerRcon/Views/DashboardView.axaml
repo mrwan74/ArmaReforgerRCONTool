@@ -66,9 +66,17 @@
           </StackPanel>
         </Button>
 
-        <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="14" VerticalAlignment="Center">
-          <TextBlock Text="{Binding RefreshCountdown, StringFormat='Refresh in {0}s'}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" VerticalAlignment="Center" />
-          <ProgressBar Width="130" Height="8" CornerRadius="4" Minimum="0" Maximum="100" Value="{Binding RefreshProgress}" VerticalAlignment="Center" />
+        <!-- Refresh Button & Countdown Progress Display -->
+        <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12" VerticalAlignment="Center">
+          <Button Classes="Outline Small" Command="{Binding RefreshAllCommand}" ToolTip.Tip="Manually refresh all server data now">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="Refresh" Width="14" Height="14" />
+              <TextBlock Text="Refresh" />
+            </StackPanel>
+          </Button>
+
+          <TextBlock Text="{Binding RefreshCountdownText}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" VerticalAlignment="Center" />
+          <ProgressBar Width="120" Height="8" CornerRadius="4" Minimum="0" Maximum="100" Value="{Binding RefreshProgress}" VerticalAlignment="Center" IsVisible="{Binding IsAutoRefreshEnabled}" />
         </StackPanel>
       </Grid>
     </Border>

@@ -21,6 +21,7 @@
 
       <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
         <CheckBox Content="Auto-scroll" IsChecked="{Binding AutoScroll}" Classes="Small" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <CheckBox Content="Auto-refresh" IsChecked="{Binding IsAutoRefreshEnabled}" Classes="Small" VerticalAlignment="Center" Margin="0,0,4,0" ToolTip.Tip="Enable or disable periodic server auto-refresh" />
 
         <Button Classes="Small Outline" 
                 Command="{Binding ToggleFullscreenCommand}" 

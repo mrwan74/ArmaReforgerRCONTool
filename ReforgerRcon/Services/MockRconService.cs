@@ -21,6 +21,8 @@ public class MockRconService : IRconService
     public bool IsConnected { get; private set; }
     public int PingMs { get; } = 28;
     public DateTime LastPacketTime { get; private set; } = DateTime.UtcNow;
+    public string LastConnectionError => string.Empty;
+    public RconProtocol? DetectedProtocolMismatch => null;
 
     public event EventHandler<PlayerModel>? PlayerJoined;
     public event EventHandler<PlayerModel>? PlayerLeft;
@@ -29,6 +31,7 @@ public class MockRconService : IRconService
     public event EventHandler<(int AdminId, string Endpoint)>? AdminConnectedStream;
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<string>? ConnectionLost;
+    public event EventHandler<RconProtocol>? ProtocolMismatchDetected;
 
     private static readonly (int id, string name, string uid, string guid, string ip, int port, int ping, string cc, string cn, string city, string state, bool watch, bool warn, string comment, string[] aliases)[] MockPlayers =
     [
@@ -155,6 +158,12 @@ public class MockRconService : IRconService
         IsConnected = false;
         AppLogger.Warn("[MockRconService:Simulate] Connection drop simulated.");
         ConnectionLost?.Invoke(this, "Connection timed out (No packets received)");
+    }
+
+    public void SimulateProtocolMismatch(RconProtocol protocol)
+    {
+        AppLogger.Warn($"[MockRconService:Simulate] Protocol mismatch simulated: {protocol}");
+        ProtocolMismatchDetected?.Invoke(this, protocol);
     }
 
     public async Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default)

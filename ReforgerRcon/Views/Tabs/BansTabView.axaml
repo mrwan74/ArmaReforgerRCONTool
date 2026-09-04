@@ -10,7 +10,8 @@
   <UserControl.Styles>
     <Style Selector="DataGridColumnHeader">
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Padding" Value="10,0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
     </Style>
     <Style Selector="DataGridCell">
       <Setter Property="Focusable" Value="False" />
@@ -26,6 +27,10 @@
       <Setter Property="BorderBrush" Value="Transparent" />
     </Style>
   </UserControl.Styles>
+
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
+  </UserControl.KeyBindings>
 
   <Grid RowDefinitions="Auto,*,Auto">
     <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" Padding="16,8" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
@@ -65,9 +70,14 @@
               CanUserResizeColumns="True"
               CanUserReorderColumns="True"
               CanUserSortColumns="True"
+              Sorting="OnDataGridSorting"
               SelectionMode="Single"
               Margin="0"
               x:CompileBindings="False">
+
+      <DataGrid.KeyBindings>
+        <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
+      </DataGrid.KeyBindings>
 
       <DataGrid.ContextMenu>
         <ContextMenu>
@@ -78,6 +88,7 @@
       </DataGrid.ContextMenu>
 
       <DataGrid.Columns>
+        <!-- Select / Select All Checkbox Column -->
         <DataGridTemplateColumn Tag="ColSelect" 
                                 Width="50" 
                                 MinWidth="50" 
@@ -88,13 +99,19 @@
                                 IsVisible="False">
           <DataGridTemplateColumn.HeaderTemplate>
             <DataTemplate>
-              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
-                <CheckBox IsChecked="{Binding $parent[DataGrid].DataContext.IsAllSelected, Mode=TwoWay}"
+              <Grid Width="50" Height="36" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">
+                <CheckBox IsChecked="{Binding IsAllSelected, Mode=TwoWay}"
                           HorizontalAlignment="Center" 
                           VerticalAlignment="Center"
-                          Margin="0" Padding="0" MinWidth="0" MinHeight="0"
-                          ToolTip.Tip="Select / Deselect All" />
-              </Border>
+                          Margin="0" 
+                          Padding="0" 
+                          MinWidth="0" 
+                          MinHeight="0"
+                          IsThreeState="True"
+                          Focusable="False"
+                          Cursor="Hand"
+                          ToolTip.Tip="{Binding SelectAllTooltipText}" />
+              </Grid>
             </DataTemplate>
           </DataGridTemplateColumn.HeaderTemplate>
           <DataGridTemplateColumn.CellTemplate>
@@ -144,13 +161,20 @@
       </DataGrid.Columns>
     </DataGrid>
 
-    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,8" 
+    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,12" 
             BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"
             IsVisible="{Binding IsMultiSelectMode}">
-      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-        <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
-        <Button Classes="Danger Small" Content="Remove Selected Bans" Command="{Binding RemoveSelectedBansCommand}" />
-      </StackPanel>
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedCount, StringFormat='Selected: {0} ban(s)'}" FontWeight="Bold" VerticalAlignment="Center" />
+          <Button Classes="Outline Small" Content="{Binding SelectAllButtonText}" Command="{Binding ToggleSelectAllCommand}" ToolTip.Tip="Toggle selection for all rows (Ctrl+A)" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
+          <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+          <Button Classes="Danger Small" Content="Remove Selected Bans" Command="{Binding RemoveSelectedBansCommand}" />
+        </StackPanel>
+      </Grid>
     </Border>
   </Grid>
 </UserControl>

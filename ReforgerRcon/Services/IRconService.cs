@@ -12,6 +12,8 @@ public interface IRconService : IDisposable
     bool IsConnected { get; }
     int PingMs { get; }
     DateTime LastPacketTime { get; }
+    string LastConnectionError { get; }
+    RconProtocol? DetectedProtocolMismatch { get; }
 
     event EventHandler<string>? OutputReceived;
     event EventHandler<PlayerModel>? PlayerJoined;
@@ -20,6 +22,7 @@ public interface IRconService : IDisposable
     event EventHandler<(string Name, int Id, string Guid, string Reason)>? PlayerBannedStream;
     event EventHandler<(int AdminId, string Endpoint)>? AdminConnectedStream;
     event EventHandler<string>? ConnectionLost;
+    event EventHandler<RconProtocol>? ProtocolMismatchDetected;
 
     Task<bool> ConnectAsync(ServerProfile profile, CancellationToken cancellationToken = default);
     Task DisconnectAsync(CancellationToken cancellationToken = default);

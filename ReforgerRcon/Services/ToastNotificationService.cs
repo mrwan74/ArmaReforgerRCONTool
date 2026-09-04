@@ -39,8 +39,8 @@ public class ToastNotificationService
                 try
                 {
                     AppLogger.Info($"[ToastNotificationService:Undo] Executing undo action for '{title}'...");
-                    ActiveToasts.Remove(toast);
-                    await undoAction();
+                    await Dispatcher.UIThread.InvokeAsync(() => ActiveToasts.Remove(toast));
+                    await undoAction().ConfigureAwait(false);
                     sw.Stop();
                     AppLogger.Info($"[ToastNotificationService:Undo] Undo for '{title}' complete in {sw.ElapsedMilliseconds}ms.");
                 }
@@ -61,7 +61,7 @@ public class ToastNotificationService
 
         _ = Task.Run(async () =>
         {
-            await Task.Delay(5000);
+            await Task.Delay(5000).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
                 if (ActiveToasts.Remove(toast))

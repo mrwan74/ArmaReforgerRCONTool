@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LuminaUI.Controls;
@@ -96,6 +97,12 @@ public partial class SettingsViewModel : ViewModelBase
 
     public static void ApplyWindowGlassState(bool enableWindowGlass)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => ApplyWindowGlassState(enableWindowGlass));
+            return;
+        }
+
         var start = Stopwatch.GetTimestamp();
         try
         {
@@ -241,11 +248,12 @@ public partial class SettingsViewModel : ViewModelBase
         var sizeText = $"{stats.DatabaseSizeBytes / (1024.0 * 1024.0):F2} MB (WAL: {stats.WalSizeBytes / 1024.0:F1} KB)";
         var recordsText = $"{stats.TotalReforgerPlayers:N0} Reforger / {stats.TotalBattlEyePlayers:N0} BattlEye Players";
 
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        await Dispatcher.UIThread.InvokeAsync(() =>
         {
             DatabaseSizeText = sizeText;
             DatabaseRecordsText = recordsText;
         });
+
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         AppLogger.Info($"[SettingsViewModel:Stats] SQLite stats updated in {elapsedMs:F2}ms: {recordsText}, Size: {sizeText}");
     }, "Failed to query SQLite database telemetry stats.");
@@ -294,10 +302,13 @@ public partial class SettingsViewModel : ViewModelBase
                 FileLock.Release();
             }
 
-            AppSettings.ApplyThemeMode(Settings.ThemeMode);
-            ApplyWindowGlassState(Settings.EnableWindowGlass);
-            OnPropertyChanged(nameof(SelectedThemeOption));
-            OnSortSettingChanged();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                AppSettings.ApplyThemeMode(Settings.ThemeMode);
+                ApplyWindowGlassState(Settings.EnableWindowGlass);
+                OnPropertyChanged(nameof(SelectedThemeOption));
+                OnSortSettingChanged();
+            });
 
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             AppLogger.Info($"[SettingsViewModel:Save] Preferences saved in {elapsedMs:F2}ms (AudioAlerts={Settings.AudioAlerts}, Push={Settings.PushNotifications}, Glass={Settings.EnableWindowGlass}).");
@@ -325,8 +336,11 @@ public partial class SettingsViewModel : ViewModelBase
 
             if (_dashboard != null)
             {
-                AppLogger.Info("[SettingsViewModel:GeoIP] Opening GeoIpUpdateDialog in dashboard...");
-                _dashboard.ShowDialog(new GeoIpUpdateDialogViewModel(() => _dashboard.CloseDialog()));
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    AppLogger.Info("[SettingsViewModel:GeoIP] Opening GeoIpUpdateDialog in dashboard...");
+                    _dashboard.ShowDialog(new GeoIpUpdateDialogViewModel(() => _dashboard.CloseDialog()));
+                });
             }
             else
             {

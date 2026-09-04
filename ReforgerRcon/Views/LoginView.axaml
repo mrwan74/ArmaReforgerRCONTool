@@ -201,7 +201,7 @@
               <TextBlock Text="Port" Classes="Label" />
               <TextBox x:Name="PortInputBox" 
                        Text="{Binding PortText}" 
-                       PlaceholderText="19999" 
+                       PlaceholderText="e.g. 19999" 
                        MaxLength="5" />
             </StackPanel>
           </Grid>

@@ -1,10 +1,13 @@
 using Avalonia;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LuminaUI.Theming;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -67,9 +70,33 @@ public partial class MainViewModel : ViewModelBase
     private void OnLoginSuccess(ServerProfile profile, IRconService rconService)
     {
         AppLogger.Info($"[MainViewModel:Navigation] Transitioning from Login to Dashboard for {profile.ServerIp}:{profile.Port} ({profile.Protocol})...");
-        var dashboardVm = new DashboardViewModel(profile, rconService, OnDisconnect);
+        var dashboardVm = new DashboardViewModel(profile, rconService, OnDisconnect, OnSwitchProtocolAsync);
         CurrentView = dashboardVm;
         dashboardVm.Initialize();
+    }
+
+    private async Task OnSwitchProtocolAsync(ServerProfile profile, RconProtocol newProtocol)
+    {
+        AppLogger.Info($"[MainViewModel:SwitchProtocol] Switching protocol from {profile.Protocol} to {newProtocol} for {profile.ServerIp}:{profile.Port}...");
+        profile.Protocol = newProtocol;
+
+        var profiles = ProfileStorageService.LoadProfilesFast();
+        if (profiles.FirstOrDefault(p => p.Id == profile.Id || (p.ServerIp == profile.ServerIp && p.Port == profile.Port)) is { } match)
+        {
+            match.Protocol = newProtocol;
+            ProfileStorageService.SaveProfilesFast(profiles);
+        }
+
+        var newRconService = new RconService();
+        var success = await newRconService.ConnectAsync(profile).ConfigureAwait(false);
+        if (success)
+        {
+            Dispatcher.UIThread.Post(() => OnLoginSuccess(profile, newRconService));
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(OnDisconnect);
+        }
     }
 
     private void OnDisconnect()

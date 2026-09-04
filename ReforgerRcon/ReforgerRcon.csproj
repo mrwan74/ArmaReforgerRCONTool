@@ -16,10 +16,10 @@
 		<ReadyToRun>false</ReadyToRun>
 
 		<!-- Application Versioning (Read by Aptabase, Sentry, and Windows File Properties) -->
-		<Version>0.8.82</Version>
-		<AssemblyVersion>0.8.82.82</AssemblyVersion>
-		<FileVersion>0.8.82.0</FileVersion>
-		<InformationalVersion>0.8.82</InformationalVersion>
+		<Version>0.8.121</Version>
+		<AssemblyVersion>0.8.121.121</AssemblyVersion>
+		<FileVersion>0.8.121.0</FileVersion>
+		<InformationalVersion>0.8.121</InformationalVersion>
 		<NeutralLanguage>en</NeutralLanguage>
 
 		<!-- Suppressed Analyzer Warnings -->
@@ -62,16 +62,16 @@
 		<PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.17" />
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
 		<PackageReference Include="Material.Icons.Avalonia" Version="3.0.2" />
-		<PackageReference Include="LuminaUI" Version="0.6.7" />
-		<PackageReference Include="LuminaUI.DataGrid" Version="0.6.7" />
+		<PackageReference Include="LuminaUI" Version="0.6.8" />
+		<PackageReference Include="LuminaUI.DataGrid" Version="0.6.8" />
 		<PackageReference Include="MaxMind.GeoIP2" Version="6.1.0" />
 		<PackageReference Include="TimeZoneConverter" Version="7.2.0" />
 		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Sentry" Version="6.9.0" />
-		<PackageReference Include="Sentry.Profiling" Version="6.9.0" />
-		<PackageReference Include="Sentry.Serilog" Version="6.9.0" />
+		<PackageReference Include="Sentry" Version="6.10.0" />
+		<PackageReference Include="Sentry.Profiling" Version="6.10.0" />
+		<PackageReference Include="Sentry.Serilog" Version="6.10.0" />
 		<PackageReference Include="Serilog" Version="4.4.0" />
 		<PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
 		<PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />

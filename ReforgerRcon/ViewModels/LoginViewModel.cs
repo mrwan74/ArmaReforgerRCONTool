@@ -21,6 +21,8 @@ namespace ReforgerRcon.ViewModels;
 [SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Partial callback methods are invoked by CommunityToolkit.Mvvm generated property setters")]
 public partial class LoginViewModel : ViewModelBase, IDisposable
 {
+    public const int DefaultReforgerPort = 19999;
+
     private readonly Action<ServerProfile, IRconService> _onLoginSuccess;
     private readonly bool _isStartup;
     private bool _isSyncingProfile;
@@ -55,9 +57,9 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 return parsedPort;
             }
 
-            return Protocol == RconProtocol.BattlEye ? 20007 : 19999;
+            return Protocol == RconProtocol.ReforgerBuiltIn ? DefaultReforgerPort : 0;
         }
-        set => PortText = value.ToString(CultureInfo.InvariantCulture);
+        set => PortText = value > 0 ? value.ToString(CultureInfo.InvariantCulture) : string.Empty;
     }
 
     public bool IsReforgerProtocol => Protocol == RconProtocol.ReforgerBuiltIn;
@@ -110,14 +112,14 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                                  ?? Profiles[0];
 
                 ServerIp = targetProfile.ServerIp;
-                PortText = targetProfile.Port.ToString(CultureInfo.InvariantCulture);
+                PortText = targetProfile.Port > 0 ? targetProfile.Port.ToString(CultureInfo.InvariantCulture) : "19999";
                 Password = targetProfile.Password;
                 Protocol = targetProfile.Protocol;
                 AutoConnect = targetProfile.AutoConnect;
                 SelectedProfile = targetProfile;
                 targetProfile.IsLastSelected = true;
 
-                AppLogger.Info($"[LoginViewModel:Profiles] Selected profile: '{targetProfile.Name}' in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
+                AppLogger.Info($"[LoginViewModel:Profiles] Selected profile: '{targetProfile.Name}' in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms (Port: {targetProfile.Port}).");
             }
         }
         catch (Exception ex)
@@ -195,7 +197,7 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             try
             {
                 ServerIp = value.ServerIp;
-                PortText = value.Port.ToString(CultureInfo.InvariantCulture);
+                PortText = value.Port > 0 ? value.Port.ToString(CultureInfo.InvariantCulture) : string.Empty;
                 Password = value.Password;
                 Protocol = value.Protocol;
                 AutoConnect = value.AutoConnect;
@@ -290,16 +292,12 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(IsReforgerProtocol));
             OnPropertyChanged(nameof(IsBattlEyeProtocol));
 
-            if (value == RconProtocol.BattlEye && (Port == 19999 || Port <= 0))
+            if ((string.IsNullOrWhiteSpace(PortText) || PortText == "0") && value == RconProtocol.ReforgerBuiltIn)
             {
-                PortText = "20007";
-            }
-            else if (value == RconProtocol.ReforgerBuiltIn && (Port == 20007 || Port <= 0))
-            {
-                PortText = "19999";
+                PortText = DefaultReforgerPort.ToString(CultureInfo.InvariantCulture);
             }
 
-            AppLogger.Info($"[LoginViewModel:Protocol] Changed protocol to {value} (Port auto-assigned: {Port})");
+            AppLogger.Info($"[LoginViewModel:Protocol] Changed protocol to {value} (Current Port: {Port})");
 
             AppLogger.TrackEvent("protocol_toggled", new Dictionary<string, object>
             {
@@ -619,7 +617,7 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 }
 
                 _ = Task.Run(() => ProfileStorageService.SaveProfilesFast([.. Profiles]), CancellationToken.None);
-                AppLogger.Info($"[LoginViewModel:Connect] Connected to '{SelectedProfile?.Name}' in {elapsedMs:F2}ms.");
+                AppLogger.Info($"[LoginViewModel:Connect] Connected to '{SelectedProfile?.Name}' in {elapsedMs:F2}ms (Port: {profile.Port}, Protocol: {profile.Protocol}).");
 
                 Dispatcher.UIThread.Post(() => _onLoginSuccess(profile, rconService));
             }
@@ -627,8 +625,11 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             {
                 Dispatcher.UIThread.Post(() =>
                 {
-                    ErrorMessage = "Failed to connect to server. Verify server IP, RCON port, and password.";
-                    AppLogger.Warn($"[LoginViewModel:Connect] Connection failed for {profile.ServerIp}:{profile.Port} after {elapsedMs:F2}ms.");
+                    ErrorMessage = !string.IsNullOrWhiteSpace(rconService.LastConnectionError)
+                        ? rconService.LastConnectionError
+                        : "Failed to connect to server. Verify server IP, RCON port, and password.";
+
+                    AppLogger.Warn($"[LoginViewModel:Connect] Connection failed for {profile.ServerIp}:{profile.Port} after {elapsedMs:F2}ms. Reason: {ErrorMessage}");
                 });
             }
         }).ConfigureAwait(false);
@@ -654,17 +655,23 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             IsConnecting = true;
             ErrorMessage = string.Empty;
 
+            int demoPort = Port;
+            if (demoPort <= 0)
+            {
+                demoPort = Protocol == RconProtocol.ReforgerBuiltIn ? DefaultReforgerPort : 20007;
+            }
+
             var profile = new ServerProfile
             {
                 Name = "Demo Server Simulation",
                 ServerIp = "127.0.0.1",
-                Port = Protocol == RconProtocol.ReforgerBuiltIn ? 19999 : 20007,
+                Port = demoPort,
                 Password = string.Empty,
                 Protocol = Protocol,
                 AutoConnect = false
             };
 
-            AppLogger.Info($"[LoginViewModel:Demo] Launching simulated demo mode ({profile.Protocol})...");
+            AppLogger.Info($"[LoginViewModel:Demo] Launching simulated demo mode ({profile.Protocol}, Port: {profile.Port})...");
             var mockService = new MockRconService();
             await mockService.ConnectAsync(profile, CancellationToken.None).ConfigureAwait(false);
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;

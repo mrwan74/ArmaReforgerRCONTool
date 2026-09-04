@@ -17,7 +17,11 @@ public partial class PlayerModel : ObservableObject
     [ObservableProperty] public partial string BattlEyeGuid { get; set; } = string.Empty;
     [ObservableProperty] public partial string Ip { get; set; } = "127.0.0.1";
     [ObservableProperty] public partial int Port { get; set; } = 2304;
-    [ObservableProperty] public partial int Ping { get; set; } = 25;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PingDisplay))]
+    public partial int Ping { get; set; }
+
     [ObservableProperty] public partial string Comment { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -39,4 +43,5 @@ public partial class PlayerModel : ObservableObject
     public string FormattedEndpoint => $"{Ip}:{Port}";
     public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);
     public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
+    public string PingDisplay => $"{Ping} ms";
 }
