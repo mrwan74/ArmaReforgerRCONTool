@@ -17,10 +17,16 @@ public static class HardwareIdentityService
     private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
     private static readonly string FallbackSeedPath = Path.Combine(StorageDirectory, "device_id.dat");
     private static readonly Lock SyncLock = new();
-    private static string? _cachedHardwareId;
+    private static volatile string? _cachedHardwareId;
 
     public static string GetOrCreateHardwareId()
     {
+        var current = _cachedHardwareId;
+        if (!string.IsNullOrEmpty(current))
+        {
+            return current;
+        }
+
         lock (SyncLock)
         {
             if (!string.IsNullOrEmpty(_cachedHardwareId))

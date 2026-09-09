@@ -33,7 +33,7 @@
     <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
   </UserControl.KeyBindings>
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid RowDefinitions="Auto,*,Auto,Auto">
     <Border Grid.Row="0" Background="{DynamicResource LuminaSurfaceBrush}" Padding="16,8" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
       <Grid ColumnDefinitions="Auto,*,Auto">
         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -52,197 +52,264 @@
         </StackPanel>
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
           <ToggleButton Classes="Outline Small" IsChecked="{Binding IsMultiSelectMode}" Content="Multi-Select" />
-          <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+          <Button Classes="Outline Small" Content="Copy Page Info" Command="{Binding CopyAllInfoCommand}" />
         </StackPanel>
       </Grid>
     </Border>
 
-    <DataGrid x:Name="DatabaseGrid" 
-              Grid.Row="1" 
-              ItemsSource="{Binding Players}" 
-              SelectedItem="{Binding SelectedPlayer}" 
-              AutoGenerateColumns="False" 
-              IsReadOnly="True" 
-              GridLinesVisibility="Horizontal" 
-              CanUserResizeColumns="True"
-              CanUserReorderColumns="True"
-              CanUserSortColumns="True"
-              Sorting="OnDataGridSorting"
-              DoubleTapped="OnGridDoubleTapped"
-              SelectionMode="Single"
-              Margin="0"
-              x:CompileBindings="False">
+    <Grid Grid.Row="1">
+      <DataGrid x:Name="DatabaseGrid" 
+                ItemsSource="{Binding Players}" 
+                SelectedItem="{Binding SelectedPlayer}" 
+                AutoGenerateColumns="False" 
+                IsReadOnly="True" 
+                GridLinesVisibility="Horizontal" 
+                CanUserResizeColumns="True"
+                CanUserReorderColumns="True"
+                CanUserSortColumns="True"
+                Sorting="OnDataGridSorting"
+                DoubleTapped="OnGridDoubleTapped"
+                SelectionMode="Single"
+                Margin="0"
+                x:CompileBindings="False">
 
-      <DataGrid.KeyBindings>
-        <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
-      </DataGrid.KeyBindings>
+        <DataGrid.KeyBindings>
+          <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
+        </DataGrid.KeyBindings>
 
-      <DataGrid.ContextMenu>
-        <ContextMenu>
-          <MenuItem Header="Player Details" Command="{Binding OpenPlayerDetailsCommand}" CommandParameter="{Binding SelectedPlayer}" />
-          <MenuItem Header="Offline Ban..." Command="{Binding OpenOfflineBanCommand}" CommandParameter="{Binding SelectedPlayer}" />
-          <MenuItem Header="Quick Kick Active Session" Command="{Binding QuickKickCommand}" CommandParameter="{Binding SelectedPlayer}" />
-          <Separator />
-          <MenuItem Header="Set Comment..." Command="{Binding OpenSetCommentCommand}" CommandParameter="{Binding SelectedPlayer}" />
-          <MenuItem Header="{Binding SelectedPlayer.IsWatchlisted, Converter={x:Static converters:WatchlistTextConverter.Instance}}" 
-                    Command="{Binding ToggleWatchlistCommand}" 
-                    CommandParameter="{Binding SelectedPlayer}" />
-          <Separator />
-          <MenuItem Header="Copy Info" Command="{Binding CopyPlayerInfoCommand}" CommandParameter="{Binding SelectedPlayer}" />
-        </ContextMenu>
-      </DataGrid.ContextMenu>
+        <DataGrid.ContextMenu>
+          <ContextMenu>
+            <MenuItem Header="Player Details" Command="{Binding OpenPlayerDetailsCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Offline Ban..." Command="{Binding OpenOfflineBanCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Quick Kick Active Session" Command="{Binding QuickKickCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <Separator />
+            <MenuItem Header="Set Comment..." Command="{Binding OpenSetCommentCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="{Binding SelectedPlayer.IsWatchlisted, Converter={x:Static converters:WatchlistTextConverter.Instance}}" 
+                      Command="{Binding ToggleWatchlistCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
+            <Separator />
+            <MenuItem Header="Copy Info" Command="{Binding CopyPlayerInfoCommand}" CommandParameter="{Binding SelectedPlayer}" />
+          </ContextMenu>
+        </DataGrid.ContextMenu>
 
-      <DataGrid.Columns>
-        <DataGridTemplateColumn Tag="ColSelect" 
-                                Width="50" 
-                                MinWidth="50" 
-                                MaxWidth="50" 
-                                CanUserResize="False" 
-                                CanUserSort="False" 
-                                CanUserReorder="False"
-                                IsVisible="False">
-          <DataGridTemplateColumn.HeaderTemplate>
-            <DataTemplate>
-              <Grid Width="50" Height="36" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">
-                <CheckBox IsChecked="{Binding IsAllSelected, Mode=TwoWay}"
-                          HorizontalAlignment="Center" 
-                          VerticalAlignment="Center"
-                          Margin="0" 
-                          Padding="0" 
-                          MinWidth="0" 
-                          MinHeight="0"
-                          IsThreeState="True"
-                          Focusable="False"
-                          Cursor="Hand"
-                          ToolTip.Tip="{Binding SelectAllTooltipText}" />
-              </Grid>
-            </DataTemplate>
-          </DataGridTemplateColumn.HeaderTemplate>
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
-                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
-                          HorizontalAlignment="Center" 
-                          VerticalAlignment="Center" 
-                          Margin="0" 
-                          Padding="0" 
-                          MinWidth="0" 
-                          MinHeight="0" />
-              </Border>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-
-        <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="95" MinWidth="75" CanUserSort="True">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border Width="8" Height="8" CornerRadius="4" 
-                        Background="{DynamicResource LuminaSuccessBrush}" 
-                        IsVisible="{Binding IsOnline}" 
-                        ToolTip.Tip="Online" />
-                <Border Width="8" Height="8" CornerRadius="4" 
-                        Background="{DynamicResource LuminaTextTertiaryBrush}" 
-                        Opacity="0.4" 
-                        IsVisible="{Binding !IsOnline}" 
-                        ToolTip.Tip="Offline Record" />
-
-                <icons:MaterialIcon Kind="Eye" Width="14" Height="14" Foreground="{DynamicResource LuminaWarningBrush}" IsVisible="{Binding IsWatchlisted}" ToolTip.Tip="Watchlisted Player" />
-                <icons:MaterialIcon Kind="AlertCircleOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaDangerBrush}" IsVisible="{Binding HasAliases}" ToolTip.Tip="Known Aliases / Name Changed" />
-              </StackPanel>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-
-        <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="90" MinWidth="80" CanUserSort="True" />
-
-        <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="220" MinWidth="130" CanUserSort="True">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <TextBlock Text="{Binding Name}" 
-                         FontWeight="SemiBold" 
-                         VerticalAlignment="Center" 
-                         Margin="8,0"
-                         TextTrimming="CharacterEllipsis"
-                         ToolTip.Tip="{Binding Name}" />
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-
-        <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding DisplayReforgerUid}" Width="260" MinWidth="150" CanUserSort="True" />
-
-        <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" CanUserSort="True" />
-
-        <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70" CanUserSort="True">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center">
-                <Border CornerRadius="3" ClipToBounds="True" BoxShadow="0 1 3 #30000000">
-                  <Image Source="{Binding Country.FlagImage}" 
-                         Width="36" Height="25" 
-                         Stretch="Uniform" 
-                         ToolTip.Tip="{Binding Location}" />
+        <DataGrid.Columns>
+          <DataGridTemplateColumn Tag="ColSelect" 
+                                  Width="50" 
+                                  MinWidth="50" 
+                                  MaxWidth="50" 
+                                  CanUserResize="False" 
+                                  CanUserSort="False" 
+                                  CanUserReorder="False"
+                                  IsVisible="False">
+            <DataGridTemplateColumn.HeaderTemplate>
+              <DataTemplate>
+                <Grid Width="50" Height="36" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">
+                  <CheckBox IsChecked="{Binding IsAllSelected, Mode=TwoWay}"
+                            HorizontalAlignment="Center" 
+                            VerticalAlignment="Center"
+                            Margin="0" 
+                            Padding="0" 
+                            MinWidth="0" 
+                            MinHeight="0"
+                            IsThreeState="True"
+                            Focusable="False"
+                            Cursor="Hand"
+                            ToolTip.Tip="{Binding SelectAllTooltipText}" />
+                </Grid>
+              </DataTemplate>
+            </DataGridTemplateColumn.HeaderTemplate>
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                  <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                            HorizontalAlignment="Center" 
+                            VerticalAlignment="Center" 
+                            Margin="0" 
+                            Padding="0" 
+                            MinWidth="0" 
+                            MinHeight="0" />
                 </Border>
-              </StackPanel>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
 
-        <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120" CanUserSort="True">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <TextBlock Text="{Binding Name}" 
-                         FontWeight="SemiBold" 
-                         VerticalAlignment="Center" 
-                         Margin="8,0"
-                         TextTrimming="CharacterEllipsis"
-                         ToolTip.Tip="{Binding Name}" />
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
+          <DataGridTemplateColumn Tag="ColStatus" Header="Status" Width="95" MinWidth="75" CanUserSort="True">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <StackPanel Orientation="Horizontal" Spacing="5" HorizontalAlignment="Center" VerticalAlignment="Center">
+                  <Border Width="8" Height="8" CornerRadius="4" 
+                          Background="{DynamicResource LuminaSuccessBrush}" 
+                          IsVisible="{Binding IsOnline}" 
+                          ToolTip.Tip="Online" />
+                  <Border Width="8" Height="8" CornerRadius="4" 
+                          Background="{DynamicResource LuminaTextTertiaryBrush}" 
+                          Opacity="0.4" 
+                          IsVisible="{Binding !IsOnline}" 
+                          ToolTip.Tip="Offline Record" />
 
-        <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding DisplayBattlEyeGuid}" Width="343" MinWidth="150" CanUserSort="True" />
+                  <icons:MaterialIcon Kind="Eye" Width="14" Height="14" Foreground="{DynamicResource LuminaWarningBrush}" IsVisible="{Binding IsWatchlisted}" ToolTip.Tip="Watchlisted Player" />
+                  <icons:MaterialIcon Kind="AlertCircleOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaDangerBrush}" IsVisible="{Binding HasAliases}" ToolTip.Tip="Known Aliases / Name Changed" />
+                </StackPanel>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" CanUserSort="True" />
+          <DataGridTextColumn Tag="ColReforgerId" Header="Player#" Binding="{Binding Id}" Width="90" MinWidth="80" CanUserSort="True" />
 
-        <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65" CanUserSort="True">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <TextBlock Text="{Binding PingDisplay}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
+          <DataGridTemplateColumn Tag="ColReforgerName" Header="Player Name" Width="220" MinWidth="130" CanUserSort="True">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <TextBlock Text="{Binding Name}" 
+                           FontWeight="SemiBold" 
+                           VerticalAlignment="Center" 
+                           Margin="8,0"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding Name}" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
 
-        <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="323" MinWidth="120" CanUserSort="True" />
+          <DataGridTextColumn Tag="ColReforgerUid" Header="Player UID" Binding="{Binding DisplayReforgerUid}" Width="260" MinWidth="150" CanUserSort="True" />
 
-        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180" CanUserSort="False">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:DatabasePlayerModel">
-              <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,0,8,0">
-                <Button Classes="Small Outline" Content="Details" 
-                        Command="{Binding $parent[DataGrid].DataContext.OpenPlayerDetailsCommand}"
-                        CommandParameter="{Binding}" />
-                <Button Classes="Small Danger Outline" Content="Offline Ban" 
-                        Command="{Binding $parent[DataGrid].DataContext.OpenOfflineBanCommand}"
-                        CommandParameter="{Binding}" />
-              </StackPanel>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-      </DataGrid.Columns>
-    </DataGrid>
+          <DataGridTextColumn Tag="ColBeId" Header="[#]" Binding="{Binding Id}" Width="72" MinWidth="60" CanUserSort="True" />
 
-    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,12" 
+          <DataGridTemplateColumn Tag="ColBeCountry" Header="Country" Width="107" MinWidth="70" CanUserSort="True">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center">
+                  <Border CornerRadius="3" ClipToBounds="True" BoxShadow="0 1 3 #30000000"
+                          IsVisible="{Binding Country.FlagImage, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <Image Source="{Binding Country.FlagImage}" 
+                           Width="36" Height="25" 
+                           Stretch="Uniform" 
+                           ToolTip.Tip="{Binding Location}" />
+                  </Border>
+                </StackPanel>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+
+          <DataGridTemplateColumn Tag="ColBeName" Header="Name" Width="220" MinWidth="120" CanUserSort="True">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <TextBlock Text="{Binding Name}" 
+                           FontWeight="SemiBold" 
+                           VerticalAlignment="Center" 
+                           Margin="8,0"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding Name}" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+
+          <DataGridTextColumn Tag="ColBeGuid" Header="BattlEye GUID" Binding="{Binding DisplayBattlEyeGuid}" Width="343" MinWidth="150" CanUserSort="True" />
+
+          <DataGridTextColumn Tag="ColBeEndpoint" Header="IP:Port" Binding="{Binding FormattedEndpoint}" Width="217" MinWidth="130" CanUserSort="True" />
+
+          <DataGridTemplateColumn Tag="ColBePing" Header="Ping" Width="90" MinWidth="65" CanUserSort="True">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <TextBlock Text="{Binding PingDisplay}" Classes="Caption" VerticalAlignment="Center" Margin="8,0" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+
+          <DataGridTextColumn Tag="ColComment" Header="Comment" Binding="{Binding Comment}" Width="323" MinWidth="120" CanUserSort="True" />
+
+          <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="195" MinWidth="180" CanUserSort="False">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:DatabasePlayerModel">
+                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right" Margin="0,0,8,0">
+                  <Button Classes="Small Outline" Content="Details" 
+                          Command="{Binding $parent[DataGrid].DataContext.OpenPlayerDetailsCommand}"
+                          CommandParameter="{Binding}" />
+                  <Button Classes="Small Danger Outline" Content="Offline Ban" 
+                          Command="{Binding $parent[DataGrid].DataContext.OpenOfflineBanCommand}"
+                          CommandParameter="{Binding}" />
+                </StackPanel>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+        </DataGrid.Columns>
+      </DataGrid>
+
+      <Border Background="#40000000" IsVisible="{Binding IsLoading}">
+        <ProgressBar IsIndeterminate="True" Width="140" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceBrush}" 
+            BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,1,0,0" 
+            Padding="14,8">
+      <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <TextBlock Text="Per page:" Classes="Caption" VerticalAlignment="Center" />
+          <ComboBox ItemsSource="{Binding PageSizes}" 
+                    SelectedItem="{Binding PageSize}" 
+                    Width="80" 
+                    Height="28" 
+                    VerticalAlignment="Center" />
+
+          <Border Width="1" Height="16" Background="{DynamicResource LuminaBorderSubtleBrush}" VerticalAlignment="Center" />
+
+          <TextBlock Text="{Binding PageStatusText}" 
+                     Classes="Caption" 
+                     FontWeight="SemiBold" 
+                     VerticalAlignment="Center" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <Button Classes="Small Outline Icon" 
+                  Command="{Binding FirstPageCommand}" 
+                  IsEnabled="{Binding HasPreviousPage}"
+                  ToolTip.Tip="First Page">
+            <icons:MaterialIcon Kind="PageFirst" Width="16" Height="16" />
+          </Button>
+
+          <Button Classes="Small Outline Icon" 
+                  Command="{Binding PreviousPageCommand}" 
+                  IsEnabled="{Binding HasPreviousPage}"
+                  ToolTip.Tip="Previous Page">
+            <icons:MaterialIcon Kind="ChevronLeft" Width="16" Height="16" />
+          </Button>
+
+          <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="4" Padding="10,4" VerticalAlignment="Center">
+            <TextBlock FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center">
+              <Run Text="Page " />
+              <Run Text="{Binding CurrentPage}" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <Run Text=" of " />
+              <Run Text="{Binding TotalPages}" />
+            </TextBlock>
+          </Border>
+
+          <Button Classes="Small Outline Icon" 
+                  Command="{Binding NextPageCommand}" 
+                  IsEnabled="{Binding HasNextPage}"
+                  ToolTip.Tip="Next Page">
+            <icons:MaterialIcon Kind="ChevronRight" Width="16" Height="16" />
+          </Button>
+
+          <Button Classes="Small Outline Icon" 
+                  Command="{Binding LastPageCommand}" 
+                  IsEnabled="{Binding HasNextPage}"
+                  ToolTip.Tip="Last Page">
+            <icons:MaterialIcon Kind="PageLast" Width="16" Height="16" />
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="3" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,10" 
             BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"
             IsVisible="{Binding IsMultiSelectMode}">
       <Grid ColumnDefinitions="Auto,*,Auto">
         <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
           <TextBlock Text="{Binding SelectedCount, StringFormat='Selected: {0} player(s)'}" FontWeight="Bold" VerticalAlignment="Center" />
-          <Button Classes="Outline Small" Content="{Binding SelectAllButtonText}" Command="{Binding ToggleSelectAllCommand}" ToolTip.Tip="Toggle selection for all rows (Ctrl+A)" />
+          <Button Classes="Outline Small" Content="{Binding SelectAllButtonText}" Command="{Binding ToggleSelectAllCommand}" ToolTip.Tip="Toggle selection for current page (Ctrl+A)" />
         </StackPanel>
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10">
-          <Button Classes="Outline Small" Content="Copy All Info" Command="{Binding CopyAllInfoCommand}" />
+          <Button Classes="Outline Small" Content="Copy Selected Info" Command="{Binding CopyAllInfoCommand}" />
         </StackPanel>
       </Grid>
     </Border>

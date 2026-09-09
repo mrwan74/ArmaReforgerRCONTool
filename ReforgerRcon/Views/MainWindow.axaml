@@ -9,7 +9,7 @@
                      xmlns:models="using:ReforgerRcon.Models"
                      x:Class="ReforgerRcon.Views.MainWindow"
                      x:DataType="vm:MainViewModel"
-                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.8.121"
+                     Title="ARMA REFORGER RCON TOOL (ARRT) V0.9.0"
                      Icon="/Assets/app.ico"
                      Width="1696" Height="937"
                      MinWidth="960" MinHeight="640"
@@ -18,7 +18,7 @@
                      UseWindowGlass="False">
 
   <lumina:LuminaWindow.TitleBarLeftContent>
-    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.8.121" 
+    <TextBlock Text="ARMA REFORGER RCON TOOL (ARRT) V0.9.0" 
                FontSize="11" 
                FontWeight="Bold" 
                Foreground="{DynamicResource LuminaTextSecondaryBrush}" 
@@ -36,16 +36,16 @@
   </lumina:LuminaWindow.TitleBarRightContent>
 
   <Grid>
-    <TransitioningContentControl Content="{Binding CurrentView}">
-      <TransitioningContentControl.DataTemplates>
+    <ContentControl Content="{Binding CurrentView}">
+      <ContentControl.DataTemplates>
         <DataTemplate DataType="vm:LoginViewModel">
           <views:LoginView />
         </DataTemplate>
         <DataTemplate DataType="vm:DashboardViewModel">
           <views:DashboardView />
         </DataTemplate>
-      </TransitioningContentControl.DataTemplates>
-    </TransitioningContentControl>
+      </ContentControl.DataTemplates>
+    </ContentControl>
 
     <ItemsControl ItemsSource="{Binding Source={x:Static services:ToastNotificationService.Instance}, Path=ActiveToasts}"
                   HorizontalAlignment="Right"

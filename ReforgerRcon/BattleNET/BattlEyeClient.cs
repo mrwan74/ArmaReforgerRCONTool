@@ -1,4 +1,4 @@
-﻿using ReforgerRcon.Services;
+using ReforgerRcon.Services;
 using ReforgerRcon.Services.Parsers;
 using System;
 using System.Collections.Concurrent;
@@ -28,7 +28,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     private DateTime _lastPacketSent = DateTime.UtcNow;
     private DateTime _lastPacketReceived = DateTime.UtcNow;
     private volatile bool _keepRunning;
-    private byte _sequenceNumber;
+    private int _sequenceNumberCounter = -1;
     private int _currentResendPacket = -1;
     private bool _isDisposed;
     private long _totalPacketsSent;
@@ -43,7 +43,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     private readonly BattlEyeLoginCredentials _loginCredentials = loginCredentials;
     private readonly Lock _syncLock = new();
 
-    public bool Connected => _socket is { Connected: true };
+    public bool Connected => Volatile.Read(ref _socket) is { Connected: true };
     public bool ReconnectOnPacketLoss { get; set; } = true;
     public int CommandQueue => _pendingCommands.Count;
     public int LastPingMs { get; private set; }
@@ -56,13 +56,13 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     [SuppressMessage("AsyncUsage", "PH_S005:DiscourageAsyncSuffix", Justification = "Adheres to TAP pattern conventions for async APIs")]
     public Task<BattlEyeConnectionResult> ConnectAsync(CancellationToken cancellationToken = default)
     {
-        AppLogger.Trace($"[BattlEyeClient:ConnectAsync] Targeting endpoint {_loginCredentials.Host}:{_loginCredentials.Port}.");
+        AppLogger.Trace($"[BattlEyeClient:ConnectAsync] Targeting endpoint {_loginCredentials.Host}:{_loginCredentials.Port} on thread T{Environment.CurrentManagedThreadId:D2}.");
         return Task.Run(() => ConnectInternal(3, cancellationToken), cancellationToken);
     }
 
     public BattlEyeConnectionResult Connect()
     {
-        AppLogger.Trace($"[BattlEyeClient:Connect] Synchronous Connect targeting {_loginCredentials.Host}:{_loginCredentials.Port}.");
+        AppLogger.Trace($"[BattlEyeClient:Connect] Synchronous Connect targeting {_loginCredentials.Host}:{_loginCredentials.Port} on thread T{Environment.CurrentManagedThreadId:D2}.");
         return ConnectInternal(3, CancellationToken.None);
     }
 
@@ -70,145 +70,169 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     {
         using var timing = AppLogger.Measure($"BattlEyeClient.ConnectInternal({_loginCredentials.Host}:{_loginCredentials.Port})");
 
-        lock (_syncLock)
+        _lastPacketSent = DateTime.UtcNow;
+        _lastPacketReceived = DateTime.UtcNow;
+        _currentResendPacket = -1;
+        _pendingCommands.Clear();
+        _pendingCommandTcs.Clear();
+        _multiPacketResponses.Clear();
+        _keepRunning = true;
+        LastErrorDiagnostic = string.Empty;
+        Interlocked.Exchange(ref _sequenceNumberCounter, -1);
+
+        var remoteEp = new IPEndPoint(_loginCredentials.Host, _loginCredentials.Port);
+        var context = new Dictionary<string, object?>
         {
-            _lastPacketSent = DateTime.UtcNow;
-            _lastPacketReceived = DateTime.UtcNow;
-            _sequenceNumber = 0;
-            _currentResendPacket = -1;
-            _pendingCommands.Clear();
-            _pendingCommandTcs.Clear();
-            _multiPacketResponses.Clear();
-            _keepRunning = true;
-            LastErrorDiagnostic = string.Empty;
+            ["remote_endpoint"] = remoteEp.ToString(),
+            ["address_family"] = _loginCredentials.Host.AddressFamily.ToString(),
+            ["max_attempts"] = totalRetries,
+            ["password_len"] = _loginCredentials.Password?.Length ?? 0,
+            ["thread_id"] = Environment.CurrentManagedThreadId
+        };
 
-            var remoteEp = new IPEndPoint(_loginCredentials.Host, _loginCredentials.Port);
-            AppLogger.Debug($"[BattlEyeClient:Connect] Beginning UDP handshake with {remoteEp} (Max attempts: {totalRetries}, PasswordLength: {_loginCredentials.Password?.Length ?? 0}, AddressFamily: {_loginCredentials.Host.AddressFamily}).");
+        AppLogger.Debug($"[BattlEyeClient:Connect] Commencing UDP socket handshake with {remoteEp}...", context);
 
-            for (int attempt = 1; attempt <= totalRetries; attempt++)
+        for (int attempt = 1; attempt <= totalRetries; attempt++)
+        {
+            var attemptStart = Stopwatch.GetTimestamp();
+
+            if (ct.IsCancellationRequested)
             {
-                var attemptStart = Stopwatch.GetTimestamp();
-
-                if (ct.IsCancellationRequested)
-                {
-                    LastErrorDiagnostic = "Connection canceled by user or timed out.";
-                    AppLogger.Warn($"[BattlEyeClient:Connect] Handshake canceled via CancellationToken on attempt #{attempt} for {remoteEp}.");
-                    OnConnect(_loginCredentials, BattlEyeConnectionResult.ConnectionFailed);
-                    return BattlEyeConnectionResult.ConnectionFailed;
-                }
-
-                try
-                {
-                    if (_socket != null)
-                    {
-                        AppLogger.Trace("[BattlEyeClient:Connect] Cleaning up stale socket before attempt.");
-                        _socket.Dispose();
-                    }
-
-                    _socket = new Socket(_loginCredentials.Host.AddressFamily, SocketType.Dgram, ProtocolType.Udp)
-                    {
-                        ReceiveBufferSize = 262144,
-                        SendBufferSize = 65535,
-                        ReceiveTimeout = 1000,
-                        SendTimeout = 1000,
-                        ExclusiveAddressUse = false
-                    };
-
-                    AppLogger.Info($"[BattlEyeClient:Connect] Connecting UDP socket to {remoteEp} (Attempt #{attempt}/{totalRetries}, RcvBuf={_socket.ReceiveBufferSize}, SndBuf={_socket.SendBufferSize})...");
-                    _socket.Connect(remoteEp);
-
-                    byte[] loginPacket = ConstructPacket(PacketTypeLogin, sequenceNumber: null, _loginCredentials.Password);
-                    AppLogger.Trace($"[BattlEyeClient:Connect] Outgoing login packet ({loginPacket.Length} bytes, CRC={Convert.ToHexString(loginPacket.AsSpan(2, 4))}).");
-
-                    var handshakeStartTimestamp = Stopwatch.GetTimestamp();
-                    _socket.Send(loginPacket);
-                    Interlocked.Increment(ref _totalPacketsSent);
-                    Interlocked.Add(ref _totalBytesSent, loginPacket.Length);
-                    _lastPacketSent = DateTime.UtcNow;
-
-                    var receiveBuffer = new byte[8192];
-                    int bytesReceived = _socket.Receive(receiveBuffer, receiveBuffer.Length, SocketFlags.None);
-                    Interlocked.Increment(ref _totalPacketsReceived);
-                    Interlocked.Add(ref _totalBytesReceived, bytesReceived);
-                    var handshakeRtt = (int)Stopwatch.GetElapsedTime(handshakeStartTimestamp).TotalMilliseconds;
-
-                    AppLogger.Trace($"[BattlEyeClient:Connect] Received handshake response ({bytesReceived} bytes in {handshakeRtt}ms).");
-
-                    if (ValidatePacket(receiveBuffer, bytesReceived, out ReadOnlySpan<byte> payload) &&
-                        payload.Length >= 2 &&
-                        payload[0] == PacketTypeLogin)
-                    {
-                        if (payload[1] == 0x01)
-                        {
-                            UpdatePing(handshakeRtt);
-                            var totalAttemptMs = Stopwatch.GetElapsedTime(attemptStart).TotalMilliseconds;
-                            AppLogger.Info($"[BattlEyeClient:Connect] Handshake SUCCESS: Authenticated with {remoteEp} in {handshakeRtt}ms (AttemptDuration: {totalAttemptMs:F2}ms, Ping: {LastPingMs}ms).");
-                            OnConnect(_loginCredentials, BattlEyeConnectionResult.Success);
-                            StartReceiveLoop();
-                            return BattlEyeConnectionResult.Success;
-                        }
-
-                        LastErrorDiagnostic = $"Invalid RCON password for {remoteEp}. Authentication was rejected by the server.";
-                        AppLogger.Warn($"[BattlEyeClient:Connect] Handshake REJECTED: Invalid password response from {remoteEp} (Payload byte: 0x{payload[1]:X2}).");
-                        OnConnect(_loginCredentials, BattlEyeConnectionResult.InvalidLogin);
-                        return BattlEyeConnectionResult.InvalidLogin;
-                    }
-
-                    AppLogger.Warn($"[BattlEyeClient:Connect] Handshake validation failed on attempt #{attempt} (Bytes received: {bytesReceived}).");
-                }
-                catch (SocketException sockEx)
-                {
-                    var attemptMs = Stopwatch.GetElapsedTime(attemptStart).TotalMilliseconds;
-                    if (sockEx.SocketErrorCode == SocketError.NetworkUnreachable)
-                    {
-                        LastErrorDiagnostic = $"Network is unreachable ({_loginCredentials.Host}:{_loginCredentials.Port}). Verify your machine or container has an active default network route.";
-                    }
-                    else if (sockEx.SocketErrorCode == SocketError.ConnectionRefused)
-                    {
-                        LastErrorDiagnostic = $"Connection refused by {_loginCredentials.Host}:{_loginCredentials.Port}. Server is offline or RCON port is closed in firewall.";
-                    }
-                    else if (sockEx.SocketErrorCode == SocketError.TimedOut)
-                    {
-                        LastErrorDiagnostic = $"Connection timed out waiting for {_loginCredentials.Host}:{_loginCredentials.Port}. Verify server IP, port, and firewall rules.";
-                    }
-                    else
-                    {
-                        LastErrorDiagnostic = $"Socket error ({sockEx.SocketErrorCode}): {sockEx.Message}";
-                    }
-
-                    AppLogger.Warn($"[BattlEyeClient:Connect] Attempt #{attempt} socket error in {attemptMs:F2}ms (Code: {sockEx.SocketErrorCode}, Native: {sockEx.NativeErrorCode}): {sockEx.Message}");
-                    if (attempt < totalRetries && !ct.IsCancellationRequested)
-                    {
-                        Thread.Sleep(50);
-                    }
-                }
-                catch (ObjectDisposedException dispEx)
-                {
-                    LastErrorDiagnostic = "Socket disposed during connection attempt.";
-                    AppLogger.Warn($"[BattlEyeClient:Connect] Socket disposed during connection attempt #{attempt}: {dispEx.Message}");
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    var attemptMs = Stopwatch.GetElapsedTime(attemptStart).TotalMilliseconds;
-                    LastErrorDiagnostic = $"Unexpected connection error: {ex.Message}";
-                    AppLogger.Error($"[BattlEyeClient:Connect] Unexpected error during handshake attempt #{attempt} ({attemptMs:F2}ms) to {remoteEp}: {ex.Message}", ex);
-                    if (attempt < totalRetries && !ct.IsCancellationRequested)
-                    {
-                        Thread.Sleep(50);
-                    }
-                }
+                LastErrorDiagnostic = "Connection canceled by user or timed out.";
+                context["attempt"] = attempt;
+                AppLogger.Warn($"[BattlEyeClient:Connect] Handshake canceled via CancellationToken on attempt #{attempt} for {remoteEp}.", null, context);
+                OnConnect(_loginCredentials, BattlEyeConnectionResult.ConnectionFailed);
+                return BattlEyeConnectionResult.ConnectionFailed;
             }
 
-            if (string.IsNullOrWhiteSpace(LastErrorDiagnostic))
+            Socket? localSocket = null;
+            try
             {
-                LastErrorDiagnostic = $"Connection timed out after {totalRetries} attempts waiting for {remoteEp}. Verify server IP, port ({_loginCredentials.Port}), and firewall rules.";
-            }
+                var existingSocket = Interlocked.Exchange(ref _socket, null);
+                existingSocket?.Dispose();
 
-            AppLogger.Warn($"[BattlEyeClient:Connect] Handshake timed out: No valid response from server {remoteEp} after {totalRetries} attempts.");
-            OnConnect(_loginCredentials, BattlEyeConnectionResult.ConnectionFailed);
-            return BattlEyeConnectionResult.ConnectionFailed;
+                localSocket = new Socket(_loginCredentials.Host.AddressFamily, SocketType.Dgram, ProtocolType.Udp)
+                {
+                    ReceiveBufferSize = 262144,
+                    SendBufferSize = 65535,
+                    ReceiveTimeout = 1000,
+                    SendTimeout = 1000,
+                    ExclusiveAddressUse = false
+                };
+
+                AppLogger.Info($"[BattlEyeClient:Connect] Connecting UDP socket to {remoteEp} (Attempt #{attempt}/{totalRetries}, RcvBuf={localSocket.ReceiveBufferSize}, SndBuf={localSocket.SendBufferSize})...", context);
+                localSocket.Connect(remoteEp);
+
+                byte[] loginPacket = ConstructPacket(PacketTypeLogin, sequenceNumber: null, _loginCredentials.Password);
+                var crcHex = Convert.ToHexString(loginPacket.AsSpan(2, 4));
+                AppLogger.Trace($"[BattlEyeClient:Connect] Sending login packet ({loginPacket.Length} bytes, CRC={crcHex}, Attempt=#{attempt})...");
+
+                var handshakeStartTimestamp = Stopwatch.GetTimestamp();
+                localSocket.Send(loginPacket);
+                Interlocked.Increment(ref _totalPacketsSent);
+                Interlocked.Add(ref _totalBytesSent, loginPacket.Length);
+                _lastPacketSent = DateTime.UtcNow;
+
+                var receiveBuffer = new byte[8192];
+                int bytesReceived = localSocket.Receive(receiveBuffer, receiveBuffer.Length, SocketFlags.None);
+                Interlocked.Increment(ref _totalPacketsReceived);
+                Interlocked.Add(ref _totalBytesReceived, bytesReceived);
+                var handshakeRtt = (int)Stopwatch.GetElapsedTime(handshakeStartTimestamp).TotalMilliseconds;
+
+                AppLogger.Trace($"[BattlEyeClient:Connect] Received handshake response ({bytesReceived} bytes in {handshakeRtt}ms). ResponseHex: {Convert.ToHexString(receiveBuffer, 0, Math.Min(bytesReceived, 16))}");
+
+                if (ValidatePacket(receiveBuffer, bytesReceived, out ReadOnlySpan<byte> payload) &&
+                    payload.Length >= 2 &&
+                    payload[0] == PacketTypeLogin)
+                {
+                    if (payload[1] == 0x01)
+                    {
+                        UpdatePing(handshakeRtt);
+                        var totalAttemptMs = Stopwatch.GetElapsedTime(attemptStart).TotalMilliseconds;
+                        context["handshake_rtt_ms"] = handshakeRtt;
+                        context["attempt_duration_ms"] = totalAttemptMs;
+                        context["smoothed_ping_ms"] = LastPingMs;
+
+                        Volatile.Write(ref _socket, localSocket);
+
+                        AppLogger.Info($"[BattlEyeClient:Connect] Handshake SUCCESS: Authenticated with {remoteEp} in {handshakeRtt}ms (AttemptDuration: {totalAttemptMs:F2}ms, Ping: {LastPingMs}ms).", context);
+
+                        StartReceiveLoop();
+                        OnConnect(_loginCredentials, BattlEyeConnectionResult.Success);
+                        return BattlEyeConnectionResult.Success;
+                    }
+
+                    LastErrorDiagnostic = $"Invalid RCON password for {remoteEp}. Authentication was rejected by the server.";
+                    context["reject_byte"] = $"0x{payload[1]:X2}";
+                    AppLogger.Warn($"[BattlEyeClient:Connect] Handshake REJECTED: Invalid password response from {remoteEp} (Payload byte: 0x{payload[1]:X2}).", null, context);
+                    localSocket.Dispose();
+                    OnConnect(_loginCredentials, BattlEyeConnectionResult.InvalidLogin);
+                    return BattlEyeConnectionResult.InvalidLogin;
+                }
+
+                localSocket.Dispose();
+                AppLogger.Warn($"[BattlEyeClient:Connect] Handshake validation failed on attempt #{attempt} (Bytes received: {bytesReceived}).");
+            }
+            catch (SocketException sockEx)
+            {
+                localSocket?.Dispose();
+                var attemptMs = Stopwatch.GetElapsedTime(attemptStart).TotalMilliseconds;
+                if (sockEx.SocketErrorCode == SocketError.NetworkUnreachable)
+                {
+                    LastErrorDiagnostic = $"Network is unreachable ({_loginCredentials.Host}:{_loginCredentials.Port}). Verify network route.";
+                }
+                else if (sockEx.SocketErrorCode == SocketError.ConnectionRefused)
+                {
+                    LastErrorDiagnostic = $"Connection refused by {_loginCredentials.Host}:{_loginCredentials.Port}. Server offline or port closed.";
+                }
+                else if (sockEx.SocketErrorCode == SocketError.TimedOut)
+                {
+                    LastErrorDiagnostic = $"Connection timed out waiting for {_loginCredentials.Host}:{_loginCredentials.Port}.";
+                }
+                else
+                {
+                    LastErrorDiagnostic = $"Socket error ({sockEx.SocketErrorCode}): {sockEx.Message}";
+                }
+
+                context["socket_error_code"] = sockEx.SocketErrorCode.ToString();
+                context["native_code"] = sockEx.NativeErrorCode;
+                context["attempt_duration_ms"] = attemptMs;
+
+                AppLogger.Warn($"[BattlEyeClient:Connect] Handshake attempt #{attempt} socket exception after {attemptMs:F2}ms: {sockEx.SocketErrorCode} ({sockEx.NativeErrorCode})", sockEx, context);
+                if (attempt < totalRetries && !ct.IsCancellationRequested)
+                {
+                    Thread.Sleep(50);
+                }
+            }
+            catch (ObjectDisposedException dispEx)
+            {
+                localSocket?.Dispose();
+                LastErrorDiagnostic = "Socket disposed during connection attempt.";
+                AppLogger.Warn($"[BattlEyeClient:Connect] Socket disposed during attempt #{attempt}: {dispEx.Message}", dispEx, context);
+                break;
+            }
+            catch (Exception ex)
+            {
+                localSocket?.Dispose();
+                var attemptMs = Stopwatch.GetElapsedTime(attemptStart).TotalMilliseconds;
+                LastErrorDiagnostic = $"Unexpected connection error: {ex.Message}";
+                context["attempt_duration_ms"] = attemptMs;
+                AppLogger.Error($"[BattlEyeClient:Connect] Handshake attempt #{attempt} unexpected error after {attemptMs:F2}ms: {ex.Message}", ex, context);
+                if (attempt < totalRetries && !ct.IsCancellationRequested)
+                {
+                    Thread.Sleep(50);
+                }
+            }
         }
+
+        if (string.IsNullOrWhiteSpace(LastErrorDiagnostic))
+        {
+            LastErrorDiagnostic = $"Connection timed out after {totalRetries} attempts waiting for {remoteEp}.";
+        }
+
+        AppLogger.Warn($"[BattlEyeClient:Connect] Handshake exhausted {totalRetries} retries without connecting to {remoteEp}. Reason: {LastErrorDiagnostic}", null, context);
+        OnConnect(_loginCredentials, BattlEyeConnectionResult.ConnectionFailed);
+        return BattlEyeConnectionResult.ConnectionFailed;
     }
 
     public byte SendCommand(string command, bool log = true)
@@ -216,18 +240,14 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         var startTimestamp = Stopwatch.GetTimestamp();
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
-        byte seq;
-        lock (_syncLock)
-        {
-            seq = _sequenceNumber;
-            _sequenceNumber = (byte)((_sequenceNumber == 255) ? 0 : _sequenceNumber + 1);
-        }
+        byte seq = (byte)(Interlocked.Increment(ref _sequenceNumberCounter) & 0xFF);
 
         try
         {
-            if (_socket is not { Connected: true })
+            var socketRef = Volatile.Read(ref _socket);
+            if (socketRef is not { Connected: true })
             {
-                AppLogger.Warn($"[BattlEyeClient:Command] Cannot send '{AppLogger.SanitizeSensitiveData(command)}': Socket disconnected.");
+                AppLogger.Warn($"[BattlEyeClient:Command] Send aborted for Seq={seq} ('{AppLogger.SanitizeSensitiveData(command)}'): Socket disconnected.");
                 return seq;
             }
 
@@ -241,38 +261,38 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             }
 
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Debug($"[BattlEyeClient:Command] Outgoing (Seq={seq}, Cmd='{AppLogger.SanitizeSensitiveData(command)}', Bytes={packet.Length}, Prep={elapsedMs:F2}ms)");
+            AppLogger.Debug($"[BattlEyeClient:Command] Outgoing Seq={seq} (Cmd='{AppLogger.SanitizeSensitiveData(command)}', Bytes={packet.Length}, PrepTime={elapsedMs:F2}ms)");
             SendRaw(packet);
         }
         catch (SocketException sockEx)
         {
-            AppLogger.Error($"[BattlEyeClient:Command] Socket error sending (Seq={seq}, Cmd='{AppLogger.SanitizeSensitiveData(command)}'): {sockEx.SocketErrorCode}", sockEx);
+            AppLogger.Error($"[BattlEyeClient:Command] Socket error sending Seq={seq} ('{AppLogger.SanitizeSensitiveData(command)}'): {sockEx.SocketErrorCode}", sockEx);
         }
         catch (ObjectDisposedException dispEx)
         {
-            AppLogger.Warn($"[BattlEyeClient:Command] Socket disposed while sending '{AppLogger.SanitizeSensitiveData(command)}': {dispEx.Message}");
+            AppLogger.Warn($"[BattlEyeClient:Command] Socket disposed while sending Seq={seq} ('{AppLogger.SanitizeSensitiveData(command)}'): {dispEx.Message}");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[BattlEyeClient:Command] Unexpected error sending '{AppLogger.SanitizeSensitiveData(command)}' (Seq={seq}): {ex.Message}", ex);
+            AppLogger.Error($"[BattlEyeClient:Command] Unexpected error sending Seq={seq} ('{AppLogger.SanitizeSensitiveData(command)}'): {ex.Message}", ex);
         }
 
         return seq;
     }
 
     [SuppressMessage("AsyncUsage", "PH_S005:DiscourageAsyncSuffix", Justification = "Adheres to TAP pattern conventions for async APIs")]
-    public async Task<string> SendCommandWithResponseAsync(string command, TimeSpan timeout, CancellationToken cancellationToken = default)
+    public async Task<string?> SendCommandWithResponseAsync(string command, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
-        if (cancellationToken.IsCancellationRequested) return string.Empty;
+        if (cancellationToken.IsCancellationRequested) return null;
 
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         byte seq = SendCommand(command, log: true);
         _pendingCommandTcs[seq] = tcs;
 
-        AppLogger.Trace($"[BattlEyeClient:CommandResponse] Awaiting direct response for '{AppLogger.SanitizeSensitiveData(command)}' (Seq={seq}, Timeout={timeout.TotalMilliseconds}ms)...");
+        AppLogger.Trace($"[BattlEyeClient:CommandResponse] Awaiting direct response for Seq={seq} ('{AppLogger.SanitizeSensitiveData(command)}', Timeout={timeout.TotalMilliseconds}ms)...");
 
         try
         {
@@ -287,27 +307,27 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                 {
                     var result = await tcs.Task.ConfigureAwait(false);
                     var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                    AppLogger.Debug($"[BattlEyeClient:CommandResponse] Fulfilled for '{AppLogger.SanitizeSensitiveData(command)}' in {elapsedMs:F2}ms (Seq={seq}, Length={result.Length} chars).");
+                    AppLogger.Debug($"[BattlEyeClient:CommandResponse] Fulfilled Seq={seq} ('{AppLogger.SanitizeSensitiveData(command)}') in {elapsedMs:F2}ms (ResponseLength={result.Length} chars).");
                     return result;
                 }
 
                 var timeoutElapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 if (completedTask == cancelTcs.Task)
                 {
-                    AppLogger.Trace($"[BattlEyeClient:CommandResponse] Direct response wait cancelled after {timeoutElapsedMs:F2}ms (Seq={seq}).");
+                    AppLogger.Trace($"[BattlEyeClient:CommandResponse] Cancelled direct response wait for Seq={seq} after {timeoutElapsedMs:F2}ms.");
                 }
                 else
                 {
-                    AppLogger.Trace($"[BattlEyeClient:CommandResponse] Direct response wait timed out after {timeoutElapsedMs:F2}ms (Seq={seq}).");
+                    AppLogger.Trace($"[BattlEyeClient:CommandResponse] Direct response wait timed out for Seq={seq} after {timeoutElapsedMs:F2}ms.");
                 }
 
-                return string.Empty;
+                return null;
             }
         }
         catch (Exception ex)
         {
             AppLogger.Debug($"[BattlEyeClient:CommandResponse] Response notice (Seq={seq}): {ex.Message}");
-            return string.Empty;
+            return null;
         }
         finally
         {
@@ -325,16 +345,12 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     private void SendKeepAlive()
     {
         var startTimestamp = Stopwatch.GetTimestamp();
-        byte seq;
-        lock (_syncLock)
-        {
-            seq = _sequenceNumber;
-            _sequenceNumber = (byte)((_sequenceNumber == 255) ? 0 : _sequenceNumber + 1);
-        }
+        byte seq = (byte)(Interlocked.Increment(ref _sequenceNumberCounter) & 0xFF);
 
         try
         {
-            if (_socket is not { Connected: true }) return;
+            var socketRef = Volatile.Read(ref _socket);
+            if (socketRef is not { Connected: true }) return;
 
             byte[] keepAlivePacket = ConstructPacket(PacketTypeCommand, seq, command: null);
             _lastPacketSent = DateTime.UtcNow;
@@ -342,7 +358,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             SendRaw(keepAlivePacket);
             var count = Interlocked.Increment(ref _totalKeepAlivesSent);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Trace($"[BattlEyeClient:Heartbeat] KeepAlive #{count} sent in {elapsedMs:F2}ms (Seq={seq}, QueueSize={_pendingCommands.Count}).");
+            AppLogger.Trace($"[BattlEyeClient:Heartbeat] KeepAlive #{count} sent in {elapsedMs:F2}ms (Seq={seq}, PendingQueue={_pendingCommands.Count}).");
         }
         catch (SocketException sockEx)
         {
@@ -360,16 +376,14 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
     private void SendServerMessageAcknowledge(byte sequenceNumber)
     {
-        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            if (_socket is not { Connected: true }) return;
+            var socketRef = Volatile.Read(ref _socket);
+            if (socketRef is not { Connected: true }) return;
 
             byte[] ackPacket = ConstructPacket(PacketTypeServerMessage, sequenceNumber, command: null);
             _lastPacketSent = DateTime.UtcNow;
             SendRaw(ackPacket);
-            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Trace($"[BattlEyeClient:ACK] Sent Server Message ACK in {elapsedMs:F2}ms (Seq={sequenceNumber}, Bytes={ackPacket.Length}).");
         }
         catch (SocketException sockEx)
         {
@@ -390,11 +404,12 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            _socket?.Send(packet);
+            var socketRef = Volatile.Read(ref _socket);
+            socketRef?.Send(packet);
             Interlocked.Increment(ref _totalPacketsSent);
             Interlocked.Add(ref _totalBytesSent, packet.Length);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Trace($"[BattlEyeClient:SendRaw] Sent {packet.Length} bytes in {elapsedMs:F2}ms (TotalSent={_totalPacketsSent}).");
+            AppLogger.Trace($"[BattlEyeClient:SendRaw] Transmitted {packet.Length} bytes in {elapsedMs:F2}ms (TotalPacketsSent={_totalPacketsSent}, TotalBytesSent={_totalBytesSent}).");
         }
         catch (SocketException sockEx)
         {
@@ -424,7 +439,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
                 LastPingMs = (int)Math.Round((LastPingMs * 0.7) + (sampleRttMs * 0.3));
             }
         }
-        AppLogger.Trace($"[BattlEyeClient:Ping] UDP RTT Sample: {sampleRttMs}ms (Smoothed: {LastPingMs}ms).");
+        AppLogger.Trace($"[BattlEyeClient:Ping] UDP RTT Sample: {sampleRttMs}ms (SmoothedPing: {LastPingMs}ms).");
     }
 
     private static byte[] ConstructPacket(byte packetType, byte? sequenceNumber, string? command)
@@ -489,7 +504,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         uint actualChecksum = CRC32.Compute(payloadBytes);
         if (actualChecksum != expectedChecksum)
         {
-            AppLogger.Warn($"[BattlEyeClient:Validation] CRC32 mismatch (Expected: 0x{expectedChecksum:X8}, Computed: 0x{actualChecksum:X8}).");
+            AppLogger.Warn($"[BattlEyeClient:Validation] CRC32 mismatch (Expected: 0x{expectedChecksum:X8}, Computed: 0x{actualChecksum:X8}, Length: {length}).");
             return false;
         }
 
@@ -503,51 +518,29 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
     {
         var startTimestamp = Stopwatch.GetTimestamp();
         _keepRunning = false;
-        AppLogger.Info($"[BattlEyeClient:Disconnect] Session ending (Type: {disconnectionType?.ToString() ?? "Manual"}). Stats: PacketsSent={_totalPacketsSent} ({_totalBytesSent} B), PacketsRcvd={_totalPacketsReceived} ({_totalBytesReceived} B), KeepAlives={_totalKeepAlivesSent}, PendingCmds={_pendingCommands.Count}...");
+        AppLogger.Info($"[BattlEyeClient:Disconnect] Session termination initiated (Type: {disconnectionType?.ToString() ?? "Manual"}, TotalPacketsSent={_totalPacketsSent}, TotalPacketsReceived={_totalPacketsReceived}, BytesSent={_totalBytesSent}, BytesReceived={_totalBytesReceived}).");
 
-        lock (_syncLock)
+        var socketToClose = Interlocked.Exchange(ref _socket, null);
+        if (socketToClose != null)
         {
             try
             {
-                if (_socket != null)
+                if (socketToClose.Connected)
                 {
-                    try
-                    {
-                        if (_socket.Connected)
-                        {
-                            _socket.Shutdown(SocketShutdown.Both);
-                        }
-                    }
-                    catch (Exception ex) when (ex is SocketException or ObjectDisposedException or IOException)
-                    {
-                        // Ignore expected socket shutdown exceptions
-                    }
-
-                    _socket.Close();
-                    _socket.Dispose();
-                    _socket = null;
+                    socketToClose.Shutdown(SocketShutdown.Both);
                 }
+            }
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException or IOException)
+            {
+                AppLogger.Trace($"[BattlEyeClient:Disconnect] Socket shutdown notice: {ex.Message}");
+            }
 
-                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                AppLogger.Debug($"[BattlEyeClient:Disconnect] Network socket closed and disposed in {elapsedMs:F2}ms.");
-            }
-            catch (SocketException sockEx)
-            {
-                AppLogger.Debug($"[BattlEyeClient:Disconnect] SocketException during close: {sockEx.Message}");
-            }
-            catch (ObjectDisposedException)
-            {
-                AppLogger.Debug("[BattlEyeClient:Disconnect] Socket already disposed.");
-            }
-            catch (IOException ioEx)
-            {
-                AppLogger.Debug($"[BattlEyeClient:Disconnect] IOException during close: {ioEx.Message}");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error($"[BattlEyeClient:Disconnect] Unexpected error closing socket: {ex.Message}", ex);
-            }
+            socketToClose.Close();
+            socketToClose.Dispose();
         }
+
+        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+        AppLogger.Debug($"[BattlEyeClient:Disconnect] Socket resources closed and disposed in {elapsedMs:F2}ms.");
 
         if (disconnectionType != null)
             OnDisconnect(_loginCredentials, disconnectionType);
@@ -561,25 +554,27 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             var buffer = new byte[131072];
 
-            while (_socket is { Connected: true } && _keepRunning)
+            while (_keepRunning)
             {
+                var socketRef = Volatile.Read(ref _socket);
+                if (socketRef is not { Connected: true })
+                {
+                    break;
+                }
+
+                bool hadData = false;
                 try
                 {
-                    while (_socket is { Available: > 0 })
+                    while (socketRef.Available > 0)
                     {
-                        var readStart = Stopwatch.GetTimestamp();
-                        int bytesRead = _socket.Receive(buffer);
+                        hadData = true;
+                        int bytesRead = socketRef.Receive(buffer);
                         Interlocked.Increment(ref _totalPacketsReceived);
                         Interlocked.Add(ref _totalBytesReceived, bytesRead);
-                        var readElapsedMs = Stopwatch.GetElapsedTime(readStart).TotalMilliseconds;
-                        AppLogger.Trace($"[BattlEyeClient:ReceiveLoop] Read {bytesRead} bytes from socket in {readElapsedMs:F2}ms.");
 
                         if (ValidatePacket(buffer, bytesRead, out ReadOnlySpan<byte> payload))
                         {
-                            var processStart = Stopwatch.GetTimestamp();
                             ProcessReceivedPayload(payload);
-                            var processElapsedMs = Stopwatch.GetElapsedTime(processStart).TotalMilliseconds;
-                            AppLogger.Trace($"[BattlEyeClient:ReceiveLoop] Processed payload ({payload.Length} bytes) in {processElapsedMs:F2}ms.");
                         }
                     }
 
@@ -615,7 +610,14 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
                 try
                 {
-                    await Task.Delay(4).ConfigureAwait(false);
+                    if (hadData)
+                    {
+                        await Task.Yield();
+                    }
+                    else
+                    {
+                        await Task.Delay(1).ConfigureAwait(false);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -657,7 +659,9 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
 
     private void RetryPendingCommands()
     {
-        if (_pendingCommands.IsEmpty || _socket is not { Available: 0 }) return;
+        if (_pendingCommands.IsEmpty) return;
+        var socketRef = Volatile.Read(ref _socket);
+        if (socketRef is not { Available: 0 }) return;
 
         foreach (var (seq, pending) in _pendingCommands)
         {
@@ -723,40 +727,49 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             return;
         }
 
-        if (payload.Length >= 5 && payload[2] == 0x00 && payload[3] > 0 && payload[3] <= 32 && payload[4] < payload[3])
+        if (payload[2] == 0x00)
         {
-            byte totalPackets = payload[3];
-            byte packetIndex = payload[4];
-
-            string chunkText = Encoding.UTF8.GetString(payload[5..]);
-            AppLogger.Trace($"[BattlEyeClient:Response] Multi-packet chunk received (Seq={seq}, Index={packetIndex + 1}/{totalPackets}, Length={chunkText.Length} chars).");
-
-            var buffer = _multiPacketResponses.GetOrAdd(seq, _ => new MultiPacketBuffer());
-            if (buffer.TryAddChunk(packetIndex, totalPackets, chunkText, out var fullMessage))
+            if (payload.Length > 5 && payload.Length != 11 && payload[3] > 0 && payload[3] <= 32 && payload[4] < payload[3])
             {
-                _multiPacketResponses.TryRemove(seq, out _);
-                AppLogger.Debug($"[BattlEyeClient:Response] Completed Multi-Packet Response (Seq={seq}, Length={fullMessage.Length} chars across {totalPackets} chunks).");
+                byte totalPackets = payload[3];
+                byte packetIndex = payload[4];
 
-                if (_pendingCommandTcs.TryRemove(seq, out var pendingTcs))
+                string chunkText = Encoding.UTF8.GetString(payload[5..]);
+                AppLogger.Trace($"[BattlEyeClient:Response] Multi-packet chunk received (Seq={seq}, Index={packetIndex + 1}/{totalPackets}, Length={chunkText.Length} chars).");
+
+                var buffer = _multiPacketResponses.GetOrAdd(seq, _ => new MultiPacketBuffer());
+                if (buffer.TryAddChunk(packetIndex, totalPackets, chunkText, out var fullMessage))
                 {
-                    pendingTcs.TrySetResult(fullMessage);
+                    _multiPacketResponses.TryRemove(seq, out _);
+                    AppLogger.Debug($"[BattlEyeClient:Response] Completed Multi-Packet Response (Seq={seq}, Length={fullMessage.Length} chars across {totalPackets} chunks).");
+
+                    if (_pendingCommandTcs.TryRemove(seq, out var pendingTcs))
+                    {
+                        pendingTcs.TrySetResult(fullMessage);
+                    }
+
+                    OnBattlEyeMessage(fullMessage, seq);
                 }
-
-                OnBattlEyeMessage(fullMessage, seq);
+                return;
             }
-        }
-        else
-        {
-            string responseText = Encoding.UTF8.GetString(payload[2..]);
-            AppLogger.Debug($"[BattlEyeClient:Response] Command Response received (Seq={seq}, Length={responseText.Length} chars): '{AppLogger.SanitizeSensitiveData(responseText)}'");
 
-            if (_pendingCommandTcs.TryRemove(seq, out var pendingTcs))
+            AppLogger.Trace($"[BattlEyeClient:Response] Empty command ACK with internal token/nonce (Seq={seq}, Length={payload.Length} bytes, NonceHex={Convert.ToHexString(payload[2..])}).");
+            if (_pendingCommandTcs.TryRemove(seq, out var emptyAckTcs))
             {
-                pendingTcs.TrySetResult(responseText);
+                emptyAckTcs.TrySetResult(string.Empty);
             }
-
-            OnBattlEyeMessage(responseText, seq);
+            return;
         }
+
+        string responseText = Encoding.UTF8.GetString(payload[2..]);
+        AppLogger.Debug($"[BattlEyeClient:Response] Command Response received (Seq={seq}, Length={responseText.Length} chars): '{AppLogger.SanitizeSensitiveData(responseText)}'");
+
+        if (_pendingCommandTcs.TryRemove(seq, out var directTcs))
+        {
+            directTcs.TrySetResult(responseText);
+        }
+
+        OnBattlEyeMessage(responseText, seq);
     }
 
     private void ProcessServerMessage(ReadOnlySpan<byte> payload)
@@ -781,7 +794,7 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
         {
             BattlEyeMessageReceived?.Invoke(new BattlEyeMessageEventArgs(message, id));
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Trace($"[BattlEyeClient:Event] Dispatched BattlEyeMessageReceived (Id={id}) in {elapsedMs:F2}ms.");
+            AppLogger.Trace($"[BattlEyeClient:Event] Dispatched BattlEyeMessageReceived (Id={id}, Length={message.Length} chars) in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -835,22 +848,27 @@ public class BattlEyeClient(BattlEyeLoginCredentials loginCredentials) : IDispos
             {
                 var startTimestamp = Stopwatch.GetTimestamp();
                 AppLogger.Info("[BattlEyeClient:Dispose] Disposing BattlEyeClient instance...");
-                Disconnect(BattlEyeDisconnectionType.Manual);
-                lock (_syncLock)
+
+                _keepRunning = false;
+
+                try
                 {
-                    if (_socket != null)
+                    if (_socket is { Connected: true })
                     {
-                        try
-                        {
-                            _socket.Dispose();
-                        }
-                        catch
-                        {
-                            // Ignore disposal errors
-                        }
-                        _socket = null;
+                        _socket.Shutdown(SocketShutdown.Both);
                     }
                 }
+                catch (Exception ex) when (ex is SocketException or ObjectDisposedException or IOException)
+                {
+                    AppLogger.Trace($"[BattlEyeClient:Dispose] Socket shutdown notice: {ex.Message}");
+                }
+
+                _socket?.Close();
+                _socket?.Dispose();
+                _socket = null;
+
+                OnDisconnect(_loginCredentials, BattlEyeDisconnectionType.Manual);
+
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 AppLogger.Debug($"[BattlEyeClient:Dispose] BattlEyeClient disposal complete in {elapsedMs:F2}ms.");
             }

@@ -17,7 +17,7 @@ public class AppSettings
     private static readonly string TempSettingsPath = Path.Combine(SettingsDirectory, "settings.json.tmp");
     private static readonly Lock SyncLock = new();
 
-    private static AppSettings? _cachedSettings;
+    private static volatile AppSettings? _cachedSettings;
 
     public string InstallationId { get; set; } = string.Empty;
 
@@ -52,6 +52,9 @@ public class AppSettings
     public string DatabaseSortBy { get; set; } = "Default";
     public bool DatabaseSortAscending { get; set; } = true;
 
+    public string ReforgerBanFetchMode { get; set; } = "All Pages";
+    public int ReforgerBanCustomPageLimit { get; set; } = 3;
+
     public static void ApplyThemeMode(string mode)
     {
         if (Application.Current == null) return;
@@ -77,19 +80,26 @@ public class AppSettings
 
     public static bool IsCrashReportingEnabled()
     {
+        var cached = _cachedSettings;
+        if (cached != null)
+        {
+            return cached.SendAnonymousCrashReports;
+        }
+
         lock (SyncLock)
         {
-            if (_cachedSettings != null)
-            {
-                return _cachedSettings.SendAnonymousCrashReports;
-            }
-
             return LoadFromDiskInternal().SendAnonymousCrashReports;
         }
     }
 
     public static AppSettings LoadFromDisk()
     {
+        var cached = _cachedSettings;
+        if (cached != null)
+        {
+            return cached;
+        }
+
         lock (SyncLock)
         {
             return LoadFromDiskInternal();
@@ -119,17 +129,9 @@ public class AppSettings
                     return _cachedSettings;
                 }
             }
-            catch (JsonException jsonEx)
+            catch (Exception ex)
             {
-                Debug.WriteLine($"[AppSettings] JSON parse error in settings: {jsonEx.Message}");
-            }
-            catch (IOException ioEx)
-            {
-                Debug.WriteLine($"[AppSettings] IO error loading settings: {ioEx.Message}");
-            }
-            catch (UnauthorizedAccessException authEx)
-            {
-                Debug.WriteLine($"[AppSettings] Access denied loading settings: {authEx.Message}");
+                Debug.WriteLine($"[AppSettings] Notice: {ex.Message}");
             }
         }
 
@@ -145,36 +147,31 @@ public class AppSettings
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        if (string.IsNullOrWhiteSpace(settings.InstallationId))
-        {
-            settings.InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
-        }
+        _cachedSettings = settings;
 
-        lock (SyncLock)
+        ThreadPool.QueueUserWorkItem(_ =>
         {
-            _cachedSettings = settings;
-            try
+            lock (SyncLock)
             {
-                if (!Directory.Exists(SettingsDirectory))
+                try
                 {
-                    Directory.CreateDirectory(SettingsDirectory);
+                    if (!Directory.Exists(SettingsDirectory))
+                    {
+                        Directory.CreateDirectory(SettingsDirectory);
+                    }
+                    var json = JsonSerializer.Serialize(settings, CachedJsonOptions);
+                    File.WriteAllText(TempSettingsPath, json);
+                    if (File.Exists(SettingsPath))
+                    {
+                        File.Delete(SettingsPath);
+                    }
+                    File.Move(TempSettingsPath, SettingsPath, overwrite: true);
                 }
-                var json = JsonSerializer.Serialize(settings, CachedJsonOptions);
-                File.WriteAllText(TempSettingsPath, json);
-                if (File.Exists(SettingsPath))
+                catch (Exception ex)
                 {
-                    File.Delete(SettingsPath);
+                    Debug.WriteLine($"[AppSettings] Error saving: {ex.Message}");
                 }
-                File.Move(TempSettingsPath, SettingsPath, overwrite: true);
             }
-            catch (IOException ioEx)
-            {
-                Debug.WriteLine($"[AppSettings] IO error saving settings: {ioEx.Message}");
-            }
-            catch (UnauthorizedAccessException authEx)
-            {
-                Debug.WriteLine($"[AppSettings] Permission error saving settings: {authEx.Message}");
-            }
-        }
+        });
     }
 }

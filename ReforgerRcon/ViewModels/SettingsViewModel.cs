@@ -78,7 +78,7 @@ public partial class SettingsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(SelectedThemeOption));
                 AppSettings.ApplyThemeMode(mode);
                 AppLogger.Info($"[SettingsViewModel:Theme] Theme mode set to: {mode}");
-                _ = SaveSettingsAsync();
+                _ = SaveSettingsAsync(showToast: false);
             }
         }
     }
@@ -132,53 +132,19 @@ public partial class SettingsViewModel : ViewModelBase
     private void LoadSettingsFast()
     {
         var start = Stopwatch.GetTimestamp();
-        if (!File.Exists(SettingsFile))
-        {
-            var (acc, key) = GeoIpService.ResolveCredentials();
-            Settings.MaxMindAccountId = acc;
-            Settings.MaxMindLicenseKey = key;
-            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
-            OnPropertyChanged(nameof(SelectedThemeOption));
-            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Info($"[SettingsViewModel:Load] Loaded fresh default settings in {elapsedMs:F2}ms.");
-            return;
-        }
-
         try
         {
-            var json = File.ReadAllText(SettingsFile);
-            Settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
-            InstallationId = !string.IsNullOrWhiteSpace(Settings.InstallationId) ? Settings.InstallationId : HardwareIdentityService.GetOrCreateHardwareId();
+            Settings = AppSettings.LoadFromDisk();
+            InstallationId = !string.IsNullOrWhiteSpace(Settings.InstallationId)
+                ? Settings.InstallationId
+                : HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Info($"[SettingsViewModel:Load] Loaded settings in {elapsedMs:F2}ms (AudioAlerts={Settings.AudioAlerts}, PushNotifications={Settings.PushNotifications}, ThemeMode='{Settings.ThemeMode}').");
+            AppLogger.Debug($"[SettingsViewModel:Load] Loaded settings in {elapsedMs:F2}ms.");
         }
-        catch (JsonException jsonEx)
+        catch (Exception ex)
         {
-            AppLogger.Warn($"[SettingsViewModel:Load] Settings JSON corrupted: {jsonEx.Message}. Restoring defaults.", jsonEx);
-            Settings = new AppSettings();
-            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
-            OnPropertyChanged(nameof(SelectedThemeOption));
-            ToastNotificationService.Instance.ShowWarning("Settings Corrupted", "Default settings restored.");
-        }
-        catch (FileNotFoundException fnfEx)
-        {
-            AppLogger.Trace($"[SettingsViewModel:Load] Settings file missing: {fnfEx.Message}");
-            Settings = new AppSettings();
-            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
-            OnPropertyChanged(nameof(SelectedThemeOption));
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            AppLogger.Warn($"[SettingsViewModel:Load] Access denied reading '{SettingsFile}': {authEx.Message}", authEx);
-            Settings = new AppSettings();
-            InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
-            OnPropertyChanged(nameof(SelectedThemeOption));
-            ToastNotificationService.Instance.ShowError("Access Denied", "Operating system denied read permissions to settings file.");
-        }
-        catch (IOException ioEx)
-        {
-            AppLogger.Warn($"[SettingsViewModel:Load] Disk I/O warning: {ioEx.Message}", ioEx);
+            AppLogger.Warn($"[SettingsViewModel:Load] Settings load error: {ex.Message}. Restoring defaults.", ex);
             Settings = new AppSettings();
             InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
             OnPropertyChanged(nameof(SelectedThemeOption));
@@ -271,7 +237,9 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    public Task<bool> SaveSettingsAsync()
+    public Task<bool> SaveSettingsAsync() => SaveSettingsAsync(showToast: true);
+
+    public Task<bool> SaveSettingsAsync(bool showToast)
     {
         return ExecuteSafeAsync(async () =>
         {
@@ -312,7 +280,11 @@ public partial class SettingsViewModel : ViewModelBase
 
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             AppLogger.Info($"[SettingsViewModel:Save] Preferences saved in {elapsedMs:F2}ms (AudioAlerts={Settings.AudioAlerts}, Push={Settings.PushNotifications}, Glass={Settings.EnableWindowGlass}).");
-            ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences updated.");
+
+            if (showToast)
+            {
+                ToastNotificationService.Instance.ShowToast("Settings Saved", "Preferences updated.");
+            }
         });
     }
 
@@ -332,7 +304,7 @@ public partial class SettingsViewModel : ViewModelBase
                 return;
             }
 
-            await SaveSettingsAsync().ConfigureAwait(false);
+            await SaveSettingsAsync(showToast: false).ConfigureAwait(false);
 
             if (_dashboard != null)
             {

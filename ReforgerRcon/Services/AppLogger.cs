@@ -42,7 +42,7 @@ public static partial class AppLogger
     private static readonly Lock BreadcrumbsLock = new();
     private const int MaxBreadcrumbs = 2000;
 
-    private static readonly ConcurrentQueue<(LogEventLevel Level, string Message, Exception? Exception, string CallerContext)> EarlyLogBuffer = new();
+    private static readonly ConcurrentQueue<(LogEventLevel Level, string Message, Exception? Exception, string CallerContext, string AppLogLevel)> EarlyLogBuffer = new();
     private static Serilog.ILogger? _logger;
     private static int _isInDispatchFailure;
     private static long _totalLogsDispatched;
@@ -115,88 +115,88 @@ public static partial class AppLogger
 
     public static string ResolveSentryDsn() => TelemetrySecrets.GetEmbeddedDsn();
 
-    public static void InitializeFullLoggingBackground()
+    public static void InitializeFullLogging()
     {
         if (_isSerilogInitialized) return;
 
-        _ = Task.Run(() =>
+        lock (InitLock)
         {
-            lock (InitLock)
+            if (_isSerilogInitialized) return;
+
+            var startTimestamp = Stopwatch.GetTimestamp();
+            try
             {
-                if (_isSerilogInitialized) return;
-
-                var startTimestamp = Stopwatch.GetTimestamp();
-                try
+                if (!Directory.Exists(LogDirectory))
                 {
-                    if (!Directory.Exists(LogDirectory))
+                    Directory.CreateDirectory(LogDirectory);
+                }
+
+                const string fileOutputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{AppLogLevel,-5}] [T{ThreadId:D2}] [{CallerContext}] {Message:lj}{NewLine}{Exception}";
+
+                var config = new LoggerConfiguration()
+                    .MinimumLevel.Verbose()
+                    .Enrich.FromLogContext()
+                    .Enrich.WithThreadId()
+                    .Enrich.WithProcessId()
+                    .WriteTo.File(
+                        CurrentLogFilePath,
+                        outputTemplate: fileOutputTemplate,
+                        formatProvider: CultureInfo.InvariantCulture,
+                        fileSizeLimitBytes: 104857600,
+                        flushToDiskInterval: TimeSpan.FromMilliseconds(500),
+                        rollOnFileSizeLimit: true
+                    )
+                    .WriteTo.File(
+                        CurrentErrorLogFilePath,
+                        restrictedToMinimumLevel: LogEventLevel.Warning,
+                        outputTemplate: fileOutputTemplate,
+                        formatProvider: CultureInfo.InvariantCulture,
+                        fileSizeLimitBytes: 52428800,
+                        flushToDiskInterval: TimeSpan.FromMilliseconds(500),
+                        rollOnFileSizeLimit: true
+                    );
+
+                var dsn = ResolveSentryDsn();
+                if (!string.IsNullOrWhiteSpace(dsn))
+                {
+                    config = config.WriteTo.Sentry(o =>
                     {
-                        Directory.CreateDirectory(LogDirectory);
-                    }
+                        o.Dsn = dsn;
+                        o.InitializeSdk = false;
+                        o.MinimumBreadcrumbLevel = LogEventLevel.Verbose;
+                        o.MinimumEventLevel = LogEventLevel.Error;
+                    });
+                }
 
-                    const string fileOutputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] [T{ThreadId:D2}] [{CallerContext}] {Message:lj}{NewLine}{Exception}";
+                Log.Logger = config.CreateLogger();
+                _logger = Log.Logger;
+                _isSerilogInitialized = true;
 
-                    var config = new LoggerConfiguration()
-                        .MinimumLevel.Verbose()
-                        .Enrich.FromLogContext()
-                        .Enrich.WithThreadId()
-                        .Enrich.WithProcessId()
-                        .WriteTo.Async(a => a.File(
-                            CurrentLogFilePath,
-                            outputTemplate: fileOutputTemplate,
-                            formatProvider: CultureInfo.InvariantCulture,
-                            fileSizeLimitBytes: 104857600,
-                            rollOnFileSizeLimit: true
-                        ))
-                        .WriteTo.Async(a => a.File(
-                            CurrentErrorLogFilePath,
-                            restrictedToMinimumLevel: LogEventLevel.Warning,
-                            outputTemplate: fileOutputTemplate,
-                            formatProvider: CultureInfo.InvariantCulture,
-                            fileSizeLimitBytes: 52428800,
-                            rollOnFileSizeLimit: true
-                        ));
-
-                    var dsn = ResolveSentryDsn();
-                    if (!string.IsNullOrWhiteSpace(dsn))
+                while (EarlyLogBuffer.TryDequeue(out var item))
+                {
+                    using (LogContext.PushProperty(CallerContextPropertyName, item.CallerContext))
+                    using (LogContext.PushProperty("AppLogLevel", item.AppLogLevel))
                     {
-                        config = config.WriteTo.Sentry(o =>
+                        if (item.Exception != null)
                         {
-                            o.Dsn = dsn;
-                            o.InitializeSdk = false;
-                            o.MinimumBreadcrumbLevel = LogEventLevel.Debug;
-                            o.MinimumEventLevel = LogEventLevel.Error;
-                        });
-                    }
-
-                    Log.Logger = config.CreateLogger();
-                    _logger = Log.Logger;
-                    _isSerilogInitialized = true;
-
-                    while (EarlyLogBuffer.TryDequeue(out var item))
-                    {
-                        using (LogContext.PushProperty(CallerContextPropertyName, item.CallerContext))
+                            _logger.Write(item.Level, item.Exception, SerilogMessageTemplate, item.Message);
+                        }
+                        else
                         {
-                            if (item.Exception != null)
-                            {
-                                _logger.Write(item.Level, item.Exception, SerilogMessageTemplate, item.Message);
-                            }
-                            else
-                            {
-                                _logger.Write(item.Level, SerilogMessageTemplate, item.Message);
-                            }
+                            _logger.Write(item.Level, SerilogMessageTemplate, item.Message);
                         }
                     }
+                }
 
-                    var initElapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                    LogEnvironmentDiagnostics(initElapsedMs);
-                    CleanupOldSessionLogs();
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[AppLogger] Full logger initialization notice: {ex.Message}");
-                }
+                var initElapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                LogEnvironmentDiagnostics(initElapsedMs);
+                _ = Task.Run(CleanupOldSessionLogs, CancellationToken.None);
             }
-        });
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AppLogger] Full logger initialization notice: {ex.Message}");
+            }
+        }
     }
 
     private static void EnqueueBreadcrumb(string crumb)
@@ -305,9 +305,10 @@ public static partial class AppLogger
                     file.Delete();
                     deleted++;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Ignore locked files
+                    // Ignore locked or inaccessible log files during rotation
+                    System.Diagnostics.Debug.WriteLine($"[AppLogger] Log file locked: {ex.Message}");
                 }
             }
 
@@ -318,9 +319,10 @@ public static partial class AppLogger
                     file.Delete();
                     deleted++;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Ignore locked files
+                    // Ignore locked or inaccessible log files during rotation
+                    System.Diagnostics.Debug.WriteLine($"[AppLogger] Error log file locked: {ex.Message}");
                 }
             }
 
@@ -406,11 +408,37 @@ public static partial class AppLogger
             var threadId = Environment.CurrentManagedThreadId;
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
+            var levelString = level switch
+            {
+                LogLevel.Trace => "TRACE",
+                LogLevel.Debug => "DEBUG",
+                LogLevel.Info => "INFO ",
+                LogLevel.Warn => "WARN ",
+                LogLevel.Error => "ERROR",
+                LogLevel.Fatal => "FATAL",
+                _ => "INFO "
+            };
+
             var callerContext = $"{file}:{line} -> {member}()";
-            var crumb = $"[{timestamp}] [{level,-5}] [T{threadId:D2}] [{callerContext}] {cleanMessage}";
+            var crumb = $"[{timestamp}] [{levelString}] [T{threadId:D2}] [{callerContext}] {cleanMessage}";
 
             EnqueueBreadcrumb(crumb);
+
             System.Diagnostics.Debug.WriteLine(crumb);
+            Console.WriteLine(crumb);
+
+            switch (level)
+            {
+                case LogLevel.Error or LogLevel.Fatal:
+                    System.Diagnostics.Trace.TraceError("{0}", crumb);
+                    break;
+                case LogLevel.Warn:
+                    System.Diagnostics.Trace.TraceWarning("{0}", crumb);
+                    break;
+                default:
+                    System.Diagnostics.Trace.TraceInformation("{0}", crumb);
+                    break;
+            }
 
             var sentryBreadcrumbLevel = level switch
             {
@@ -441,9 +469,10 @@ public static partial class AppLogger
                     level: sentryBreadcrumbLevel
                 );
             }
-            catch
+            catch (Exception crumbEx)
             {
                 // Suppress Sentry breadcrumb dispatch errors
+                System.Diagnostics.Debug.WriteLine($"[AppLogger] Breadcrumb notice: {crumbEx.Message}");
             }
 
             var serilogLevel = level switch
@@ -460,6 +489,7 @@ public static partial class AppLogger
             if (_logger != null)
             {
                 using (LogContext.PushProperty(CallerContextPropertyName, callerContext))
+                using (LogContext.PushProperty("AppLogLevel", levelString))
                 {
                     if (demystifiedEx != null)
                     {
@@ -473,9 +503,10 @@ public static partial class AppLogger
                                 {
                                     _ = AptabaseExtensions.Instance.TrackError(demystifiedEx, fatal: level == LogLevel.Fatal);
                                 }
-                                catch
+                                catch (Exception aptaEx)
                                 {
                                     // Suppress secondary telemetry exceptions
+                                    System.Diagnostics.Debug.WriteLine($"[AppLogger] Telemetry notice: {aptaEx.Message}");
                                 }
                             }
 
@@ -489,9 +520,10 @@ public static partial class AppLogger
                                     scope.SetTag("installation_id", InstallationId);
                                 });
                             }
-                            catch
+                            catch (Exception sentryEx)
                             {
                                 // Suppress Sentry capture exceptions
+                                System.Diagnostics.Debug.WriteLine($"[AppLogger] Sentry capture notice: {sentryEx.Message}");
                             }
                         }
                     }
@@ -505,9 +537,10 @@ public static partial class AppLogger
                             {
                                 SentrySdk.CaptureMessage(cleanMessage, SentryLevel.Fatal);
                             }
-                            catch
+                            catch (Exception msgEx)
                             {
                                 // Suppress Sentry message exceptions
+                                System.Diagnostics.Debug.WriteLine($"[AppLogger] Sentry message notice: {msgEx.Message}");
                             }
                         }
                     }
@@ -515,7 +548,7 @@ public static partial class AppLogger
             }
             else
             {
-                EarlyLogBuffer.Enqueue((serilogLevel, cleanMessage, demystifiedEx, callerContext));
+                EarlyLogBuffer.Enqueue((serilogLevel, cleanMessage, demystifiedEx, callerContext, levelString));
             }
         }
         catch (Exception dispatchEx)
@@ -550,9 +583,10 @@ public static partial class AppLogger
             Log.CloseAndFlush();
             SentrySdk.FlushAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
         }
-        catch
+        catch (Exception ex)
         {
-            // Suppress flush exceptions
+            // Suppress flush exceptions during shutdown
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Flush notice: {ex.Message}");
         }
     }
 
@@ -563,9 +597,10 @@ public static partial class AppLogger
             Log.CloseAndFlush();
             SentrySdk.Close();
         }
-        catch
+        catch (Exception ex)
         {
             // Suppress shutdown exceptions
+            System.Diagnostics.Debug.WriteLine($"[AppLogger] Shutdown notice: {ex.Message}");
         }
     }
 
@@ -577,6 +612,7 @@ public static partial class AppLogger
         private readonly int _line;
         private readonly long _startTimestamp;
         private readonly long _initialMemory;
+        private readonly int _threadId;
         private bool _isDisposed;
 
         public TimingScope(string operationName, string member, string path, int line)
@@ -585,6 +621,7 @@ public static partial class AppLogger
             _member = member;
             _path = path;
             _line = line;
+            _threadId = Environment.CurrentManagedThreadId;
             _initialMemory = GC.GetAllocatedBytesForCurrentThread();
             _startTimestamp = Stopwatch.GetTimestamp();
             Dispatch(LogLevel.Trace, $"[TIMING:START] {_operationName}", null, null, _member, _path, _line);
@@ -598,14 +635,23 @@ public static partial class AppLogger
             try
             {
                 var elapsed = Stopwatch.GetElapsedTime(_startTimestamp);
-                var memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - _initialMemory;
-                var memFormatted = memoryAllocated >= 1024 ? $"{memoryAllocated / 1024.0:F1} KB" : $"{memoryAllocated} B";
+                if (Environment.CurrentManagedThreadId == _threadId)
+                {
+                    var memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - _initialMemory;
+                    if (memoryAllocated >= 0)
+                    {
+                        var memFormatted = memoryAllocated >= 1024 ? $"{memoryAllocated / 1024.0:F1} KB" : $"{memoryAllocated} B";
+                        Dispatch(LogLevel.Debug, $"[TIMING] {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted})", null, null, _member, _path, _line);
+                        return;
+                    }
+                }
 
-                Dispatch(LogLevel.Debug, $"[TIMING] {_operationName} took {elapsed.TotalMilliseconds:F2} ms (Allocated: {memFormatted})", null, null, _member, _path, _line);
+                Dispatch(LogLevel.Debug, $"[TIMING] {_operationName} took {elapsed.TotalMilliseconds:F2} ms", null, null, _member, _path, _line);
             }
-            catch
+            catch (Exception ex)
             {
                 // Suppress timing scope disposal faults
+                System.Diagnostics.Debug.WriteLine($"[AppLogger] Timing notice: {ex.Message}");
             }
         }
     }

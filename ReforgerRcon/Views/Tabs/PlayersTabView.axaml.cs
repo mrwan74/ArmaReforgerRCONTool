@@ -41,9 +41,8 @@ public partial class PlayersTabView : UserControl
                         }
 
                         var gridKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
-                        ColumnLayoutStorageService.BindPersistence(PlayersGrid, gridKey);
-
                         UpdateColumnVisibilities();
+                        ColumnLayoutStorageService.BindPersistence(PlayersGrid, gridKey);
                         UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
 
                         vm.PropertyChanged += (s, e) =>
@@ -53,8 +52,8 @@ public partial class PlayersTabView : UserControl
                                                  nameof(PlayersViewModel.IsBattlEyeProtocol))
                             {
                                 var activeKey = vm.IsBattlEyeProtocol ? "PlayersGrid_BattlEye" : "PlayersGrid_Reforger";
-                                ColumnLayoutStorageService.RestoreGridState(PlayersGrid, activeKey);
                                 UpdateColumnVisibilities();
+                                ColumnLayoutStorageService.RestoreGridState(PlayersGrid, activeKey);
                                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
                             }
                         };
@@ -67,7 +66,6 @@ public partial class PlayersTabView : UserControl
                 }
             };
 
-            DebugLayoutLoggerService.RegisterDataGrid("PlayersGrid", PlayersGrid);
             AppLogger.Debug($"[PlayersTabView:Init] Initialized in {Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)

@@ -1,0 +1,116 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
+             xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+             xmlns:vm="using:ReforgerRcon.ViewModels"
+             xmlns:services="using:ReforgerRcon.Services"
+             x:Class="ReforgerRcon.Views.Dialogs.BanImportPreviewDialog"
+             x:DataType="vm:BanImportPreviewViewModel">
+
+  <lumina:LuminaCard Padding="24" Width="720" MaxHeight="780" Classes="Elevated">
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="14">
+      
+      <!-- Header -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="{DynamicResource LuminaPrimaryBgBrush}" CornerRadius="8" Padding="8" VerticalAlignment="Center">
+            <icons:MaterialIcon Kind="FileImportOutline" Foreground="{DynamicResource LuminaPrimaryBrush}" Width="24" Height="24" />
+          </Border>
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="Import Bans (.txt)" Classes="SectionTitle" FontSize="18" FontWeight="Bold" />
+            <TextBlock Text="Review, select, and import external server bans from text file" FontSize="12" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+          </StackPanel>
+        </StackPanel>
+
+        <Button Grid.Column="1" Classes="Ghost Icon" Content="✕" Command="{Binding CloseCommand}" ToolTip.Tip="Close" IsEnabled="{Binding !IsExecuting}" VerticalAlignment="Center" />
+      </Grid>
+
+      <!-- Stat Cards Strip -->
+      <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
+        <Border Grid.Column="0" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="10,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="TOTAL IN FILE" Classes="Caption" FontSize="9" />
+            <TextBlock Text="{Binding TotalParsedCount}" FontWeight="Bold" FontSize="14" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="10,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="NEW TO IMPORT" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaSuccessBrush}" />
+            <TextBlock Text="{Binding NewBansCount}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource LuminaSuccessBrush}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="2" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="10,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="DUPLICATES (SKIPPED)" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaWarningBrush}" />
+            <TextBlock Text="{Binding DuplicateCount}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource LuminaWarningBrush}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="3" Background="{DynamicResource LuminaHoverBackgroundBrush}" CornerRadius="6" Padding="10,6">
+          <StackPanel Spacing="2">
+            <TextBlock Text="SELECTED" Classes="Caption" FontSize="9" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+            <TextBlock Text="{Binding SelectedToImportCount}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Preview Table -->
+      <Border Grid.Row="2" Background="{DynamicResource LuminaNavigationPaneBrush}" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="1" CornerRadius="6" Padding="4">
+        <DataGrid ItemsSource="{Binding ImportItems}" 
+                  AutoGenerateColumns="False" 
+                  IsReadOnly="True" 
+                  GridLinesVisibility="Horizontal"
+                  Height="340"
+                  x:CompileBindings="False">
+          <DataGrid.Columns>
+            <DataGridTemplateColumn Header="Import" Width="60">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate x:DataType="services:ParsedImportBanItem">
+                  <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+
+            <DataGridTemplateColumn Header="Status" Width="90">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate x:DataType="services:ParsedImportBanItem">
+                  <Border Padding="4,2" CornerRadius="3" HorizontalAlignment="Center" VerticalAlignment="Center"
+                          Background="{Binding IsDuplicate, Converter={x:Static ObjectConverters.IsNull}}">
+                    <TextBlock Text="{Binding StatusBadge}" FontSize="10" FontWeight="Bold" />
+                  </Border>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+
+            <DataGridTextColumn Header="Identity (GUID / IP)" Binding="{Binding Identity}" Width="240" />
+            <DataGridTextColumn Header="Duration" Binding="{Binding DurationFormatted}" Width="100" />
+            <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </Border>
+
+      <!-- Quick Select Helpers & Status -->
+      <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="6" IsEnabled="{Binding !IsExecuting}">
+          <Button Classes="Small Outline" Content="Select New Only" Command="{Binding SelectAllNewCommand}" />
+          <Button Classes="Small Ghost" Content="Select All" Command="{Binding SelectAllCommand}" />
+          <Button Classes="Small Ghost" Content="Deselect All" Command="{Binding DeselectAllCommand}" />
+        </StackPanel>
+
+        <TextBlock Grid.Column="1" Text="{Binding ProgressStatus}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource LuminaPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsExecuting}" />
+      </Grid>
+
+      <!-- Action Footer -->
+      <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+        <Button Grid.Column="1" Classes="Outline" Content="Cancel" Command="{Binding CloseCommand}" IsEnabled="{Binding !IsExecuting}" />
+        <Button Grid.Column="2" Classes="Primary" 
+                Content="{Binding SelectedToImportCount, StringFormat='Import {0} Ban(s)'}" 
+                Command="{Binding ConfirmImportCommand}" 
+                lumina:LuminaButton.IsLoading="{Binding IsExecuting}"
+                IsEnabled="{Binding !IsExecuting}" />
+      </Grid>
+    </Grid>
+  </lumina:LuminaCard>
+</UserControl>

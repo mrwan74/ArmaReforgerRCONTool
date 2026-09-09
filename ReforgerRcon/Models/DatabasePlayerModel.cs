@@ -79,6 +79,6 @@ public partial class DatabasePlayerModel : ObservableObject
 
     public string FormattedEndpoint => !string.IsNullOrWhiteSpace(LastIpPort) && !LastIpPort.Equals("N/A", StringComparison.OrdinalIgnoreCase) ? LastIpPort : "N/A";
     public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);
-    public string PingDisplay => $"{Ping} ms";
+    public string PingDisplay => Ping < 0 ? $"{Ping}" : $"{Ping} ms";
     public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
 }

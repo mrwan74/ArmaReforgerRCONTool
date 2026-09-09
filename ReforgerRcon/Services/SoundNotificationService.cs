@@ -1,6 +1,7 @@
 ﻿using Avalonia.Platform;
 using NetCoreAudio;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -33,6 +34,7 @@ public static partial class SoundNotificationService
 
     private static readonly SemaphoreSlim AudioLock = new(1, 1);
     private static readonly Player AudioPlayer = new();
+    private static readonly ConcurrentDictionary<SoundAlertType, long> LastPlayedTimestamp = new();
 
     [LibraryImport("user32.dll", EntryPoint = "MessageBeep")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -40,6 +42,18 @@ public static partial class SoundNotificationService
 
     public static void PlayAlert(SoundAlertType alertType)
     {
+        var now = Stopwatch.GetTimestamp();
+        if (LastPlayedTimestamp.TryGetValue(alertType, out var lastTicks))
+        {
+            var elapsedSec = Stopwatch.GetElapsedTime(lastTicks).TotalSeconds;
+            if (elapsedSec < 1.0)
+            {
+                AppLogger.Trace($"[SoundNotificationService:Play] Debounced rapid duplicate alert: {alertType} (Elapsed: {elapsedSec:F2}s).");
+                return;
+            }
+        }
+        LastPlayedTimestamp[alertType] = now;
+
         _ = Task.Run(async () =>
         {
             var sw = Stopwatch.StartNew();
@@ -51,24 +65,16 @@ public static partial class SoundNotificationService
                 try
                 {
                     AppLogger.Debug($"[SoundNotificationService:Play] Playing audio alert: {alertType} on OS: {RuntimeInformation.OSDescription}");
-                }
-                finally
-                {
-                    AudioLock.Release();
-                }
 
-                if (await TryPlayCustomAudioFileAsync(alertType).ConfigureAwait(false))
-                {
-                    sw.Stop();
-                    AppLogger.Info($"[SoundNotificationService:Play] Custom audio played for {alertType} in {sw.ElapsedMilliseconds}ms via NetCoreAudio.");
-                    return;
-                }
+                    if (await TryPlayCustomAudioFileAsync(alertType).ConfigureAwait(false))
+                    {
+                        sw.Stop();
+                        AppLogger.Info($"[SoundNotificationService:Play] Custom audio played for {alertType} in {sw.ElapsedMilliseconds}ms via NetCoreAudio.");
+                        return;
+                    }
 
-                AppLogger.Debug($"[SoundNotificationService:Play] No custom audio asset for {alertType}. Using platform fallback.");
+                    AppLogger.Debug($"[SoundNotificationService:Play] No custom audio asset for {alertType}. Using platform fallback.");
 
-                await AudioLock.WaitAsync().ConfigureAwait(false);
-                try
-                {
                     if (OperatingSystem.IsWindows())
                     {
                         PlayWindowsFallbackSound(alertType);
@@ -89,7 +95,6 @@ public static partial class SoundNotificationService
             }
             catch (Exception ex)
             {
-                sw.Stop();
                 AppLogger.Trace($"[SoundNotificationService:Play] Non-fatal audio notice for {alertType}: {ex.Message}");
             }
         });
@@ -213,9 +218,10 @@ public static partial class SoundNotificationService
                             AppLogger.Trace($"[SoundNotificationService:Stream] Cleaned up temporary audio: {fileToDelete}");
                         }
                     }
-                    catch
+                    catch (Exception cleanupEx)
                     {
-                        // Ignore locked deletion attempts
+                        // Temporary audio file may still be locked by Windows media player; ignore deletion failure
+                        AppLogger.Trace($"[SoundNotificationService:Cleanup] Delayed audio cleanup notice for '{fileToDelete}': {cleanupEx.Message}");
                     }
                 }, TaskScheduler.Default);
             }

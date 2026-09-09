@@ -11,6 +11,7 @@ using System.Text;
 using System.Threading;
 using Aptabase.Avalonia;
 using Avalonia.Threading;
+using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Win32.SafeHandles;
 using ReforgerRcon.Models;
 using Sentry;
@@ -177,15 +178,12 @@ public static partial class CrashReportService
             string memoryDumpStatus;
             if (dumpGenerated)
             {
-                memoryDumpStatus = dumpFileName + " (" + (dumpSize / (1024.0 * 1024.0)).ToString("F2", CultureInfo.InvariantCulture) + " MB, written in " + dumpElapsed.ToString("F2", CultureInfo.InvariantCulture) + "ms)";
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                memoryDumpStatus = "Unavailable";
+                var runtimeEngine = OperatingSystem.IsWindows() ? "Windows Native MiniDump" : ".NET DiagnosticsClient CoreDump";
+                memoryDumpStatus = $"{dumpFileName} ({dumpSize / (1024.0 * 1024.0):F2} MB, written in {dumpElapsed:F2}ms via {runtimeEngine})";
             }
             else
             {
-                memoryDumpStatus = "Windows Minidump Native Only (Cross-Platform Text Snapshot Captured)";
+                memoryDumpStatus = "Unavailable";
             }
 
             var sb = new StringBuilder();
@@ -350,6 +348,10 @@ public static partial class CrashReportService
             Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine("[CRITICAL FAULT] " + source + " (Install ID: " + AppLogger.InstallationId + ") -> " + ex.GetType().Name + ": " + ex.Message);
             Console.Error.WriteLine("Report written to: " + textFilePath);
+            if (dumpGenerated)
+            {
+                Console.Error.WriteLine("Memory dump written to: " + dumpFilePath);
+            }
             Console.ResetColor();
         }
     }
@@ -357,54 +359,76 @@ public static partial class CrashReportService
     private static bool TryWriteMemoryDump(string dmpPath, out long dumpSize)
     {
         dumpSize = 0;
-        if (!OperatingSystem.IsWindows())
+        var start = Stopwatch.GetTimestamp();
+
+        if (OperatingSystem.IsWindows())
         {
-            return false;
+            try
+            {
+                using var process = Process.GetCurrentProcess();
+                SafeLogAppInfo($"[CrashReportService:MiniDump] Initiating Windows native MiniDumpWriteDump (PID={process.Id}, Threads={process.Threads.Count}, Path='{dmpPath}')...");
+
+                using var fileStream = new FileStream(dmpPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+
+                const MiniDumpTypes dumpFlags = MiniDumpTypes.MiniDumpWithDataSegs |
+                                                MiniDumpTypes.MiniDumpWithHandleData |
+                                                MiniDumpTypes.MiniDumpWithUnloadedModules |
+                                                MiniDumpTypes.MiniDumpWithThreadInfo |
+                                                MiniDumpTypes.MiniDumpWithProcessThreadData |
+                                                MiniDumpTypes.MiniDumpWithFullMemoryInfo;
+
+                bool success = MiniDumpWriteDump(
+                    process.Handle,
+                    (uint)process.Id,
+                    fileStream.SafeFileHandle,
+                    dumpFlags,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    IntPtr.Zero);
+
+                if (success)
+                {
+                    fileStream.Flush();
+                    dumpSize = new FileInfo(dmpPath).Length;
+                    var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                    SafeLogAppInfo($"[CrashReportService:MiniDump] Windows memory dump created successfully at '{dmpPath}' ({dumpSize / 1024} KB) in {elapsedMs:F2}ms.");
+                    return true;
+                }
+
+                int errorCode = Marshal.GetLastWin32Error();
+                SafeLogAppError($"[CrashReportService:MiniDump] MiniDumpWriteDump returned false with Win32 Error Code: {errorCode}.", new Win32Exception(errorCode));
+                return false;
+            }
+            catch (Exception ex)
+            {
+                SafeLogAppError($"[CrashReportService:MiniDump] Exception during Windows memory dump generation at '{dmpPath}': {ex.Message}", ex);
+                return false;
+            }
         }
 
-        var start = Stopwatch.GetTimestamp();
+        // Cross-platform Linux / macOS core dump generation via DiagnosticsClient
         try
         {
-            using var process = Process.GetCurrentProcess();
-            using var fileStream = new FileStream(dmpPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+            var pid = Environment.ProcessId;
+            SafeLogAppInfo($"[CrashReportService:DiagnosticsClient] Attempting cross-platform core dump on {RuntimeInformation.OSDescription} via DiagnosticsClient (PID={pid}, TargetPath='{dmpPath}')...");
 
-            const MiniDumpTypes dumpFlags = MiniDumpTypes.MiniDumpWithDataSegs |
-                                            MiniDumpTypes.MiniDumpWithHandleData |
-                                            MiniDumpTypes.MiniDumpWithUnloadedModules |
-                                            MiniDumpTypes.MiniDumpWithThreadInfo |
-                                            MiniDumpTypes.MiniDumpWithProcessThreadData |
-                                            MiniDumpTypes.MiniDumpWithFullMemoryInfo;
+            var client = new DiagnosticsClient(pid);
+            client.WriteDump(DumpType.Normal, dmpPath, logDumpGeneration: false);
 
-            bool success = MiniDumpWriteDump(
-                process.Handle,
-                (uint)process.Id,
-                fileStream.SafeFileHandle,
-                dumpFlags,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                IntPtr.Zero);
-
-            if (success)
+            if (File.Exists(dmpPath))
             {
-                fileStream.Flush();
                 dumpSize = new FileInfo(dmpPath).Length;
                 var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                SafeLogAppInfo("[CrashReportService:MiniDump] Memory dump created at '" + dmpPath + "' (" + (dumpSize / 1024).ToString(CultureInfo.InvariantCulture) + " KB) in " + elapsedMs.ToString("F2", CultureInfo.InvariantCulture) + "ms.");
+                SafeLogAppInfo($"[CrashReportService:DiagnosticsClient] Cross-platform core dump created successfully at '{dmpPath}' ({dumpSize / 1024} KB) in {elapsedMs:F2}ms.");
                 return true;
             }
 
-            int errorCode = Marshal.GetLastWin32Error();
-            SafeLogAppError("[CrashReportService:MiniDump] MiniDumpWriteDump returned false with Win32 Error Code: " + errorCode.ToString(CultureInfo.InvariantCulture) + ".", new Win32Exception(errorCode));
-            return false;
-        }
-        catch (IOException ioEx)
-        {
-            SafeLogAppError("[CrashReportService:MiniDump] I/O error creating dump file '" + dmpPath + "': " + ioEx.Message, ioEx);
+            SafeLogAppWarn($"[CrashReportService:DiagnosticsClient] DiagnosticsClient returned without creating dump file at '{dmpPath}'.");
             return false;
         }
         catch (Exception ex)
         {
-            SafeLogAppError("[CrashReportService:MiniDump] Failed generating memory dump at '" + dmpPath + "'.", ex);
+            SafeLogAppWarn($"[CrashReportService:DiagnosticsClient] Core dump generation bypassed on {RuntimeInformation.OSDescription}: {ex.Message}");
             return false;
         }
     }

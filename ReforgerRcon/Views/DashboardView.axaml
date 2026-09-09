@@ -89,61 +89,63 @@
       </Grid>
     </Border>
 
-    <!-- Main View Area -->
+    <!-- Main View Area with Lazy Tabs -->
     <Grid Grid.Row="3">
-      <Grid IsVisible="{Binding !IsConsoleFullscreen}">
-        <Grid.RowDefinitions>
-          <RowDefinition Height="{Binding TabsRowHeight}" />
-          <RowDefinition Height="{Binding SplitterRowHeight}" />
-          <RowDefinition Height="{Binding ConsoleRowHeight}" />
-        </Grid.RowDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="{Binding TabsRowHeight}" />
+        <RowDefinition Height="{Binding SplitterRowHeight}" />
+        <RowDefinition Height="{Binding ConsoleRowHeight}" />
+      </Grid.RowDefinitions>
 
-        <TabControl Grid.Row="0" Classes="Line" SelectedIndex="0" Padding="0">
-          <TabItem Header="Players">
-            <tabs:PlayersTabView DataContext="{Binding PlayersTab}" />
-          </TabItem>
-          <TabItem Header="Bans">
-            <tabs:BansTabView DataContext="{Binding BansTab}" />
-          </TabItem>
-          <TabItem Header="Players Database">
-            <tabs:DatabaseTabView DataContext="{Binding DatabaseTab}" />
-          </TabItem>
-          <TabItem Header="Settings">
-            <tabs:SettingsTabView DataContext="{Binding SettingsTab}" />
-          </TabItem>
-        </TabControl>
+      <!-- Lazy-loaded Tabs via ContentTemplate -->
+      <TabControl Grid.Row="0" Classes="Line" SelectedIndex="0" Padding="0" IsVisible="{Binding !IsConsoleFullscreen}">
+        <TabControl.DataTemplates>
+          <DataTemplate DataType="{x:Type vm:PlayersViewModel}">
+            <tabs:PlayersTabView />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:BansViewModel}">
+            <tabs:BansTabView />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:DatabaseViewModel}">
+            <tabs:DatabaseTabView />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+            <tabs:SettingsTabView />
+          </DataTemplate>
+        </TabControl.DataTemplates>
 
-        <GridSplitter Grid.Row="1"
-                      ResizeDirection="Rows"
-                      Height="8"
-                      Background="{DynamicResource LuminaSurfaceBrush}"
-                      ShowsPreview="True"
-                      IsVisible="{Binding !IsConsoleDetached}">
-          <GridSplitter.Template>
-            <ControlTemplate>
-              <Border Background="{DynamicResource LuminaSurfaceBrush}" 
-                      BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" 
-                      BorderThickness="0,1" 
-                      Height="8" 
-                      Cursor="SizeNorthSouth">
-                <Border Width="48" Height="3" CornerRadius="1.5"
-                        Background="{DynamicResource LuminaBorderDefaultBrush}"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" />
-              </Border>
-            </ControlTemplate>
-          </GridSplitter.Template>
-        </GridSplitter>
+        <TabItem Header="Players" Content="{Binding PlayersTab}" />
+        <TabItem Header="Bans" Content="{Binding BansTab}" />
+        <TabItem Header="Players Database" Content="{Binding DatabaseTab}" />
+        <TabItem Header="Settings" Content="{Binding SettingsTab}" />
+      </TabControl>
 
-        <Border Grid.Row="2" 
-                Background="{DynamicResource LuminaSurfaceBrush}" 
-                BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" 
-                BorderThickness="0,1,0,0"
-                IsVisible="{Binding !IsConsoleDetached}">
-          <tabs:ConsoleTabView DataContext="{Binding ConsoleTab}" />
-        </Border>
-      </Grid>
+      <GridSplitter Grid.Row="1"
+                    ResizeDirection="Rows"
+                    Height="8"
+                    Background="{DynamicResource LuminaSurfaceBrush}"
+                    ShowsPreview="True"
+                    IsVisible="{Binding !IsConsoleDetached}">
+        <GridSplitter.Template>
+          <ControlTemplate>
+            <Border Background="{DynamicResource LuminaSurfaceBrush}" 
+                    BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" 
+                    BorderThickness="0,1" 
+                    Height="8" 
+                    Cursor="SizeNorthSouth">
+              <Border Width="48" Height="3" CornerRadius="1.5"
+                      Background="{DynamicResource LuminaBorderDefaultBrush}"
+                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+          </ControlTemplate>
+        </GridSplitter.Template>
+      </GridSplitter>
 
-      <Border IsVisible="{Binding IsConsoleFullscreen}" Background="{DynamicResource LuminaSurfaceBrush}">
+      <Border Grid.Row="2" 
+              Background="{DynamicResource LuminaSurfaceBrush}" 
+              BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" 
+              BorderThickness="0,1,0,0"
+              IsVisible="{Binding !IsConsoleDetached}">
         <tabs:ConsoleTabView DataContext="{Binding ConsoleTab}" />
       </Border>
     </Grid>
@@ -193,6 +195,9 @@
           </DataTemplate>
           <DataTemplate DataType="{x:Type vm:GeoIpUpdateDialogViewModel}">
             <dialogs:GeoIpUpdateDialog />
+          </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:BanImportPreviewViewModel}">
+            <dialogs:BanImportPreviewDialog />
           </DataTemplate>
         </ContentControl.DataTemplates>
       </ContentControl>

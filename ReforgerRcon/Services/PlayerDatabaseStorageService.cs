@@ -25,9 +25,30 @@ public record DatabaseStatistics(
     long WalSizeBytes,
     string DatabasePath);
 
+public record DatabaseQueryParameters(
+    RconProtocol Protocol,
+    int PageIndex = 1,
+    int PageSize = 50,
+    string? SearchQuery = null,
+    string? SearchType = null,
+    string? SortBy = null,
+    bool SortAscending = true);
+
+public record PagedResult<T>(
+    List<T> Items,
+    int TotalCount,
+    int PageIndex,
+    int PageSize);
+
 public static class PlayerDatabaseStorageService
 {
-    private const string DatabaseErrorTitle = "Database Error";
+    private const string DatabaseErrorTitle = "Database Storage Error";
+
+    private const string ContextThreadId = "thread_id";
+    private const string ContextSqliteErrorCode = "sqlite_error_code";
+    private const string ContextErrorMessage = "error_message";
+    private const string ContextRowsAffected = "rows_affected";
+    private const string ContextDurationMs = "duration_ms";
 
     private const string ParamName = "@Name";
     private const string ParamGuid = "@Guid";
@@ -46,39 +67,52 @@ public static class PlayerDatabaseStorageService
     private const string ParamId = "@Id";
     private const string ParamActiveGuidsJson = "@ActiveGuidsJson";
     private const string ParamActiveUidsJson = "@ActiveUidsJson";
+    private const string ParamSearchQuery = "@SearchQuery";
+    private const string ParamLimit = "@Limit";
+    private const string ParamOffset = "@Offset";
 
     private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
     private static readonly string DatabaseFile = Path.Combine(StorageDirectory, "player_database.db");
-    private static readonly string ConnectionString = $"Data Source={DatabaseFile};Mode=ReadWriteCreate;Pooling=True;";
+    private static readonly string ConnectionString = $"Data Source={DatabaseFile};Mode=ReadWriteCreate;Cache=Shared;Pooling=True;";
 
     private static readonly SemaphoreSlim DbLock = new(1, 1);
-    private static bool _isInitialized;
+    private static volatile bool _isInitialized;
 
     public static async Task InitializeAsync()
     {
         if (_isInitialized) return;
 
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?>
+        {
+            [ContextThreadId] = threadId,
+            ["db_file"] = DatabaseFile
+        };
+
+        AppLogger.Debug("[PlayerDatabase:Init] Acquiring SQLite initialization lock...", context);
         await DbLock.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_isInitialized) return;
 
+            AppLogger.Debug("[PlayerDatabase:Init] Initializing SQLitePCL provider batteries...", context);
             SQLitePCL.Batteries_V2.Init();
 
             using var timing = AppLogger.Measure("PlayerDatabaseStorageService.InitializeAsync");
             using var op = Operation.Begin("Initialize SQLite Database Engine at {DatabaseFile}", DatabaseFile);
             var transaction = SentrySdk.StartTransaction("InitSqliteDb", "db.sqlite.init");
-            AppLogger.Info($"[PlayerDatabase:Init] Initializing SQLite database engine at '{DatabaseFile}'...");
+            AppLogger.Info($"[PlayerDatabase:Init] Configuring SQLite relational database engine at '{DatabaseFile}'...", context);
 
             if (!Directory.Exists(StorageDirectory))
             {
-                Directory.CreateDirectory(StorageDirectory);
-                AppLogger.Debug($"[PlayerDatabase:Init] Created storage directory: {StorageDirectory}");
+                var createdDir = Directory.CreateDirectory(StorageDirectory);
+                AppLogger.Info($"[PlayerDatabase:Init] Created SQLite storage directory: '{createdDir.FullName}'.", context);
             }
 
             await using var connection = new SqliteConnection(ConnectionString);
             await connection.OpenAsync().ConfigureAwait(false);
+            AppLogger.Debug($"[PlayerDatabase:Init] SQLite physical connection opened (EngineVersion='{connection.ServerVersion}').", context);
 
             var pragmaSpan = transaction.StartChild("db.sqlite.pragmas", "Configure SQLite Pragmas");
             await ExecutePragmasAsync(connection).ConfigureAwait(false);
@@ -92,17 +126,27 @@ public static class PlayerDatabaseStorageService
             op.Complete();
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[PlayerDatabase:Init] SQLite dual-protocol database engine ready in {elapsedMs:F2}ms.");
+            context[ContextDurationMs] = elapsedMs;
+            AppLogger.Info($"[PlayerDatabase:Init] SQLite dual-protocol database schema and WAL engine ready in {elapsedMs:F2}ms.", context);
         }
         catch (SqliteException sqlEx)
         {
-            AppLogger.Fatal($"[PlayerDatabase:Init] SQLite error initializing database at '{DatabaseFile}': {sqlEx.Message} (Error code: {sqlEx.SqliteErrorCode})", sqlEx);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
+            context["sqlite_extended_code"] = sqlEx.SqliteExtendedErrorCode;
+            AppLogger.Fatal($"[PlayerDatabase:Init] SQLite error initializing database at '{DatabaseFile}' after {elapsedMs:F2}ms: {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite engine initialization failed (Code: {sqlEx.SqliteErrorCode}): {sqlEx.Message}");
             CrashReportService.HandleFatalException("PlayerDatabaseStorageService.InitializeAsync", sqlEx, isTerminating: false);
             throw;
         }
         catch (Exception ex)
         {
-            AppLogger.Fatal($"[PlayerDatabase:Init] Unexpected fatal error initializing SQLite engine: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Fatal($"[PlayerDatabase:Init] Unexpected error initializing SQLite engine after {elapsedMs:F2}ms: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Database storage access failure: {ex.Message}");
             CrashReportService.HandleFatalException("PlayerDatabaseStorageService.InitializeAsync", ex, isTerminating: false);
             throw;
         }
@@ -126,7 +170,7 @@ public static class PlayerDatabaseStorageService
         command.CommandText = pragmaSql;
         await command.ExecuteNonQueryAsync().ConfigureAwait(false);
         var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-        AppLogger.Debug($"[PlayerDatabase:Pragmas] WAL PRAGMAs configured in {elapsedMs:F2}ms.");
+        AppLogger.Debug($"[PlayerDatabase:Pragmas] WAL PRAGMAs executed in {elapsedMs:F2}ms (journal_mode=WAL, synchronous=NORMAL, busy_timeout=5000ms).");
     }
 
     private static async Task CreateSchemaAsync(SqliteConnection connection)
@@ -167,6 +211,8 @@ public static class PlayerDatabaseStorageService
             CREATE INDEX IF NOT EXISTS IX_BattlEyePlayers_LastSeenUtc ON BattlEyePlayers(LastSeenUtc);
             CREATE INDEX IF NOT EXISTS IX_BattlEyePlayers_IsWatchlisted ON BattlEyePlayers(IsWatchlisted);
             CREATE INDEX IF NOT EXISTS IX_BattlEyePlayers_IsOnline ON BattlEyePlayers(IsOnline);
+            CREATE INDEX IF NOT EXISTS IX_BattlEyePlayers_CountryName ON BattlEyePlayers(CountryName COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS IX_BattlEyePlayers_LastIpPort ON BattlEyePlayers(LastIpPort);
 
             CREATE INDEX IF NOT EXISTS IX_ReforgerPlayers_Name ON ReforgerPlayers(Name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS IX_ReforgerPlayers_LastSeenUtc ON ReforgerPlayers(LastSeenUtc);
@@ -178,7 +224,7 @@ public static class PlayerDatabaseStorageService
         command.CommandText = schemaSql;
         await command.ExecuteNonQueryAsync().ConfigureAwait(false);
         var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-        AppLogger.Info($"[PlayerDatabase:Schema] Dual-protocol SQLite schemas verified in {elapsedMs:F2}ms.");
+        AppLogger.Debug($"[PlayerDatabase:Schema] Relational database schemas and indices verified in {elapsedMs:F2}ms.");
     }
 
     private static List<string> ParseAliases(string? rawJson)
@@ -188,12 +234,14 @@ public static class PlayerDatabaseStorageService
         {
             return JsonSerializer.Deserialize<List<string>>(rawJson) ?? [];
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            AppLogger.Warn($"[PlayerDatabase:Aliases] Failed parsing JSON aliases '{rawJson}': {ex.Message}. Falling back to delimiter parsing.");
             return [.. rawJson.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            AppLogger.Error($"[PlayerDatabase:Aliases] Unexpected error parsing aliases: {ex.Message}", ex);
             return [];
         }
     }
@@ -204,15 +252,30 @@ public static class PlayerDatabaseStorageService
         {
             return JsonSerializer.Serialize(aliases.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            AppLogger.Error($"[PlayerDatabase:Aliases] Failed serializing aliases to JSON: {ex.Message}", ex);
             return "[]";
         }
     }
 
     public static async Task SetPlayerOfflineAsync(string identifier, RconProtocol protocol)
     {
-        if (string.IsNullOrWhiteSpace(identifier)) return;
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            AppLogger.Warn("[PlayerDatabase:Offline] SetPlayerOfflineAsync rejected: Target identifier is null or empty string.");
+            return;
+        }
+
+        var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?>
+        {
+            ["identifier"] = identifier,
+            ["protocol"] = protocol.ToString(),
+            [ContextThreadId] = threadId
+        };
+
         await InitializeAsync().ConfigureAwait(false);
         await DbLock.WaitAsync().ConfigureAwait(false);
         try
@@ -227,12 +290,28 @@ public static class PlayerDatabaseStorageService
             await using var command = connection.CreateCommand();
             command.CommandText = sql;
             command.Parameters.AddWithValue(ParamId, identifier.Trim());
-            await command.ExecuteNonQueryAsync().ConfigureAwait(false);
-            AppLogger.Trace($"[PlayerDatabase:Offline] Player '{identifier}' marked offline in SQLite ({protocol}).");
+            var affected = await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextRowsAffected] = affected;
+            context[ContextDurationMs] = elapsedMs;
+
+            AppLogger.Trace($"[PlayerDatabase:Offline] Marked player '{identifier}' offline in {elapsedMs:F2}ms (RowsAffected={affected}).", context);
+        }
+        catch (SqliteException sqlEx)
+        {
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
+            AppLogger.Error($"[PlayerDatabase:Offline] SQLite error setting '{identifier}' offline after {elapsedMs:F2}ms: {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed updating player offline status in SQLite: {sqlEx.Message}");
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[PlayerDatabase:Offline] Failed setting player '{identifier}' offline: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:Offline] Error setting player '{identifier}' offline after {elapsedMs:F2}ms: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Unexpected error updating player state: {ex.Message}");
         }
         finally
         {
@@ -244,9 +323,17 @@ public static class PlayerDatabaseStorageService
     public static async Task RecordSeenPlayersAsync(IEnumerable<PlayerModel> activePlayers, RconProtocol protocol)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
         await InitializeAsync().ConfigureAwait(false);
         var playersList = activePlayers.ToList();
+        if (playersList.Count == 0) return;
 
+        var context = new Dictionary<string, object?>
+        {
+            ["player_count"] = playersList.Count,
+            ["protocol"] = protocol.ToString(),
+            [ContextThreadId] = threadId
+        };
         using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.RecordSeenPlayersAsync({playersList.Count} players, {protocol})");
         var transaction = SentrySdk.StartTransaction("RecordSeenPlayers", "db.sqlite.batch_upsert");
         await DbLock.WaitAsync().ConfigureAwait(false);
@@ -270,6 +357,9 @@ public static class PlayerDatabaseStorageService
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
+                    context["distinct_guids_count"] = activeGuids.Count;
+                    AppLogger.Debug($"[PlayerDatabase:Upsert] Recording {playersList.Count} active BattlEye players ({activeGuids.Count} valid GUIDs)...", context);
+
                     const string setOfflineBeSql = @"
                         UPDATE BattlEyePlayers 
                         SET IsOnline = 0 
@@ -281,7 +371,32 @@ public static class PlayerDatabaseStorageService
                     setOfflineCmd.Transaction = (SqliteTransaction)dbTransaction;
                     setOfflineCmd.CommandText = setOfflineBeSql;
                     setOfflineCmd.Parameters.AddWithValue(ParamActiveGuidsJson, JsonSerializer.Serialize(activeGuids));
-                    await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    var setOfflineRows = await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    AppLogger.Trace($"[PlayerDatabase:Upsert] Marked {setOfflineRows} non-active BattlEye players offline.");
+
+                    var existingBeMap = new Dictionary<string, (string Name, List<string> Aliases)>(StringComparer.OrdinalIgnoreCase);
+                    const string fetchBeSql = @"
+                        SELECT BattlEyeGuid, Name, Aliases 
+                        FROM BattlEyePlayers 
+                        WHERE BattlEyeGuid IN (SELECT value FROM json_each(@ActiveGuidsJson));
+                    ";
+
+                    var fetchStart = Stopwatch.GetTimestamp();
+                    await using var fetchBeCmd = connection.CreateCommand();
+                    fetchBeCmd.Transaction = (SqliteTransaction)dbTransaction;
+                    fetchBeCmd.CommandText = fetchBeSql;
+                    fetchBeCmd.Parameters.AddWithValue(ParamActiveGuidsJson, JsonSerializer.Serialize(activeGuids));
+                    await using (var reader = await fetchBeCmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    {
+                        while (await reader.ReadAsync().ConfigureAwait(false))
+                        {
+                            var guid = reader.GetString(0);
+                            var name = await reader.IsDBNullAsync(1).ConfigureAwait(false) ? string.Empty : reader.GetString(1);
+                            var aliasesJson = await reader.IsDBNullAsync(2).ConfigureAwait(false) ? "[]" : reader.GetString(2);
+                            existingBeMap[guid] = (name, ParseAliases(aliasesJson));
+                        }
+                    }
+                    AppLogger.Trace($"[PlayerDatabase:Upsert] Pre-fetched {existingBeMap.Count} existing BattlEye records in {Stopwatch.GetElapsedTime(fetchStart).TotalMilliseconds:F2}ms.");
 
                     const string upsertBeSql = @"
                         INSERT INTO BattlEyePlayers (
@@ -295,8 +410,10 @@ public static class PlayerDatabaseStorageService
                         )
                         ON CONFLICT(BattlEyeGuid) DO UPDATE SET
                             Name = excluded.Name,
+                            Aliases = excluded.Aliases,
+                            HasAliases = excluded.HasAliases,
                             LastIpPort = CASE WHEN excluded.LastIpPort <> '' AND excluded.LastIpPort <> 'N/A' THEN excluded.LastIpPort ELSE BattlEyePlayers.LastIpPort END,
-                            Ping = CASE WHEN excluded.Ping > 0 THEN excluded.Ping ELSE BattlEyePlayers.Ping END,
+                            Ping = CASE WHEN excluded.Ping <> 0 THEN excluded.Ping ELSE BattlEyePlayers.Ping END,
                             IsOnline = 1,
                             CountryCode = CASE WHEN excluded.CountryCode <> 'xx' THEN excluded.CountryCode ELSE BattlEyePlayers.CountryCode END,
                             CountryName = CASE WHEN excluded.CountryName <> 'Unknown Region' THEN excluded.CountryName ELSE BattlEyePlayers.CountryName END,
@@ -340,6 +457,26 @@ public static class PlayerDatabaseStorageService
                             continue;
                         }
 
+                        var distinctAliases = new HashSet<string>(player.Aliases ?? [], StringComparer.OrdinalIgnoreCase);
+                        if (existingBeMap.TryGetValue(beGuid, out var existingRecord))
+                        {
+                            foreach (var oldAlias in existingRecord.Aliases)
+                            {
+                                distinctAliases.Add(oldAlias);
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(existingRecord.Name) &&
+                                !string.Equals(existingRecord.Name, player.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                distinctAliases.Add(existingRecord.Name);
+                                AppLogger.Warn($"[PlayerDatabase:AliasDetected] Player alias transition detected for GUID '{beGuid}': '{existingRecord.Name}' -> '{player.Name}'. Current aliases count: {distinctAliases.Count}");
+                            }
+                        }
+
+                        distinctAliases.Remove(player.Name);
+                        player.Aliases = [.. distinctAliases];
+                        player.HasAliases = distinctAliases.Count > 0;
+
                         string lastIpPort = string.Empty;
                         if (!string.IsNullOrWhiteSpace(player.Ip) && !player.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
                         {
@@ -372,6 +509,9 @@ public static class PlayerDatabaseStorageService
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
+                    context["distinct_uids_count"] = activeUids.Count;
+                    AppLogger.Debug($"[PlayerDatabase:Upsert] Recording {playersList.Count} active Reforger players ({activeUids.Count} valid UIDs)...", context);
+
                     const string setOfflineRefSql = @"
                         UPDATE ReforgerPlayers 
                         SET IsOnline = 0 
@@ -383,7 +523,32 @@ public static class PlayerDatabaseStorageService
                     setOfflineCmd.Transaction = (SqliteTransaction)dbTransaction;
                     setOfflineCmd.CommandText = setOfflineRefSql;
                     setOfflineCmd.Parameters.AddWithValue(ParamActiveUidsJson, JsonSerializer.Serialize(activeUids));
-                    await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    var setOfflineRows = await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    AppLogger.Trace($"[PlayerDatabase:Upsert] Marked {setOfflineRows} non-active Reforger players offline.");
+
+                    var existingRefMap = new Dictionary<string, (string Name, List<string> Aliases)>(StringComparer.OrdinalIgnoreCase);
+                    const string fetchRefSql = @"
+                        SELECT ReforgerUid, Name, Aliases 
+                        FROM ReforgerPlayers 
+                        WHERE ReforgerUid IN (SELECT value FROM json_each(@ActiveUidsJson));
+                    ";
+
+                    var fetchStart = Stopwatch.GetTimestamp();
+                    await using var fetchRefCmd = connection.CreateCommand();
+                    fetchRefCmd.Transaction = (SqliteTransaction)dbTransaction;
+                    fetchRefCmd.CommandText = fetchRefSql;
+                    fetchRefCmd.Parameters.AddWithValue(ParamActiveUidsJson, JsonSerializer.Serialize(activeUids));
+                    await using (var reader = await fetchRefCmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    {
+                        while (await reader.ReadAsync().ConfigureAwait(false))
+                        {
+                            var uid = reader.GetString(0);
+                            var name = await reader.IsDBNullAsync(1).ConfigureAwait(false) ? string.Empty : reader.GetString(1);
+                            var aliasesJson = await reader.IsDBNullAsync(2).ConfigureAwait(false) ? "[]" : reader.GetString(2);
+                            existingRefMap[uid] = (name, ParseAliases(aliasesJson));
+                        }
+                    }
+                    AppLogger.Trace($"[PlayerDatabase:Upsert] Pre-fetched {existingRefMap.Count} existing Reforger records in {Stopwatch.GetElapsedTime(fetchStart).TotalMilliseconds:F2}ms.");
 
                     const string upsertReforgerSql = @"
                         INSERT INTO ReforgerPlayers (
@@ -395,6 +560,8 @@ public static class PlayerDatabaseStorageService
                         )
                         ON CONFLICT(ReforgerUid) DO UPDATE SET
                             Name = excluded.Name,
+                            Aliases = excluded.Aliases,
+                            HasAliases = excluded.HasAliases,
                             IsOnline = 1,
                             LastSeenUtc = excluded.LastSeenUtc;
                     ";
@@ -424,6 +591,26 @@ public static class PlayerDatabaseStorageService
                             continue;
                         }
 
+                        var distinctAliases = new HashSet<string>(player.Aliases ?? [], StringComparer.OrdinalIgnoreCase);
+                        if (existingRefMap.TryGetValue(reforgerUid, out var existingRecord))
+                        {
+                            foreach (var oldAlias in existingRecord.Aliases)
+                            {
+                                distinctAliases.Add(oldAlias);
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(existingRecord.Name) &&
+                                !string.Equals(existingRecord.Name, player.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                distinctAliases.Add(existingRecord.Name);
+                                AppLogger.Warn($"[PlayerDatabase:AliasDetected] Player alias transition detected for UID '{reforgerUid}': '{existingRecord.Name}' -> '{player.Name}'. Current aliases count: {distinctAliases.Count}");
+                            }
+                        }
+
+                        distinctAliases.Remove(player.Name);
+                        player.Aliases = [.. distinctAliases];
+                        player.HasAliases = distinctAliases.Count > 0;
+
                         pUid.Value = reforgerUid;
                         pName.Value = player.Name;
                         pComment.Value = player.Comment ?? string.Empty;
@@ -440,26 +627,35 @@ public static class PlayerDatabaseStorageService
                 await dbTransaction.CommitAsync().ConfigureAwait(false);
                 transaction.Finish(SpanStatus.Ok);
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                AppLogger.Debug($"[PlayerDatabase:Upsert] Batch committed for {playersList.Count} {protocol} active players in {elapsedMs:F2}ms (Processed: {updatedCount}).");
+                context["updated_count"] = updatedCount;
+                context[ContextDurationMs] = elapsedMs;
+                AppLogger.Info($"[PlayerDatabase:Upsert] Successfully committed batch upsert of {updatedCount}/{playersList.Count} {protocol} active player records in {elapsedMs:F2}ms.", context);
             }
             catch (Exception txEx)
             {
                 await dbTransaction.RollbackAsync().ConfigureAwait(false);
                 transaction.Finish(SpanStatus.InternalError);
-                AppLogger.Error($"[PlayerDatabase:Upsert] Rollback during RecordSeenPlayersAsync ({protocol}): {txEx.Message}", txEx);
+                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                context[ContextErrorMessage] = txEx.Message;
+                context[ContextDurationMs] = elapsedMs;
+                AppLogger.Error($"[PlayerDatabase:Upsert] Transaction rolled back during RecordSeenPlayersAsync ({protocol}) after {elapsedMs:F2}ms: {txEx.Message}", txEx, context);
+                ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Transaction failure during player batch update: {txEx.Message}");
                 throw;
             }
         }
         catch (SqliteException sqlEx)
         {
             transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase:Upsert] SQLite error in RecordSeenPlayersAsync: {sqlEx.Message} (Code: {sqlEx.SqliteErrorCode})", sqlEx);
-            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed updating SQLite player records.", "SQLITE_ERR");
+            context["sqlite_error"] = sqlEx.Message;
+            AppLogger.Error($"[PlayerDatabase:Upsert] SQLite error in RecordSeenPlayersAsync: {sqlEx.Message} (Code: {sqlEx.SqliteErrorCode})", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite error updating player records: {sqlEx.Message}");
         }
         catch (Exception ex)
         {
             transaction.Finish(SpanStatus.UnknownError);
-            AppLogger.Error($"[PlayerDatabase:Upsert] Unexpected error during RecordSeenPlayersAsync ({protocol}): {ex.Message}", ex);
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:Upsert] Unexpected error in RecordSeenPlayersAsync: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed updating active players in SQLite: {ex.Message}");
         }
         finally
         {
@@ -470,6 +666,13 @@ public static class PlayerDatabaseStorageService
     public static async Task SetAllOfflineAsync(RconProtocol? protocol = null)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?>
+        {
+            ["protocol"] = protocol?.ToString() ?? "All",
+            [ContextThreadId] = threadId
+        };
+
         await InitializeAsync().ConfigureAwait(false);
         using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.SetAllOfflineAsync({protocol?.ToString() ?? "All"})");
         var transaction = SentrySdk.StartTransaction("SetAllOffline", "db.sqlite.set_offline");
@@ -488,6 +691,7 @@ public static class PlayerDatabaseStorageService
                 cmdBe.CommandText = cmdBeSql;
                 var beRows = await cmdBe.ExecuteNonQueryAsync().ConfigureAwait(false);
                 affected += beRows;
+                AppLogger.Trace($"[PlayerDatabase:Offline] Marked {beRows} BattlEye players offline.");
             }
 
             if (protocol == null || protocol == RconProtocol.ReforgerBuiltIn)
@@ -497,16 +701,28 @@ public static class PlayerDatabaseStorageService
                 cmdRef.CommandText = cmdRefSql;
                 var refRows = await cmdRef.ExecuteNonQueryAsync().ConfigureAwait(false);
                 affected += refRows;
+                AppLogger.Trace($"[PlayerDatabase:Offline] Marked {refRows} Reforger players offline.");
             }
 
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[PlayerDatabase:Offline] Total {affected} player record(s) set to offline in {elapsedMs:F2}ms.");
+            context[ContextRowsAffected] = affected;
+            context[ContextDurationMs] = elapsedMs;
+            AppLogger.Info($"[PlayerDatabase:Offline] Total {affected} player record(s) set to offline in {elapsedMs:F2}ms ({protocol?.ToString() ?? "All"}).", context);
+        }
+        catch (SqliteException sqlEx)
+        {
+            transaction.Finish(SpanStatus.InternalError);
+            context["sqlite_error"] = sqlEx.Message;
+            AppLogger.Error($"[PlayerDatabase:Offline] SQLite error setting players offline: {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed updating offline states in SQLite: {sqlEx.Message}");
         }
         catch (Exception ex)
         {
             transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase:Offline] Error setting players offline in SQLite: {ex.Message}", ex);
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:Offline] Error setting players offline in SQLite: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Unexpected error marking players offline: {ex.Message}");
         }
         finally
         {
@@ -514,150 +730,255 @@ public static class PlayerDatabaseStorageService
         }
     }
 
-    public static async Task<List<DatabasePlayerModel>> GetAllAsync(RconProtocol protocol)
+    [SuppressMessage("Security", "S2077:Use a parameterized query instead of string formatting", Justification = "Dynamic WHERE and ORDER BY clauses use strictly sanitized and validated internal enum mappings with parameterized query parameters")]
+    public static async Task<PagedResult<DatabasePlayerModel>> GetPagedAsync(DatabaseQueryParameters parameters, CancellationToken cancellationToken = default)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
         await InitializeAsync().ConfigureAwait(false);
-        using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.GetAllAsync({protocol})");
-        var transaction = SentrySdk.StartTransaction($"GetAll_{protocol}", "db.sqlite.query_all");
-        await DbLock.WaitAsync().ConfigureAwait(false);
+        using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.GetPagedAsync(Page={parameters.PageIndex}, Size={parameters.PageSize}, Protocol={parameters.Protocol})");
+        var transaction = SentrySdk.StartTransaction($"GetPaged_{parameters.Protocol}", "db.sqlite.query_paged");
 
-        var result = new List<DatabasePlayerModel>();
+        var cleanQuery = parameters.SearchQuery?.Trim();
+        var context = new Dictionary<string, object?>
+        {
+            ["protocol"] = parameters.Protocol.ToString(),
+            ["page_index"] = parameters.PageIndex,
+            ["page_size"] = parameters.PageSize,
+            ["search_query"] = AppLogger.SanitizeSensitiveData(cleanQuery),
+            ["search_type"] = parameters.SearchType ?? "All",
+            ["sort_by"] = parameters.SortBy ?? "Default",
+            ["sort_ascending"] = parameters.SortAscending,
+            [ContextThreadId] = threadId
+        };
+
+        AppLogger.Debug($"[PlayerDatabase:QueryPaged] Executing paginated query on {parameters.Protocol} (Page={parameters.PageIndex}, Size={parameters.PageSize})...", context);
+
+        await DbLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        var items = new List<DatabasePlayerModel>();
+        int totalCount = 0;
+
+        int safePageSize = Math.Clamp(parameters.PageSize, 1, 500);
+        int safePageIndex = Math.Max(1, parameters.PageIndex);
+        int offset = (safePageIndex - 1) * safePageSize;
 
         try
         {
             await using var connection = new SqliteConnection(ConnectionString);
-            await connection.OpenAsync().ConfigureAwait(false);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            if (protocol == RconProtocol.BattlEye)
+            bool isBe = parameters.Protocol == RconProtocol.BattlEye;
+            string tableName = isBe ? "BattlEyePlayers" : "ReforgerPlayers";
+
+            var whereClauses = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(cleanQuery))
             {
-                const string queryBeSql = @"
+                switch (parameters.SearchType)
+                {
+                    case "Name":
+                        whereClauses.Add("(Name LIKE @SearchQuery OR Aliases LIKE @SearchQuery)");
+                        break;
+                    case "UID":
+                        if (isBe)
+                            whereClauses.Add("(BattlEyeGuid LIKE @SearchQuery)");
+                        else
+                            whereClauses.Add("(ReforgerUid LIKE @SearchQuery)");
+                        break;
+                    case "Comment":
+                        whereClauses.Add("(Comment LIKE @SearchQuery)");
+                        break;
+                    default:
+                        if (isBe)
+                            whereClauses.Add("(Name LIKE @SearchQuery OR Aliases LIKE @SearchQuery OR BattlEyeGuid LIKE @SearchQuery OR Comment LIKE @SearchQuery OR LastIpPort LIKE @SearchQuery OR Location LIKE @SearchQuery)");
+                        else
+                            whereClauses.Add("(Name LIKE @SearchQuery OR Aliases LIKE @SearchQuery OR ReforgerUid LIKE @SearchQuery OR Comment LIKE @SearchQuery)");
+                        break;
+                }
+            }
+
+            string whereSql = whereClauses.Count > 0 ? " WHERE " + string.Join(" AND ", whereClauses) : string.Empty;
+
+            string countSql = $"SELECT COUNT(*) FROM {tableName}{whereSql};";
+            var countStart = Stopwatch.GetTimestamp();
+            await using (var countCmd = connection.CreateCommand())
+            {
+                countCmd.CommandText = countSql;
+                if (!string.IsNullOrWhiteSpace(cleanQuery))
+                {
+                    countCmd.Parameters.AddWithValue(ParamSearchQuery, $"%{cleanQuery}%");
+                }
+
+                var countObj = await countCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+                totalCount = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
+            }
+            var countElapsedMs = Stopwatch.GetElapsedTime(countStart).TotalMilliseconds;
+            AppLogger.Trace($"[PlayerDatabase:QueryPaged] COUNT query executed in {countElapsedMs:F2}ms (MatchingRows={totalCount}).");
+
+            string orderBySql = ResolveOrderBySql(parameters.SortBy, parameters.SortAscending, isBe);
+
+            string querySql = isBe
+                ? $@"
                     SELECT 
                         BattlEyeGuid, Name, LastIpPort, Ping, IsOnline, Comment,
                         IsWatchlisted, HasAliases, CountryCode, CountryName, Location, TimeZone,
                         Aliases, FirstSeenUtc, LastSeenUtc
                     FROM BattlEyePlayers
-                    ORDER BY LastSeenUtc DESC;
-                ";
-
-                await using var cmd = connection.CreateCommand();
-                cmd.CommandText = queryBeSql;
-                await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-                int rowNumber = 1;
-
-                while (await reader.ReadAsync().ConfigureAwait(false))
-                {
-                    var guid = reader.GetString(0);
-                    var name = await reader.IsDBNullAsync(1).ConfigureAwait(false) ? string.Empty : reader.GetString(1);
-                    var lastIpPort = await reader.IsDBNullAsync(2).ConfigureAwait(false) ? string.Empty : reader.GetString(2);
-                    var ping = await reader.IsDBNullAsync(3).ConfigureAwait(false) ? 0 : reader.GetInt32(3);
-                    var isOnline = !await reader.IsDBNullAsync(4).ConfigureAwait(false) && reader.GetInt32(4) == 1;
-                    var comment = await reader.IsDBNullAsync(5).ConfigureAwait(false) ? string.Empty : reader.GetString(5);
-                    var isWatchlisted = !await reader.IsDBNullAsync(6).ConfigureAwait(false) && reader.GetInt32(6) == 1;
-                    var hasAliases = !await reader.IsDBNullAsync(7).ConfigureAwait(false) && reader.GetInt32(7) == 1;
-                    var countryCode = await reader.IsDBNullAsync(8).ConfigureAwait(false) ? "xx" : reader.GetString(8);
-                    var countryName = await reader.IsDBNullAsync(9).ConfigureAwait(false) ? "Unknown Region" : reader.GetString(9);
-                    var location = await reader.IsDBNullAsync(10).ConfigureAwait(false) ? string.Empty : reader.GetString(10);
-                    var timeZone = await reader.IsDBNullAsync(11).ConfigureAwait(false) ? string.Empty : reader.GetString(11);
-                    var aliasesJson = await reader.IsDBNullAsync(12).ConfigureAwait(false) ? "[]" : reader.GetString(12);
-                    var lastSeenStr = await reader.IsDBNullAsync(14).ConfigureAwait(false) ? string.Empty : reader.GetString(14);
-
-                    DateTime.TryParse(lastSeenStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastSeen);
-
-                    var playerModel = new DatabasePlayerModel
-                    {
-                        Id = rowNumber++,
-                        Uid = guid,
-                        Guid = guid,
-                        BattlEyeGuid = guid,
-                        ReforgerUid = string.Empty,
-                        Name = name,
-                        LastIpPort = lastIpPort,
-                        Ping = ping,
-                        IsOnline = isOnline,
-                        Comment = comment,
-                        IsWatchlisted = isWatchlisted,
-                        HasAliases = hasAliases,
-                        Country = new CountryInfo { Code = countryCode, Name = countryName },
-                        Location = location,
-                        TimeZone = timeZone,
-                        Aliases = ParseAliases(aliasesJson),
-                        LastSeen = lastSeen
-                    };
-
-                    result.Add(playerModel);
-                }
-            }
-            else
-            {
-                const string queryReforgerSql = @"
+                    {whereSql}
+                    ORDER BY {orderBySql}
+                    LIMIT @Limit OFFSET @Offset;"
+                : $@"
                     SELECT 
                         ReforgerUid, Name, IsOnline, Comment, IsWatchlisted, HasAliases,
                         Aliases, FirstSeenUtc, LastSeenUtc
                     FROM ReforgerPlayers
-                    ORDER BY LastSeenUtc DESC;
-                ";
+                    {whereSql}
+                    ORDER BY {orderBySql}
+                    LIMIT @Limit OFFSET @Offset;";
 
-                await using var cmd = connection.CreateCommand();
-                cmd.CommandText = queryReforgerSql;
-                await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-                int rowNumber = 1;
-
-                while (await reader.ReadAsync().ConfigureAwait(false))
+            var fetchStart = Stopwatch.GetTimestamp();
+            await using (var cmd = connection.CreateCommand())
+            {
+                cmd.CommandText = querySql;
+                if (!string.IsNullOrWhiteSpace(cleanQuery))
                 {
-                    var uid = reader.GetString(0);
-                    var name = await reader.IsDBNullAsync(1).ConfigureAwait(false) ? string.Empty : reader.GetString(1);
-                    var isOnline = !await reader.IsDBNullAsync(2).ConfigureAwait(false) && reader.GetInt32(2) == 1;
-                    var comment = await reader.IsDBNullAsync(3).ConfigureAwait(false) ? string.Empty : reader.GetString(3);
-                    var isWatchlisted = !await reader.IsDBNullAsync(4).ConfigureAwait(false) && reader.GetInt32(4) == 1;
-                    var hasAliases = !await reader.IsDBNullAsync(5).ConfigureAwait(false) && reader.GetInt32(5) == 1;
-                    var aliasesJson = await reader.IsDBNullAsync(6).ConfigureAwait(false) ? "[]" : reader.GetString(6);
-                    var lastSeenStr = await reader.IsDBNullAsync(8).ConfigureAwait(false) ? string.Empty : reader.GetString(8);
+                    cmd.Parameters.AddWithValue(ParamSearchQuery, $"%{cleanQuery}%");
+                }
+                cmd.Parameters.AddWithValue(ParamLimit, safePageSize);
+                cmd.Parameters.AddWithValue(ParamOffset, offset);
 
-                    DateTime.TryParse(lastSeenStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastSeen);
+                await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+                int rowNumber = offset + 1;
 
-                    var playerModel = new DatabasePlayerModel
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    if (isBe)
                     {
-                        Id = rowNumber++,
-                        Uid = uid,
-                        Guid = string.Empty,
-                        ReforgerUid = uid,
-                        BattlEyeGuid = string.Empty,
-                        Name = name,
-                        LastIpPort = "N/A",
-                        Ping = 0,
-                        IsOnline = isOnline,
-                        Comment = comment,
-                        IsWatchlisted = isWatchlisted,
-                        HasAliases = hasAliases,
-                        Country = new CountryInfo { Code = "xx", Name = "Unknown Region" },
-                        Location = string.Empty,
-                        TimeZone = string.Empty,
-                        Aliases = ParseAliases(aliasesJson),
-                        LastSeen = lastSeen
-                    };
+                        var guid = reader.GetString(0);
+                        var name = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(1);
+                        var lastIpPort = await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(2);
+                        var ping = await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? 0 : reader.GetInt32(3);
+                        var isOnline = !await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) && reader.GetInt32(4) == 1;
+                        var comment = await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(5);
+                        var isWatchlisted = !await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) && reader.GetInt32(6) == 1;
+                        var hasAliases = !await reader.IsDBNullAsync(7, cancellationToken).ConfigureAwait(false) && reader.GetInt32(7) == 1;
+                        var countryCode = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? "xx" : reader.GetString(8);
+                        var countryName = await reader.IsDBNullAsync(9, cancellationToken).ConfigureAwait(false) ? "Unknown Region" : reader.GetString(9);
+                        var location = await reader.IsDBNullAsync(10, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(10);
+                        var timeZone = await reader.IsDBNullAsync(11, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(11);
+                        var aliasesJson = await reader.IsDBNullAsync(12, cancellationToken).ConfigureAwait(false) ? "[]" : reader.GetString(12);
+                        var lastSeenStr = await reader.IsDBNullAsync(14, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(14);
 
-                    result.Add(playerModel);
+                        DateTime.TryParse(lastSeenStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastSeen);
+
+                        items.Add(new DatabasePlayerModel
+                        {
+                            Id = rowNumber++,
+                            Uid = guid,
+                            Guid = guid,
+                            BattlEyeGuid = guid,
+                            ReforgerUid = string.Empty,
+                            Name = name,
+                            LastIpPort = lastIpPort,
+                            Ping = ping,
+                            IsOnline = isOnline,
+                            Comment = comment,
+                            IsWatchlisted = isWatchlisted,
+                            HasAliases = hasAliases,
+                            Country = new CountryInfo { Code = countryCode, Name = countryName },
+                            Location = location,
+                            TimeZone = timeZone,
+                            Aliases = ParseAliases(aliasesJson),
+                            LastSeen = lastSeen
+                        });
+                    }
+                    else
+                    {
+                        var uid = reader.GetString(0);
+                        var name = await reader.IsDBNullAsync(1, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(1);
+                        var isOnline = !await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) && reader.GetInt32(2) == 1;
+                        var comment = await reader.IsDBNullAsync(3, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(3);
+                        var isWatchlisted = !await reader.IsDBNullAsync(4, cancellationToken).ConfigureAwait(false) && reader.GetInt32(4) == 1;
+                        var hasAliases = !await reader.IsDBNullAsync(5, cancellationToken).ConfigureAwait(false) && reader.GetInt32(5) == 1;
+                        var aliasesJson = await reader.IsDBNullAsync(6, cancellationToken).ConfigureAwait(false) ? "[]" : reader.GetString(6);
+                        var lastSeenStr = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false) ? string.Empty : reader.GetString(8);
+
+                        DateTime.TryParse(lastSeenStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lastSeen);
+
+                        items.Add(new DatabasePlayerModel
+                        {
+                            Id = rowNumber++,
+                            Uid = uid,
+                            Guid = string.Empty,
+                            ReforgerUid = uid,
+                            BattlEyeGuid = string.Empty,
+                            Name = name,
+                            LastIpPort = "N/A",
+                            Ping = 0,
+                            IsOnline = isOnline,
+                            Comment = comment,
+                            IsWatchlisted = isWatchlisted,
+                            HasAliases = hasAliases,
+                            Country = new CountryInfo { Code = "xx", Name = "Unknown Region" },
+                            Location = string.Empty,
+                            TimeZone = string.Empty,
+                            Aliases = ParseAliases(aliasesJson),
+                            LastSeen = lastSeen
+                        });
+                    }
                 }
             }
+            var fetchElapsedMs = Stopwatch.GetElapsedTime(fetchStart).TotalMilliseconds;
 
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Debug($"[PlayerDatabase:Query] Retrieved {result.Count} {protocol} records from SQLite in {elapsedMs:F2}ms.");
-            return result;
+            context["items_returned"] = items.Count;
+            context["total_matches"] = totalCount;
+            context["fetch_latency_ms"] = fetchElapsedMs;
+            context["total_latency_ms"] = elapsedMs;
+
+            AppLogger.TrackEvent("database_query_executed", new Dictionary<string, object>
+            {
+                ["protocol"] = parameters.Protocol.ToString(),
+                ["page_index"] = safePageIndex,
+                ["page_size"] = safePageSize,
+                ["has_search_query"] = !string.IsNullOrWhiteSpace(cleanQuery),
+                ["search_type"] = parameters.SearchType ?? "All",
+                ["sort_field"] = parameters.SortBy ?? "Default",
+                ["sort_ascending"] = parameters.SortAscending,
+                ["total_records"] = totalCount,
+                ["query_latency_ms"] = elapsedMs
+            });
+
+            AppLogger.Debug($"[PlayerDatabase:QueryPaged] Paginated fetch complete in {elapsedMs:F2}ms ({items.Count}/{totalCount} items, FetchOnly={fetchElapsedMs:F2}ms).", context);
+            return new PagedResult<DatabasePlayerModel>(items, totalCount, safePageIndex, safePageSize);
+        }
+        catch (OperationCanceledException opEx)
+        {
+            transaction.Finish(SpanStatus.Cancelled);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            AppLogger.Trace($"[PlayerDatabase:QueryPaged] Query canceled after {elapsedMs:F2}ms for Page {safePageIndex}: {opEx.Message}", context);
+            return new PagedResult<DatabasePlayerModel>([], 0, safePageIndex, safePageSize);
         }
         catch (SqliteException sqlEx)
         {
             transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase:Query] SQLite error in GetAllAsync ({protocol}): {sqlEx.Message}", sqlEx);
-            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed querying players from database.", "SQLITE_QUERY_ERR");
-            return [];
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
+            context["sqlite_extended_code"] = sqlEx.SqliteExtendedErrorCode;
+            AppLogger.Error($"[PlayerDatabase:QueryPaged] SQLite error in GetPagedAsync after {elapsedMs:F2}ms: {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite query failure (Code: {sqlEx.SqliteErrorCode}): {sqlEx.Message}");
+            return new PagedResult<DatabasePlayerModel>([], 0, safePageIndex, safePageSize);
         }
         catch (Exception ex)
         {
             transaction.Finish(SpanStatus.UnknownError);
-            AppLogger.Error($"[PlayerDatabase:Query] Error querying players ({protocol}) from SQLite: {ex.Message}", ex);
-            return [];
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:QueryPaged] Error in GetPagedAsync after {elapsedMs:F2}ms: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed querying player database records: {ex.Message}");
+            return new PagedResult<DatabasePlayerModel>([], 0, safePageIndex, safePageSize);
         }
         finally
         {
@@ -665,12 +986,58 @@ public static class PlayerDatabaseStorageService
         }
     }
 
+    private static string ResolveOrderBySql(string? sortBy, bool ascending, bool isBattlEye)
+    {
+        string dir = ascending ? "ASC" : "DESC";
+
+        if (isBattlEye)
+        {
+            return sortBy switch
+            {
+                "Status" => $"(CASE WHEN IsWatchlisted = 1 THEN 3 WHEN IsOnline = 1 THEN 2 WHEN HasAliases = 1 THEN 1 ELSE 0 END) {dir}, LastSeenUtc DESC",
+                "Country" => $"CountryName COLLATE NOCASE {dir}, Name COLLATE NOCASE ASC",
+                "Name" => $"Name COLLATE NOCASE {dir}",
+                "BattlEye GUID" => $"BattlEyeGuid {dir}",
+                "IP:Port" => $"LastIpPort {dir}",
+                "Ping" => $"Ping {dir}",
+                "Comment" => $"Comment COLLATE NOCASE {dir}",
+                _ => $"LastSeenUtc {dir}"
+            };
+        }
+
+        return sortBy switch
+        {
+            "Status" => $"(CASE WHEN IsWatchlisted = 1 THEN 3 WHEN IsOnline = 1 THEN 2 WHEN HasAliases = 1 THEN 1 ELSE 0 END) {dir}, LastSeenUtc DESC",
+            "Name" => $"Name COLLATE NOCASE {dir}",
+            "BattlEye GUID" or "Player UID" => $"ReforgerUid {dir}",
+            "Comment" => $"Comment COLLATE NOCASE {dir}",
+            _ => $"LastSeenUtc {dir}"
+        };
+    }
+
+    public static async Task<List<DatabasePlayerModel>> GetAllAsync(RconProtocol protocol)
+    {
+        AppLogger.Debug($"[PlayerDatabase:GetAll] GetAllAsync invoked for {protocol}. Forwarding to GetPagedAsync with PageSize=100000...");
+        var result = await GetPagedAsync(new DatabaseQueryParameters(protocol, 1, 100000, null, null, null, false)).ConfigureAwait(false);
+        return result.Items;
+    }
+
     public static async Task UpdateCommentAsync(string identifier, string comment, RconProtocol protocol)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?>
+        {
+            ["identifier"] = identifier,
+            ["protocol"] = protocol.ToString(),
+            ["comment_len"] = comment?.Length ?? 0,
+            [ContextThreadId] = threadId
+        };
+
         await InitializeAsync().ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(identifier))
         {
+            AppLogger.Warn("[PlayerDatabase:Comment] UpdateCommentAsync rejected: Target identifier is empty.", null, context);
             return;
         }
 
@@ -695,13 +1062,27 @@ public static class PlayerDatabaseStorageService
 
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[PlayerDatabase:Comment] Updated comment for {protocol} player '{identifier}' in {elapsedMs:F2}ms (Rows={affected}, Comment='{comment}').");
+            context[ContextRowsAffected] = affected;
+            context[ContextDurationMs] = elapsedMs;
+            AppLogger.Info($"[PlayerDatabase:Comment] Updated comment for '{identifier}' in {elapsedMs:F2}ms (RowsAffected={affected}).", context);
+        }
+        catch (SqliteException sqlEx)
+        {
+            transaction.Finish(SpanStatus.InternalError);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
+            AppLogger.Error($"[PlayerDatabase:Comment] SQLite error updating comment for '{identifier}': {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite error saving comment: {sqlEx.Message}");
         }
         catch (Exception ex)
         {
             transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase:Comment] Failed updating comment for '{identifier}' in SQLite ({protocol}): {ex.Message}", ex);
-            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed saving comment to database.", "SQLITE_COMMENT_ERR");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:Comment] Error updating comment for '{identifier}': {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed saving comment to database: {ex.Message}");
         }
         finally
         {
@@ -712,9 +1093,19 @@ public static class PlayerDatabaseStorageService
     public static async Task SetWatchlistStatusAsync(string identifier, bool isWatchlisted, RconProtocol protocol)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?>
+        {
+            ["identifier"] = identifier,
+            ["is_watchlisted"] = isWatchlisted,
+            ["protocol"] = protocol.ToString(),
+            [ContextThreadId] = threadId
+        };
+
         await InitializeAsync().ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(identifier))
         {
+            AppLogger.Warn("[PlayerDatabase:Watchlist] SetWatchlistStatusAsync rejected: Target identifier is empty.", null, context);
             return;
         }
 
@@ -739,13 +1130,27 @@ public static class PlayerDatabaseStorageService
 
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[PlayerDatabase:Watchlist] Set watchlist={isWatchlisted} for {protocol} player '{identifier}' in {elapsedMs:F2}ms (Rows={affected}).");
+            context[ContextRowsAffected] = affected;
+            context[ContextDurationMs] = elapsedMs;
+            AppLogger.Info($"[PlayerDatabase:Watchlist] Set Watchlisted={isWatchlisted} for '{identifier}' in {elapsedMs:F2}ms (RowsAffected={affected}).", context);
+        }
+        catch (SqliteException sqlEx)
+        {
+            transaction.Finish(SpanStatus.InternalError);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
+            AppLogger.Error($"[PlayerDatabase:Watchlist] SQLite error updating watchlist for '{identifier}': {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite error updating watchlist status: {sqlEx.Message}");
         }
         catch (Exception ex)
         {
             transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase:Watchlist] Failed updating watchlist status for '{identifier}' ({protocol}): {ex.Message}", ex);
-            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed updating watchlist status.", "SQLITE_WATCHLIST_ERR");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:Watchlist] Error updating watchlist status for '{identifier}': {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed updating watchlist status: {ex.Message}");
         }
         finally
         {
@@ -756,10 +1161,25 @@ public static class PlayerDatabaseStorageService
     public static async Task ClearDatabaseAsync(RconProtocol? protocol = null)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?>
+        {
+            ["protocol"] = protocol?.ToString() ?? "All",
+            [ContextThreadId] = threadId
+        };
+
         await InitializeAsync().ConfigureAwait(false);
         using var timing = AppLogger.Measure($"PlayerDatabaseStorageService.ClearDatabaseAsync({protocol?.ToString() ?? "All"})");
         var transaction = SentrySdk.StartTransaction("ClearDatabase", "db.sqlite.purge");
         await DbLock.WaitAsync().ConfigureAwait(false);
+
+        int purgedCount = 0;
+        long dbSizeBefore = File.Exists(DatabaseFile) ? new FileInfo(DatabaseFile).Length : 0;
+        var walFile = $"{DatabaseFile}-wal";
+        long walSizeBefore = File.Exists(walFile) ? new FileInfo(walFile).Length : 0;
+
+        context["size_before_bytes"] = dbSizeBefore;
+        context["wal_before_bytes"] = walSizeBefore;
 
         try
         {
@@ -775,7 +1195,9 @@ public static class PlayerDatabaseStorageService
                     await using var delBe = connection.CreateCommand();
                     delBe.Transaction = (SqliteTransaction)dbTransaction;
                     delBe.CommandText = delBeSql;
-                    await delBe.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    int deletedBe = await delBe.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    purgedCount += deletedBe;
+                    AppLogger.Info($"[PlayerDatabase:Purge] Purged {deletedBe} BattlEye player records.");
                 }
 
                 if (protocol == null || protocol == RconProtocol.ReforgerBuiltIn)
@@ -784,7 +1206,9 @@ public static class PlayerDatabaseStorageService
                     await using var delRef = connection.CreateCommand();
                     delRef.Transaction = (SqliteTransaction)dbTransaction;
                     delRef.CommandText = delRefSql;
-                    await delRef.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    int deletedRef = await delRef.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    purgedCount += deletedRef;
+                    AppLogger.Info($"[PlayerDatabase:Purge] Purged {deletedRef} Reforger player records.");
                 }
 
                 await dbTransaction.CommitAsync().ConfigureAwait(false);
@@ -792,25 +1216,57 @@ public static class PlayerDatabaseStorageService
             catch (Exception txEx)
             {
                 await dbTransaction.RollbackAsync().ConfigureAwait(false);
-                AppLogger.Error($"[PlayerDatabase:Purge] Rollback during database purge: {txEx.Message}", txEx);
+                var txElapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                context[ContextErrorMessage] = txEx.Message;
+                context[ContextDurationMs] = txElapsedMs;
+                AppLogger.Error($"[PlayerDatabase:Purge] Purge transaction rolled back after {txElapsedMs:F2}ms: {txEx.Message}", txEx, context);
+                ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Database purge transaction failed: {txEx.Message}");
                 throw;
             }
 
+            var vacuumStart = Stopwatch.GetTimestamp();
             await using (var vacuumCmd = connection.CreateCommand())
             {
                 vacuumCmd.CommandText = "VACUUM;";
                 await vacuumCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
+            var vacuumElapsedMs = Stopwatch.GetElapsedTime(vacuumStart).TotalMilliseconds;
+            AppLogger.Debug($"[PlayerDatabase:Purge] SQLite VACUUM completed in {vacuumElapsedMs:F2}ms.");
 
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Info($"[PlayerDatabase:Purge] Purged historical player database in {elapsedMs:F2}ms.");
+            context["purged_count"] = purgedCount;
+            context[ContextDurationMs] = elapsedMs;
+
+            AppLogger.TrackEvent("database_maintenance_performed", new Dictionary<string, object>
+            {
+                ["operation"] = "clear_records",
+                ["protocol"] = protocol?.ToString() ?? "All",
+                ["records_purged"] = purgedCount,
+                ["database_size_bytes_before"] = dbSizeBefore,
+                ["wal_size_bytes"] = walSizeBefore,
+                ["duration_ms"] = elapsedMs
+            });
+
+            AppLogger.Info($"[PlayerDatabase:Purge] Historical database purge complete in {elapsedMs:F2}ms ({purgedCount} rows purged).", context);
+        }
+        catch (SqliteException sqlEx)
+        {
+            transaction.Finish(SpanStatus.InternalError);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
+            AppLogger.Error($"[PlayerDatabase:Purge] SQLite error during purge: {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite error clearing database: {sqlEx.Message}");
         }
         catch (Exception ex)
         {
             transaction.Finish(SpanStatus.InternalError);
-            AppLogger.Error($"[PlayerDatabase:Purge] Error clearing player database in SQLite: {ex.Message}", ex);
-            ToastNotificationService.Instance.ShowToast(DatabaseErrorTitle, "Failed clearing player database.", "SQLITE_PURGE_ERR");
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextErrorMessage] = ex.Message;
+            AppLogger.Error($"[PlayerDatabase:Purge] Error clearing player database in SQLite: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed clearing player database: {ex.Message}");
         }
         finally
         {
@@ -818,12 +1274,15 @@ public static class PlayerDatabaseStorageService
         }
     }
 
-    public static async Task<DatabaseStatistics> GetDatabaseStatisticsAsync()
+    public static async Task<DatabaseStatistics> GetDatabaseStatisticsAsync(CancellationToken cancellationToken = default)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
+        var threadId = Environment.CurrentManagedThreadId;
+        var context = new Dictionary<string, object?> { [ContextThreadId] = threadId };
+
         await InitializeAsync().ConfigureAwait(false);
         using var timing = AppLogger.Measure("PlayerDatabaseStorageService.GetDatabaseStatisticsAsync");
-        await DbLock.WaitAsync().ConfigureAwait(false);
+        await DbLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         int totalReforger = 0;
         int totalBattlEye = 0;
@@ -833,7 +1292,7 @@ public static class PlayerDatabaseStorageService
         try
         {
             await using var connection = new SqliteConnection(ConnectionString);
-            await connection.OpenAsync().ConfigureAwait(false);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
             const string statsSql = @"
                 SELECT 
@@ -845,8 +1304,8 @@ public static class PlayerDatabaseStorageService
 
             await using var command = connection.CreateCommand();
             command.CommandText = statsSql;
-            await using var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
-            if (await reader.ReadAsync().ConfigureAwait(false))
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 totalReforger = reader.GetInt32(0);
                 totalBattlEye = reader.GetInt32(1);
@@ -859,12 +1318,38 @@ public static class PlayerDatabaseStorageService
             long walSize = File.Exists(walFile) ? new FileInfo(walFile).Length : 0;
 
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Debug($"[PlayerDatabase:Stats] Stats query complete in {elapsedMs:F2}ms (Reforger={totalReforger}, BattlEye={totalBattlEye}, Online={onlinePlayers}, Watchlisted={watchlistedPlayers}, Size={dbSize / 1024.0:F1} KB, WAL={walSize / 1024.0:F1} KB).");
+            context["reforger_count"] = totalReforger;
+            context["battleye_count"] = totalBattlEye;
+            context["online_count"] = onlinePlayers;
+            context["watchlisted_count"] = watchlistedPlayers;
+            context["db_size_bytes"] = dbSize;
+            context["wal_size_bytes"] = walSize;
+            context["query_duration_ms"] = elapsedMs;
+
+            AppLogger.Debug($"[PlayerDatabase:Stats] Database statistics queried in {elapsedMs:F2}ms.", context);
             return new DatabaseStatistics(totalReforger, totalBattlEye, onlinePlayers, watchlistedPlayers, dbSize, walSize, DatabaseFile);
+        }
+        catch (OperationCanceledException)
+        {
+            AppLogger.Trace("[PlayerDatabase:Stats] Statistics query canceled by CancellationToken.", context);
+            return new DatabaseStatistics(0, 0, 0, 0, 0, 0, DatabaseFile);
+        }
+        catch (SqliteException sqlEx)
+        {
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context["sqlite_error"] = sqlEx.Message;
+            context[ContextDurationMs] = elapsedMs;
+            AppLogger.Error($"[PlayerDatabase:Stats] SQLite error querying database statistics: {sqlEx.Message}", sqlEx, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"SQLite error retrieving stats: {sqlEx.Message}");
+            return new DatabaseStatistics(0, 0, 0, 0, 0, 0, DatabaseFile);
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[PlayerDatabase:Stats] Failed querying SQLite database statistics: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextErrorMessage] = ex.Message;
+            context[ContextDurationMs] = elapsedMs;
+            AppLogger.Error($"[PlayerDatabase:Stats] Error querying SQLite database statistics: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed retrieving database statistics: {ex.Message}");
             return new DatabaseStatistics(0, 0, 0, 0, 0, 0, DatabaseFile);
         }
         finally

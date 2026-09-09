@@ -1,3 +1,4 @@
+using MaxMind.Db;
 using MaxMind.GeoIP2;
 using MaxMind.GeoIP2.Exceptions;
 using ReforgerRcon.Models;
@@ -212,6 +213,15 @@ public static class LocationFormatter
 
 public static class GeoIpService
 {
+    private const string GeoIpUpdateCycleCompletedEvent = "geoip_update_cycle_completed";
+    private const string IsForcedKey = "is_forced";
+    private const string CityStatusKey = "city_status";
+    private const string CountryStatusKey = "country_status";
+    private const string HasCustomCredentialsKey = "has_custom_credentials";
+    private const string DurationMsKey = "duration_ms";
+    private const string SuccessKey = "success";
+    private const string StatusFailed = "Failed";
+
     private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
     private static readonly string GeoIpDirectory = Path.Combine(StorageDirectory, "geoip");
     private static readonly string ConfFile = Path.Combine(GeoIpDirectory, "GeoIP.conf");
@@ -219,8 +229,12 @@ public static class GeoIpService
     private static readonly string CityDbPath = Path.Combine(GeoIpDirectory, "GeoLite2-City.mmdb");
     private static readonly string CountryDbPath = Path.Combine(GeoIpDirectory, "GeoLite2-Country.mmdb");
 
-    private static DatabaseReader? _cityReader;
-    private static DatabaseReader? _countryReader;
+    [SuppressMessage("Security", "S1313:Do not hardcode IP addresses", Justification = "Standard public DNS probe address used solely to prime memory-mapped database index structures")]
+    private static readonly IPAddress PrewarmProbeAddress = new([8, 8, 8, 8]);
+
+    private static volatile DatabaseReader? _cityReader;
+    private static volatile DatabaseReader? _countryReader;
+    private static volatile bool _isInitialized;
     private static readonly Lock ReaderLock = new();
     private static readonly ConcurrentDictionary<string, GeoLocationResult> LookupCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -247,8 +261,24 @@ public static class GeoIpService
         }
     }
 
-    public static DateTime? CityDbLastModified => File.Exists(CityDbPath) ? File.GetLastWriteTimeUtc(CityDbPath) : null;
-    public static DateTime? CountryDbLastModified => File.Exists(CountryDbPath) ? File.GetLastWriteTimeUtc(CountryDbPath) : null;
+    public static DateTime? CityDbLastModified
+    {
+        get
+        {
+            var resolved = ResolveEffectiveDbPath("GeoLite2-City.mmdb", CityDbPath);
+            return File.Exists(resolved) ? File.GetLastWriteTimeUtc(resolved) : null;
+        }
+    }
+
+    public static DateTime? CountryDbLastModified
+    {
+        get
+        {
+            var resolved = ResolveEffectiveDbPath("GeoLite2-Country.mmdb", CountryDbPath);
+            return File.Exists(resolved) ? File.GetLastWriteTimeUtc(resolved) : null;
+        }
+    }
+
     public static bool IsUpdating { get; private set; }
 
     public static event Action? DatabasesUpdated;
@@ -271,21 +301,19 @@ public static class GeoIpService
 
     private static void EnsureInitialized()
     {
-        if (_cityReader == null && _countryReader == null)
-        {
-            lock (ReaderLock)
-            {
-                if (_cityReader == null && _countryReader == null)
-                {
-                    if (!Directory.Exists(GeoIpDirectory))
-                    {
-                        Directory.CreateDirectory(GeoIpDirectory);
-                    }
+        if (_isInitialized) return;
 
-                    DeployBundledDatabasesIfMissing();
-                    ReloadReaders();
-                }
+        lock (ReaderLock)
+        {
+            if (_isInitialized) return;
+
+            if (!Directory.Exists(GeoIpDirectory))
+            {
+                Directory.CreateDirectory(GeoIpDirectory);
             }
+
+            ReloadReaders();
+            _isInitialized = true;
         }
     }
 
@@ -306,6 +334,17 @@ public static class GeoIpService
             }
             _periodicUpdateCts = null;
         }
+
+        lock (ReaderLock)
+        {
+            _cityReader?.Dispose();
+            _cityReader = null;
+            _countryReader?.Dispose();
+            _countryReader = null;
+            LookupCache.Clear();
+            _isInitialized = false;
+        }
+
         var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
         AppLogger.Debug($"[GeoIpService:Shutdown] GeoIP shutdown complete in {elapsedMs:F2}ms.");
     }
@@ -344,20 +383,11 @@ public static class GeoIpService
         }
     }
 
-    private static void DeployBundledDatabasesIfMissing()
+    private static string ResolveEffectiveDbPath(string fileName, string customPath)
     {
-        var startTimestamp = Stopwatch.GetTimestamp();
-        TryDeployBundledFile("GeoLite2-City.mmdb", CityDbPath);
-        TryDeployBundledFile("GeoLite2-Country.mmdb", CountryDbPath);
-        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-        AppLogger.Trace($"[GeoIpService:Deploy] Bundled DB check complete in {elapsedMs:F2}ms.");
-    }
+        if (File.Exists(customPath)) return customPath;
 
-    private static void TryDeployBundledFile(string fileName, string destinationPath)
-    {
-        if (File.Exists(destinationPath)) return;
-
-        string[] potentialSourcePaths =
+        string[] potentialPaths =
         [
             Path.Combine(AppContext.BaseDirectory, "GeoIP", fileName),
             Path.Combine(AppContext.BaseDirectory, "geoip", fileName),
@@ -366,22 +396,7 @@ public static class GeoIpService
             Path.Combine(AppContext.BaseDirectory, fileName)
         ];
 
-        foreach (var sourcePath in potentialSourcePaths.Where(File.Exists))
-        {
-            try
-            {
-                var copyStart = Stopwatch.GetTimestamp();
-                AppLogger.Info($"[GeoIpService:Deploy] Copying bundled MMDB '{sourcePath}' -> '{destinationPath}'...");
-                File.Copy(sourcePath, destinationPath, overwrite: false);
-                var copyElapsed = Stopwatch.GetElapsedTime(copyStart).TotalMilliseconds;
-                AppLogger.Info($"[GeoIpService:Deploy] Deployed '{fileName}' in {copyElapsed:F2}ms.");
-                break;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Trace($"[GeoIpService:Deploy] Deploy notice for '{fileName}': {ex.Message}");
-            }
-        }
+        return potentialPaths.FirstOrDefault(File.Exists) ?? customPath;
     }
 
     public static (string AccountId, string LicenseKey) ResolveCredentials()
@@ -391,7 +406,6 @@ public static class GeoIpService
             return _cachedCredentials.Value;
         }
 
-        var startTimestamp = Stopwatch.GetTimestamp();
         var envAccount = Environment.GetEnvironmentVariable("MAXMIND_ACCOUNT_ID");
         var envKey = Environment.GetEnvironmentVariable("MAXMIND_LICENSE_KEY");
         if (!string.IsNullOrWhiteSpace(envAccount) && !string.IsNullOrWhiteSpace(envKey))
@@ -452,8 +466,6 @@ public static class GeoIpService
             AppLogger.Trace($"[GeoIpService:Credentials] Conf file parsing notice: {ex.Message}");
         }
 
-        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-        AppLogger.Trace($"[GeoIpService:Credentials] Credentials check complete in {elapsedMs:F2}ms (None configured).");
         _cachedCredentials = (string.Empty, string.Empty);
         return _cachedCredentials.Value;
     }
@@ -473,19 +485,29 @@ public static class GeoIpService
                 _cityReader?.Dispose();
                 _cityReader = null;
 
-                if (File.Exists(CityDbPath))
+                var cityPath = ResolveEffectiveDbPath("GeoLite2-City.mmdb", CityDbPath);
+                if (File.Exists(cityPath))
                 {
-                    _cityReader = new DatabaseReader(CityDbPath);
-                    AppLogger.Info($"[GeoIpService:Reader] Loaded DatabaseReader for GeoLite2-City ({new FileInfo(CityDbPath).Length / 1024} KB).");
+                    _cityReader = new DatabaseReader(cityPath, FileAccessMode.MemoryMapped);
+                    AppLogger.Info($"[GeoIpService:Reader] Loaded DatabaseReader for GeoLite2-City in MemoryMapped mode ({new FileInfo(cityPath).Length / 1024} KB).");
+
+                    try
+                    {
+                        _cityReader.TryCity(PrewarmProbeAddress, out _);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Trace($"[GeoIpService:Reader] City prewarm probe notice: {ex.Message}");
+                    }
                 }
                 else
                 {
-                    AppLogger.Warn($"[GeoIpService:Reader] GeoLite2-City missing at '{CityDbPath}'.");
+                    AppLogger.Warn($"[GeoIpService:Reader] GeoLite2-City missing at '{cityPath}'.");
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Error($"[GeoIpService:Reader] Error initializing City reader: {ex.Message}", ex);
+                AppLogger.Error($"[GeoIpService:Reader] Error initializing City reader in MemoryMapped mode: {ex.Message}", ex);
             }
 
             try
@@ -493,23 +515,33 @@ public static class GeoIpService
                 _countryReader?.Dispose();
                 _countryReader = null;
 
-                if (File.Exists(CountryDbPath))
+                var countryPath = ResolveEffectiveDbPath("GeoLite2-Country.mmdb", CountryDbPath);
+                if (File.Exists(countryPath))
                 {
-                    _countryReader = new DatabaseReader(CountryDbPath);
-                    AppLogger.Info($"[GeoIpService:Reader] Loaded DatabaseReader for GeoLite2-Country ({new FileInfo(CountryDbPath).Length / 1024} KB).");
+                    _countryReader = new DatabaseReader(countryPath, FileAccessMode.MemoryMapped);
+                    AppLogger.Info($"[GeoIpService:Reader] Loaded DatabaseReader for GeoLite2-Country in MemoryMapped mode ({new FileInfo(countryPath).Length / 1024} KB).");
+
+                    try
+                    {
+                        _countryReader.TryCountry(PrewarmProbeAddress, out _);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Trace($"[GeoIpService:Reader] Country prewarm probe notice: {ex.Message}");
+                    }
                 }
                 else
                 {
-                    AppLogger.Warn($"[GeoIpService:Reader] GeoLite2-Country missing at '{CountryDbPath}'.");
+                    AppLogger.Warn($"[GeoIpService:Reader] GeoLite2-Country missing at '{countryPath}'.");
                 }
             }
             catch (Exception ex)
             {
-                AppLogger.Error($"[GeoIpService:Reader] Error initializing Country reader: {ex.Message}", ex);
+                AppLogger.Error($"[GeoIpService:Reader] Error initializing Country reader in MemoryMapped mode: {ex.Message}", ex);
             }
 
             LookupCache.Clear();
-            AppLogger.Debug("[GeoIpService:Reader] Lookup cache cleared.");
+            _isInitialized = true;
         }
 
         try
@@ -525,15 +557,25 @@ public static class GeoIpService
         AppLogger.Info($"[GeoIpService:Reader] ReloadReaders complete in {elapsedMs:F2}ms.");
     }
 
+    public static bool TryGetCachedLocation(string? ip, out GeoLocationResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(ip) && LookupCache.TryGetValue(ip, out var cached) && cached.CountryCode != "xx")
+        {
+            result = cached;
+            return true;
+        }
+
+        result = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
+        return false;
+    }
+
     public static GeoLocationResult GetLocation(string? ip)
     {
-        var startTimestamp = Stopwatch.GetTimestamp();
         if (string.IsNullOrWhiteSpace(ip) || ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
         {
             return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         }
 
-        // Return from cache only if already resolved to a valid non-fallback country
         if (LookupCache.TryGetValue(ip, out var cached) && cached.CountryCode != "xx")
         {
             return cached;
@@ -541,94 +583,92 @@ public static class GeoIpService
 
         if (!IPAddress.TryParse(ip, out var parsedIp))
         {
-            AppLogger.Trace($"[GeoIpService:Lookup] Invalid IP format: '{ip}'");
             return new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
         }
 
         if (IsPrivateOrLoopbackIp(parsedIp))
         {
-            AppLogger.Trace($"[GeoIpService:Lookup] IP '{ip}' is private/loopback.");
             var localResult = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, "Local Subnet", "LAN", string.Empty, 0.0, 0.0, TimeZoneInfo.Local.Id, LocationFormatter.UnknownRegion);
             LookupCache[ip] = localResult;
             return localResult;
         }
 
-        // Guarantee database readers are loaded on-demand
         EnsureInitialized();
 
-        bool hasActiveReaders;
+        DatabaseReader? cityReader;
+        DatabaseReader? countryReader;
         lock (ReaderLock)
         {
-            hasActiveReaders = _cityReader != null || _countryReader != null;
+            cityReader = _cityReader;
+            countryReader = _countryReader;
+        }
 
-            if (_cityReader != null)
+        if (cityReader != null)
+        {
+            try
             {
-                try
+                if (cityReader.TryCity(parsedIp, out var cityResponse) && cityResponse != null)
                 {
-                    if (_cityReader.TryCity(parsedIp, out var cityResponse) && cityResponse != null)
-                    {
-                        var countryCode = !string.IsNullOrEmpty(cityResponse.Country.IsoCode) ? cityResponse.Country.IsoCode.ToLowerInvariant() : "xx";
-                        var countryName = !string.IsNullOrEmpty(cityResponse.Country.Name) ? cityResponse.Country.Name : LocationFormatter.UnknownRegion;
-                        var cityName = !string.IsNullOrEmpty(cityResponse.City.Name) ? cityResponse.City.Name : string.Empty;
-                        var stateName = !string.IsNullOrEmpty(cityResponse.MostSpecificSubdivision.Name) ? cityResponse.MostSpecificSubdivision.Name : countryName;
-                        var postal = cityResponse.Postal.Code ?? string.Empty;
-                        var lat = cityResponse.Location.Latitude;
-                        var lon = cityResponse.Location.Longitude;
-                        var timeZone = cityResponse.Location.TimeZone ?? string.Empty;
+                    var countryCode = !string.IsNullOrEmpty(cityResponse.Country.IsoCode) ? cityResponse.Country.IsoCode.ToLowerInvariant() : "xx";
+                    var countryName = !string.IsNullOrEmpty(cityResponse.Country.Name) ? cityResponse.Country.Name : LocationFormatter.UnknownRegion;
+                    var cityName = !string.IsNullOrEmpty(cityResponse.City.Name) ? cityResponse.City.Name : string.Empty;
+                    var stateName = !string.IsNullOrEmpty(cityResponse.MostSpecificSubdivision.Name) ? cityResponse.MostSpecificSubdivision.Name : countryName;
+                    var postal = cityResponse.Postal.Code ?? string.Empty;
+                    var lat = cityResponse.Location.Latitude;
+                    var lon = cityResponse.Location.Longitude;
+                    var timeZone = cityResponse.Location.TimeZone ?? string.Empty;
 
-                        var subList = cityResponse.Subdivisions
-                            .Where(s => !string.IsNullOrWhiteSpace(s.Name))
-                            .Select(s => (s.Name!, s.IsoCode ?? string.Empty))
-                            .ToList();
+                    var subList = cityResponse.Subdivisions
+                        .Where(s => !string.IsNullOrWhiteSpace(s.Name))
+                        .Select(s => (s.Name!, s.IsoCode ?? string.Empty))
+                        .ToList();
 
-                        var naturalLoc = LocationFormatter.FormatNatural(countryCode, countryName, cityName, subList);
+                    var naturalLoc = LocationFormatter.FormatNatural(countryCode, countryName, cityName, subList);
+                    var result = new GeoLocationResult(countryCode, countryName, cityName, stateName, postal, lat, lon, timeZone, naturalLoc);
+                    LookupCache[ip] = result;
 
-                        var result = new GeoLocationResult(countryCode, countryName, cityName, stateName, postal, lat, lon, timeZone, naturalLoc);
-                        LookupCache[ip] = result;
-                        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                        AppLogger.Trace($"[GeoIpService:Lookup] City lookup hit for {ip} in {elapsedMs:F2}ms: {naturalLoc} (TZ={timeZone})");
-                        return result;
-                    }
-                }
-                catch (AddressNotFoundException)
-                {
-                    AppLogger.Trace($"[GeoIpService:Lookup] IP '{ip}' not found in GeoLite2-City.");
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Trace($"[GeoIpService:Lookup] City lookup notice for {ip}: {ex.Message}");
+                    FlagAssetService.PrewarmFlag(countryCode);
+                    return result;
                 }
             }
-
-            if (_countryReader != null)
+            catch (AddressNotFoundException)
             {
-                try
-                {
-                    if (_countryReader.TryCountry(parsedIp, out var countryResponse) && countryResponse != null)
-                    {
-                        var countryCode = !string.IsNullOrEmpty(countryResponse.Country.IsoCode) ? countryResponse.Country.IsoCode.ToLowerInvariant() : "xx";
-                        var countryName = !string.IsNullOrEmpty(countryResponse.Country.Name) ? countryResponse.Country.Name : LocationFormatter.UnknownRegion;
+                AppLogger.Trace($"[GeoIpService:Lookup] Address not found in city database: {ip}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[GeoIpService:Lookup] City lookup notice for {ip}: {ex.Message}");
+            }
+        }
 
-                        var result = new GeoLocationResult(countryCode, countryName, string.Empty, countryName, string.Empty, null, null, string.Empty, countryName);
-                        LookupCache[ip] = result;
-                        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-                        AppLogger.Trace($"[GeoIpService:Lookup] Country lookup hit for {ip} in {elapsedMs:F2}ms: {countryName} ({countryCode})");
-                        return result;
-                    }
-                }
-                catch (AddressNotFoundException)
+        if (countryReader != null)
+        {
+            try
+            {
+                if (countryReader.TryCountry(parsedIp, out var countryResponse) && countryResponse != null)
                 {
-                    AppLogger.Trace($"[GeoIpService:Lookup] IP '{ip}' not found in GeoLite2-Country.");
+                    var countryCode = !string.IsNullOrEmpty(countryResponse.Country.IsoCode) ? countryResponse.Country.IsoCode.ToLowerInvariant() : "xx";
+                    var countryName = !string.IsNullOrEmpty(countryResponse.Country.Name) ? countryResponse.Country.Name : LocationFormatter.UnknownRegion;
+
+                    var result = new GeoLocationResult(countryCode, countryName, string.Empty, countryName, string.Empty, null, null, string.Empty, countryName);
+                    LookupCache[ip] = result;
+
+                    FlagAssetService.PrewarmFlag(countryCode);
+                    return result;
                 }
-                catch (Exception ex)
-                {
-                    AppLogger.Trace($"[GeoIpService:Lookup] Country lookup notice for {ip}: {ex.Message}");
-                }
+            }
+            catch (AddressNotFoundException)
+            {
+                AppLogger.Trace($"[GeoIpService:Lookup] Address not found in country database: {ip}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[GeoIpService:Lookup] Country lookup notice for {ip}: {ex.Message}");
             }
         }
 
         var fallbackResult = new GeoLocationResult("xx", LocationFormatter.UnknownRegion, string.Empty, string.Empty, string.Empty, null, null, string.Empty, LocationFormatter.UnknownRegion);
-        if (hasActiveReaders)
+        if (cityReader != null || countryReader != null)
         {
             LookupCache[ip] = fallbackResult;
         }
@@ -670,6 +710,16 @@ public static class GeoIpService
             progress?.Report(report);
 
             AppLogger.Warn("[GeoIpService:Update] Update aborted: MaxMind credentials missing.");
+
+            AppLogger.TrackEvent(GeoIpUpdateCycleCompletedEvent, new Dictionary<string, object>
+            {
+                [IsForcedKey] = force,
+                [CityStatusKey] = StatusFailed,
+                [CountryStatusKey] = StatusFailed,
+                [HasCustomCredentialsKey] = false,
+                [DurationMsKey] = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds,
+                [SuccessKey] = false
+            });
 
             if (force)
             {
@@ -721,7 +771,7 @@ public static class GeoIpService
             progress?.Report(report);
 
             report.CurrentOperation = "Reloading Readers...";
-            report.DetailLog = "Re-initializing binary MMDB readers...";
+            report.DetailLog = "Re-initializing binary MMDB readers in MemoryMapped mode...";
             progress?.Report(report);
 
             ReloadReaders();
@@ -732,13 +782,24 @@ public static class GeoIpService
             progress?.Report(report);
 
             var totalElapsedMs = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds;
+
+            AppLogger.TrackEvent(GeoIpUpdateCycleCompletedEvent, new Dictionary<string, object>
+            {
+                [IsForcedKey] = force,
+                [CityStatusKey] = report.CityStatus.ToString(),
+                [CountryStatusKey] = report.CountryStatus.ToString(),
+                [HasCustomCredentialsKey] = true,
+                [DurationMsKey] = totalElapsedMs,
+                [SuccessKey] = cityUpdated || countryUpdated
+            });
+
             AppLogger.Info($"[GeoIpService:Update] Sync finished in {totalElapsedMs:F2}ms (CityUpdated={cityUpdated}, CountryUpdated={countryUpdated}).");
 
             if (cityUpdated || countryUpdated || force)
             {
                 ToastNotificationService.Instance.ShowToast(
                     "GeoIP Databases Updated",
-                    "MaxMind GeoLite2 databases refreshed and active.",
+                    "MaxMind GeoLite2 databases refreshed and active in memory.",
                     "GEOIP_UPDATE"
                 );
                 return true;
@@ -751,6 +812,17 @@ public static class GeoIpService
             report.CurrentOperation = "Update Canceled";
             report.DetailLog = "Update canceled by operator.";
             progress?.Report(report);
+
+            AppLogger.TrackEvent(GeoIpUpdateCycleCompletedEvent, new Dictionary<string, object>
+            {
+                [IsForcedKey] = force,
+                [CityStatusKey] = "Canceled",
+                [CountryStatusKey] = "Canceled",
+                [HasCustomCredentialsKey] = true,
+                [DurationMsKey] = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds,
+                [SuccessKey] = false
+            });
+
             AppLogger.Info("[GeoIpService:Update] Update canceled by operator.");
             return false;
         }
@@ -760,6 +832,17 @@ public static class GeoIpService
             report.CurrentOperation = "Network Failure";
             report.DetailLog = $"HTTP failure: {httpEx.Message}";
             progress?.Report(report);
+
+            AppLogger.TrackEvent(GeoIpUpdateCycleCompletedEvent, new Dictionary<string, object>
+            {
+                [IsForcedKey] = force,
+                [CityStatusKey] = StatusFailed,
+                [CountryStatusKey] = StatusFailed,
+                [HasCustomCredentialsKey] = true,
+                [DurationMsKey] = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds,
+                [SuccessKey] = false
+            });
+
             ToastNotificationService.Instance.ShowError("GeoIP Update Failed", $"HTTP error: {httpEx.Message}");
             return false;
         }
@@ -769,6 +852,17 @@ public static class GeoIpService
             report.CurrentOperation = "Disk Extraction Failure";
             report.DetailLog = $"File write failure: {ioEx.Message}";
             progress?.Report(report);
+
+            AppLogger.TrackEvent(GeoIpUpdateCycleCompletedEvent, new Dictionary<string, object>
+            {
+                [IsForcedKey] = force,
+                [CityStatusKey] = StatusFailed,
+                [CountryStatusKey] = StatusFailed,
+                [HasCustomCredentialsKey] = true,
+                [DurationMsKey] = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds,
+                [SuccessKey] = false
+            });
+
             ToastNotificationService.Instance.ShowError("GeoIP Disk Error", $"I/O failure: {ioEx.Message}");
             return false;
         }
@@ -778,6 +872,17 @@ public static class GeoIpService
             report.CurrentOperation = "Unexpected Error";
             report.DetailLog = $"Failed updating databases: {ex.Message}";
             progress?.Report(report);
+
+            AppLogger.TrackEvent(GeoIpUpdateCycleCompletedEvent, new Dictionary<string, object>
+            {
+                [IsForcedKey] = force,
+                [CityStatusKey] = StatusFailed,
+                [CountryStatusKey] = StatusFailed,
+                [HasCustomCredentialsKey] = true,
+                [DurationMsKey] = Stopwatch.GetElapsedTime(updateStartTimestamp).TotalMilliseconds,
+                [SuccessKey] = false
+            });
+
             ToastNotificationService.Instance.ShowToast("GeoIP Update Error", $"Failed updating databases: {ex.Message}", "GEOIP_UPDATE_ERR");
             return false;
         }

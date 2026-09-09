@@ -6,13 +6,17 @@ using CommunityToolkit.Mvvm.Input;
 using LuminaUI.Theming;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
+using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace ReforgerRcon.ViewModels;
 
-public partial class MainViewModel : ViewModelBase
+public partial class MainViewModel : ViewModelBase, IDisposable
 {
+    private bool _isDisposed;
+
     [ObservableProperty] public partial ViewModelBase CurrentView { get; set; }
     [ObservableProperty] public partial ErrorDetailsDialogViewModel? CurrentErrorViewModel { get; set; }
     [ObservableProperty] public partial bool IsErrorDialogVisible { get; set; }
@@ -70,9 +74,28 @@ public partial class MainViewModel : ViewModelBase
     private void OnLoginSuccess(ServerProfile profile, IRconService rconService)
     {
         AppLogger.Info($"[MainViewModel:Navigation] Transitioning from Login to Dashboard for {profile.ServerIp}:{profile.Port} ({profile.Protocol})...");
+
+        var oldView = CurrentView;
+
         var dashboardVm = new DashboardViewModel(profile, rconService, OnDisconnect, OnSwitchProtocolAsync);
-        CurrentView = dashboardVm;
         dashboardVm.Initialize();
+        CurrentView = dashboardVm;
+
+        if (oldView is IDisposable disposableOldView)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    disposableOldView.Dispose();
+                    AppLogger.Debug($"[MainViewModel:Navigation] Disposed previous view: {disposableOldView.GetType().Name}.");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error($"[MainViewModel:Navigation] Error disposing old view: {ex.Message}", ex);
+                }
+            }, DispatcherPriority.Background);
+        }
     }
 
     private async Task OnSwitchProtocolAsync(ServerProfile profile, RconProtocol newProtocol)
@@ -102,6 +125,54 @@ public partial class MainViewModel : ViewModelBase
     private void OnDisconnect()
     {
         AppLogger.Info("[MainViewModel:Navigation] Transitioning from Dashboard back to Login screen...");
+
+        var oldView = CurrentView;
         CurrentView = new LoginViewModel(OnLoginSuccess, isStartup: false);
+
+        if (oldView is IDisposable disposableOldView)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    disposableOldView.Dispose();
+                    AppLogger.Debug($"[MainViewModel:Navigation] Disposed previous view: {disposableOldView.GetType().Name}.");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Error($"[MainViewModel:Navigation] Error disposing old view: {ex.Message}", ex);
+                }
+            }, DispatcherPriority.Background);
+        }
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!_isDisposed)
+        {
+            if (disposing)
+            {
+                CrashReportService.UnhandledErrorCaptured -= OnUnhandledErrorCaptured;
+
+                if (CurrentView is IDisposable disposable)
+                {
+                    try
+                    {
+                        disposable.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Trace($"[MainViewModel:Dispose] Error disposing CurrentView: {ex.Message}");
+                    }
+                }
+            }
+            _isDisposed = true;
+        }
     }
 }

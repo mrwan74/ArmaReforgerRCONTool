@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia.Controls;
 
 namespace ReforgerRcon.Services;
@@ -29,44 +31,54 @@ public static class ColumnLayoutStorageService
     private static readonly string StorageFile = Path.Combine(StorageDirectory, "grid_columns.json");
 
     private static Dictionary<string, Dictionary<string, ColumnState>> _cache = [];
-    private static bool _isLoaded;
+    private static volatile bool _isLoaded;
+    private static readonly SemaphoreSlim CacheSemaphore = new(1, 1);
     private static readonly HashSet<DataGrid> RestoringGrids = [];
     private static readonly HashSet<DataGrid> BoundGrids = [];
+    private static CancellationTokenSource? _saveDebounceCts;
+
+    public static void Prewarm()
+    {
+        if (_isLoaded) return;
+        _ = Task.Run(EnsureLoaded, CancellationToken.None);
+    }
 
     private static void EnsureLoaded()
     {
         if (_isLoaded) return;
-        _isLoaded = true;
 
-        var start = Stopwatch.GetTimestamp();
-
-        if (!File.Exists(StorageFile))
-        {
-            _cache = GetDefaultColumnMap();
-            AppLogger.Debug($"[ColumnLayoutStorage:Load] Defaults loaded in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
-            return;
-        }
-
+        CacheSemaphore.Wait(CancellationToken.None);
         try
         {
-            var json = File.ReadAllText(StorageFile);
-            _cache = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, ColumnState>>>(json, JsonOptions) ?? GetDefaultColumnMap();
-            AppLogger.Debug($"[ColumnLayoutStorage:Load] Loaded column map in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms ({_cache.Count} grids).");
+            if (_isLoaded) return;
+
+            var start = Stopwatch.GetTimestamp();
+
+            if (!File.Exists(StorageFile))
+            {
+                _cache = GetDefaultColumnMap();
+                _isLoaded = true;
+                AppLogger.Debug($"[ColumnLayoutStorage:Load] Defaults initialized in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
+                return;
+            }
+
+            try
+            {
+                var json = File.ReadAllText(StorageFile);
+                _cache = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, ColumnState>>>(json, JsonOptions) ?? GetDefaultColumnMap();
+                _isLoaded = true;
+                AppLogger.Debug($"[ColumnLayoutStorage:Load] Loaded column map in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms ({_cache.Count} grids).");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"[ColumnLayoutStorage:Load] Notice reading storage: {ex.Message}. Using defaults.");
+                _cache = GetDefaultColumnMap();
+                _isLoaded = true;
+            }
         }
-        catch (JsonException jsonEx)
+        finally
         {
-            AppLogger.Warn($"[ColumnLayoutStorage:Load] JSON error: {jsonEx.Message}. Using defaults.", jsonEx);
-            _cache = GetDefaultColumnMap();
-        }
-        catch (IOException ioEx)
-        {
-            AppLogger.Warn($"[ColumnLayoutStorage:Load] I/O error: {ioEx.Message}", ioEx);
-            _cache = GetDefaultColumnMap();
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            AppLogger.Warn($"[ColumnLayoutStorage:Load] Access denied: {authEx.Message}", authEx);
-            _cache = GetDefaultColumnMap();
+            CacheSemaphore.Release();
         }
     }
 
@@ -140,7 +152,6 @@ public static class ColumnLayoutStorageService
 
     public static void SaveGridState(string gridKey, DataGrid dataGrid)
     {
-        var start = Stopwatch.GetTimestamp();
         ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
         ArgumentNullException.ThrowIfNull(dataGrid);
 
@@ -148,37 +159,44 @@ public static class ColumnLayoutStorageService
 
         EnsureLoaded();
 
-        if (!_cache.TryGetValue(gridKey, out var columnMap))
+        CacheSemaphore.Wait(CancellationToken.None);
+        try
         {
-            columnMap = new Dictionary<string, ColumnState>(StringComparer.OrdinalIgnoreCase);
-            _cache[gridKey] = columnMap;
-        }
-
-        foreach (var col in dataGrid.Columns)
-        {
-            var key = GetColumnKey(col);
-            if (key == ColSelectKey) continue;
-
-            double newWidth = ResolveColumnWidth(col);
-            int newIndex = col.DisplayIndex;
-
-            if (columnMap.TryGetValue(key, out var previousState))
+            if (!_cache.TryGetValue(gridKey, out var columnMap))
             {
-                previousState.Width = newWidth;
-                previousState.DisplayIndex = newIndex;
+                columnMap = new Dictionary<string, ColumnState>(StringComparer.OrdinalIgnoreCase);
+                _cache[gridKey] = columnMap;
             }
-            else
+
+            foreach (var col in dataGrid.Columns)
             {
-                columnMap[key] = new ColumnState
+                var key = GetColumnKey(col);
+                if (key == ColSelectKey) continue;
+
+                double newWidth = ResolveColumnWidth(col);
+                int newIndex = col.DisplayIndex;
+
+                if (columnMap.TryGetValue(key, out var previousState))
                 {
-                    Width = newWidth,
-                    DisplayIndex = newIndex
-                };
+                    previousState.Width = newWidth;
+                    previousState.DisplayIndex = newIndex;
+                }
+                else
+                {
+                    columnMap[key] = new ColumnState
+                    {
+                        Width = newWidth,
+                        DisplayIndex = newIndex
+                    };
+                }
             }
         }
+        finally
+        {
+            CacheSemaphore.Release();
+        }
 
-        Save();
-        AppLogger.Debug($"[ColumnLayoutStorage:Save] Saved '{gridKey}' in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms ({columnMap.Count} columns).");
+        ScheduleDebouncedSave();
     }
 
     private static double ResolveColumnWidth(DataGridColumn col)
@@ -196,32 +214,51 @@ public static class ColumnLayoutStorageService
         return 100;
     }
 
-    private static void Save()
+    private static void ScheduleDebouncedSave()
     {
-        var start = Stopwatch.GetTimestamp();
-        try
+        _saveDebounceCts?.Cancel();
+        _saveDebounceCts?.Dispose();
+        _saveDebounceCts = new CancellationTokenSource();
+        var token = _saveDebounceCts.Token;
+
+        _ = Task.Run(async () =>
         {
-            if (!Directory.Exists(StorageDirectory))
+            try
             {
-                Directory.CreateDirectory(StorageDirectory);
+                await Task.Delay(300, token).ConfigureAwait(false);
+                if (token.IsCancellationRequested) return;
+
+                string json;
+                await CacheSemaphore.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    json = JsonSerializer.Serialize(_cache, JsonOptions);
+                }
+                finally
+                {
+                    CacheSemaphore.Release();
+                }
+
+                if (!Directory.Exists(StorageDirectory))
+                {
+                    Directory.CreateDirectory(StorageDirectory);
+                }
+
+                await File.WriteAllTextAsync(StorageFile, json, token).ConfigureAwait(false);
             }
-            var json = JsonSerializer.Serialize(_cache, JsonOptions);
-            File.WriteAllText(StorageFile, json);
-            AppLogger.Trace($"[ColumnLayoutStorage:Save] Written to disk in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
-        }
-        catch (IOException ioEx)
-        {
-            AppLogger.Error($"[ColumnLayoutStorage:Save] Disk error: {ioEx.Message}", ioEx);
-        }
-        catch (UnauthorizedAccessException authEx)
-        {
-            AppLogger.Error($"[ColumnLayoutStorage:Save] Access denied: {authEx.Message}", authEx);
-        }
+            catch (OperationCanceledException ex)
+            {
+                AppLogger.Trace($"[ColumnLayoutStorage:Save] Operation canceled: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[ColumnLayoutStorage:Save] Async notice: {ex.Message}");
+            }
+        }, token);
     }
 
     public static void BindPersistence(DataGrid dataGrid, string gridKey)
     {
-        var start = Stopwatch.GetTimestamp();
         ArgumentNullException.ThrowIfNull(dataGrid);
         ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
 
@@ -236,24 +273,31 @@ public static class ColumnLayoutStorageService
         RestoreGridState(dataGrid, gridKey);
 
         dataGrid.Unloaded += (_, _) => SaveGridState(gridKey, dataGrid);
-        AppLogger.Debug($"[ColumnLayoutStorage:Bind] Persistence bound for '{gridKey}' in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
 
     public static void RestoreGridState(DataGrid dataGrid, string gridKey)
     {
-        var start = Stopwatch.GetTimestamp();
         ArgumentNullException.ThrowIfNull(dataGrid);
         ArgumentException.ThrowIfNullOrWhiteSpace(gridKey);
 
         EnsureLoaded();
-        if (!_cache.TryGetValue(gridKey, out var columnMap)) return;
+
+        Dictionary<string, ColumnState>? columnMap;
+        CacheSemaphore.Wait(CancellationToken.None);
+        try
+        {
+            if (!_cache.TryGetValue(gridKey, out columnMap)) return;
+        }
+        finally
+        {
+            CacheSemaphore.Release();
+        }
 
         RestoringGrids.Add(dataGrid);
         try
         {
             RestoreWidths(dataGrid, columnMap);
             RestoreDisplayOrder(dataGrid, columnMap);
-            AppLogger.Debug($"[ColumnLayoutStorage:Restore] Restored '{gridKey}' in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         }
         finally
         {
@@ -289,9 +333,9 @@ public static class ColumnLayoutStorageService
                 {
                     col.DisplayIndex = targetIdx;
                 }
-                catch (ArgumentOutOfRangeException argEx)
+                catch (ArgumentOutOfRangeException ex)
                 {
-                    AppLogger.Warn($"[ColumnLayoutStorage:Order] Column '{GetColumnKey(col)}' index {targetIdx} out of range: {argEx.Message}");
+                    AppLogger.Trace($"[ColumnLayoutStorage:Order] Index out of range: {ex.Message}");
                 }
             }
         }

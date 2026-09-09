@@ -28,8 +28,9 @@ public interface IRconService : IDisposable
     Task DisconnectAsync(CancellationToken cancellationToken = default);
 
     Task<List<PlayerModel>> GetPlayersAsync(CancellationToken cancellationToken = default);
-    Task<List<BanModel>> GetBansAsync(CancellationToken cancellationToken = default);
+    Task<List<BanModel>> GetBansAsync(int maxPages = 0, CancellationToken cancellationToken = default);
     Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default);
+    Task<PagedResult<DatabasePlayerModel>> GetPagedDatabasePlayersAsync(DatabaseQueryParameters parameters, CancellationToken cancellationToken = default);
     Task<List<AdminModel>> GetAdminsAsync(CancellationToken cancellationToken = default);
 
     Task<bool> KickPlayerAsync(PlayerModel player, string reason, CancellationToken cancellationToken = default);

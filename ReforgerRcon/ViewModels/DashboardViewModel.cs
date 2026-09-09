@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -20,7 +21,7 @@ using ReforgerRcon.Views;
 namespace ReforgerRcon.ViewModels;
 
 [SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Partial callback methods are invoked by CommunityToolkit.Mvvm generated property setters")]
-public partial class DashboardViewModel : ViewModelBase
+public partial class DashboardViewModel : ViewModelBase, IDisposable
 {
     private readonly IRconService _rconService;
     private readonly Action _onDisconnectRequested;
@@ -29,6 +30,7 @@ public partial class DashboardViewModel : ViewModelBase
     private readonly ConcurrentDictionary<string, long> _activeJoinToasts = new(StringComparer.OrdinalIgnoreCase);
     private ConsoleWindow? _detachedConsoleWindow;
     private bool _hasPromptedProtocolMismatch;
+    private bool _isDisposed;
 
     [ObservableProperty] public partial ServerProfile Profile { get; set; }
     [ObservableProperty] public partial int OnlinePlayersCount { get; set; }
@@ -89,6 +91,14 @@ public partial class DashboardViewModel : ViewModelBase
         _onDisconnectRequested = onDisconnectRequested;
         _onSwitchProtocolRequested = onSwitchProtocolRequested;
 
+        var context = new Dictionary<string, object?>
+        {
+            ["host"] = profile.ServerIp,
+            ["port"] = profile.Port,
+            ["protocol"] = profile.Protocol.ToString()
+        };
+        AppLogger.Debug("[DashboardViewModel:Init] Constructing child tab ViewModels for session...", context);
+
         SettingsTab = new SettingsViewModel(this);
         PlayersTab = new PlayersViewModel(_rconService, this);
         BansTab = new BansViewModel(_rconService, this);
@@ -110,15 +120,15 @@ public partial class DashboardViewModel : ViewModelBase
         _timer.Start();
 
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[DashboardViewModel:Init] Initialized dashboard in {elapsedMs:F2}ms for {profile.ServerIp}:{profile.Port} ({profile.Protocol}). RefreshInterval={RefreshCountdown}s.");
+        AppLogger.Info($"[DashboardViewModel:Init] Dashboard initialized in {elapsedMs:F2}ms for {profile.ServerIp}:{profile.Port} ({profile.Protocol}). TimerInterval=1s, RefreshPeriod={RefreshCountdown}s.", context);
     }
 
     public void Initialize()
     {
-        AppLogger.Debug("[DashboardViewModel:Init] Triggering progressive initial synchronization...");
-
+        AppLogger.Debug("[DashboardViewModel:Initialize] Executing post-construction initialization...");
         if (_rconService.DetectedProtocolMismatch.HasValue)
         {
+            AppLogger.Warn($"[DashboardViewModel:Initialize] Initial protocol mismatch detected: {_rconService.DetectedProtocolMismatch.Value}");
             HandleProtocolMismatch(_rconService.DetectedProtocolMismatch.Value);
         }
 
@@ -127,6 +137,7 @@ public partial class DashboardViewModel : ViewModelBase
 
     partial void OnIsAutoRefreshEnabledChanged(bool value)
     {
+        AppLogger.Debug($"[DashboardViewModel:AutoRefresh] Auto-refresh state mutated: {value}");
         if (ConsoleTab != null && ConsoleTab.IsAutoRefreshEnabled != value)
         {
             ConsoleTab.IsAutoRefreshEnabled = value;
@@ -137,7 +148,6 @@ public partial class DashboardViewModel : ViewModelBase
             RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
             RefreshProgress = 100;
         }
-        AppLogger.Debug($"[DashboardViewModel:AutoRefresh] Auto-refresh toggled: {value}");
     }
 
     private void OnProtocolMismatchDetected(object? sender, RconProtocol detectedProtocol) =>
@@ -145,13 +155,17 @@ public partial class DashboardViewModel : ViewModelBase
 
     public void HandleProtocolMismatch(RconProtocol detectedProtocol)
     {
-        if (_hasPromptedProtocolMismatch || IsDialogVisible) return;
+        if (_hasPromptedProtocolMismatch || IsDialogVisible)
+        {
+            AppLogger.Trace("[DashboardViewModel:ProtocolMismatch] Prompt suppressed: already prompted or dialog currently active.");
+            return;
+        }
         _hasPromptedProtocolMismatch = true;
 
         var detectedName = detectedProtocol == RconProtocol.ReforgerBuiltIn ? "Reforger Built-in RCON" : "BattlEye RCON";
         var currentName = Profile.Protocol == RconProtocol.ReforgerBuiltIn ? "Reforger Built-in RCON" : "BattlEye RCON";
 
-        AppLogger.Warn($"[DashboardViewModel:ProtocolMismatch] Prompting protocol switch dialog: {currentName} -> {detectedName}");
+        AppLogger.Warn($"[DashboardViewModel:ProtocolMismatch] Displaying protocol switch prompt: Current='{currentName}', Detected='{detectedName}'.");
 
         ShowDialog(new ConfirmDialogViewModel(
             "Protocol Mismatch Detected",
@@ -160,7 +174,14 @@ public partial class DashboardViewModel : ViewModelBase
             false,
             async () =>
             {
-                AppLogger.Info($"[DashboardViewModel:SwitchProtocol] User confirmed protocol switch to {detectedProtocol} on {Profile.ServerIp}:{Profile.Port}...");
+                AppLogger.Info($"[DashboardViewModel:ProtocolMismatch] User accepted automatic protocol switch to '{detectedProtocol}'.");
+                AppLogger.TrackEvent("rcon_protocol_mismatch_decision", new Dictionary<string, object>
+                {
+                    ["configured_protocol"] = Profile.Protocol.ToString(),
+                    ["detected_protocol"] = detectedProtocol.ToString(),
+                    ["auto_switch_accepted"] = true
+                });
+
                 CloseDialog();
                 await DisconnectAsync().ConfigureAwait(false);
 
@@ -171,6 +192,14 @@ public partial class DashboardViewModel : ViewModelBase
             },
             () =>
             {
+                AppLogger.Info("[DashboardViewModel:ProtocolMismatch] User declined automatic protocol switch.");
+                AppLogger.TrackEvent("rcon_protocol_mismatch_decision", new Dictionary<string, object>
+                {
+                    ["configured_protocol"] = Profile.Protocol.ToString(),
+                    ["detected_protocol"] = detectedProtocol.ToString(),
+                    ["auto_switch_accepted"] = false
+                });
+
                 CloseDialog();
                 _hasPromptedProtocolMismatch = false;
             }
@@ -180,41 +209,50 @@ public partial class DashboardViewModel : ViewModelBase
     private async Task RefreshInitialConnectAsync()
     {
         var start = Stopwatch.GetTimestamp();
+        var context = new Dictionary<string, object?> { ["protocol"] = Profile.Protocol.ToString() };
+        AppLogger.Debug("[DashboardViewModel:InitSync] Executing initial background synchronization...", context);
+
         try
         {
-            AppLogger.Info($"[DashboardViewModel:InitSync] Beginning progressive initial sync for {Profile.ServerIp}:{Profile.Port} ({Profile.Protocol})...");
-
-            var pStart = Stopwatch.GetTimestamp();
             await PlayersTab.RefreshPlayersAsync().ConfigureAwait(false);
             Dispatcher.UIThread.Post(() => OnlinePlayersCount = PlayersTab.Players.Count);
-            AppLogger.Debug($"[DashboardViewModel:InitSync] Step 1: Players loaded in {Stopwatch.GetElapsedTime(pStart).TotalMilliseconds:F2}ms ({PlayersTab.Players.Count} players).");
+            AppLogger.Debug($"[DashboardViewModel:InitSync] Live players tab populated: {PlayersTab.Players.Count} players online.");
 
-            if (SettingsTab.Settings.AutoRefreshBans)
+            _ = Task.Run(async () =>
             {
-                var bStart = Stopwatch.GetTimestamp();
-                await BansTab.RefreshBansAsync().ConfigureAwait(false);
-                Dispatcher.UIThread.Post(() => ActiveBansCount = BansTab.Bans.Count);
-                AppLogger.Debug($"[DashboardViewModel:InitSync] Step 2: Bans loaded in {Stopwatch.GetElapsedTime(bStart).TotalMilliseconds:F2}ms ({BansTab.Bans.Count} bans).");
-            }
+                try
+                {
+                    if (SettingsTab.Settings.AutoRefreshBans)
+                    {
+                        AppLogger.Trace("[DashboardViewModel:InitSync] Waiting 1200ms before initial ban refresh...");
+                        await Task.Delay(1200).ConfigureAwait(false);
+                        await BansTab.RefreshBansAsync().ConfigureAwait(false);
+                        Dispatcher.UIThread.Post(() => ActiveBansCount = BansTab.Bans.Count);
+                        AppLogger.Debug($"[DashboardViewModel:InitSync] Bans tab synchronized: {BansTab.Bans.Count} active bans.");
+                    }
 
-            if (IsBattlEyeProtocol)
-            {
-                var aStart = Stopwatch.GetTimestamp();
-                var admins = await _rconService.GetAdminsAsync().ConfigureAwait(false);
-                Dispatcher.UIThread.Post(() => ConnectedAdminsCount = admins.Count);
-                AppLogger.Debug($"[DashboardViewModel:InitSync] Step 3: Admins loaded in {Stopwatch.GetElapsedTime(aStart).TotalMilliseconds:F2}ms ({admins.Count} admins).");
-            }
-
-            var dStart = Stopwatch.GetTimestamp();
-            await DatabaseTab.LoadDbAsync().ConfigureAwait(false);
-            AppLogger.Debug($"[DashboardViewModel:InitSync] Step 4: Database loaded in {Stopwatch.GetElapsedTime(dStart).TotalMilliseconds:F2}ms.");
+                    if (IsBattlEyeProtocol)
+                    {
+                        await Task.Delay(200).ConfigureAwait(false);
+                        var admins = await _rconService.GetAdminsAsync().ConfigureAwait(false);
+                        Dispatcher.UIThread.Post(() => ConnectedAdminsCount = admins.Count);
+                        AppLogger.Debug($"[DashboardViewModel:InitSync] Admins list synchronized: {admins.Count} connected admins.");
+                    }
+                }
+                catch (Exception bgEx)
+                {
+                    AppLogger.Warn($"[DashboardViewModel:InitSync] Background tab sync notice: {bgEx.Message}", bgEx);
+                }
+            });
 
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Info($"[DashboardViewModel:InitSync] Progressive sync complete in {elapsedMs:F2}ms: OnlinePlayers={OnlinePlayersCount}, Bans={ActiveBansCount}, Admins={ConnectedAdminsCount}");
+            AppLogger.Info($"[DashboardViewModel:InitSync] Initial player list sync finalized in {elapsedMs:F2}ms (OnlineCount={OnlinePlayersCount}).", context);
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[DashboardViewModel:InitSync] Progressive refresh notice: {ex.Message}", ex);
+            context["error_message"] = ex.Message;
+            AppLogger.Error("[DashboardViewModel:InitSync] Error during initial connection sync: " + ex.Message, ex, context);
+            ToastNotificationService.Instance.ShowError("Sync Error", $"Failed initial server synchronization: {ex.Message}");
         }
     }
 
@@ -224,14 +262,11 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                var start = Stopwatch.GetTimestamp();
                 if (string.IsNullOrWhiteSpace(player.Name))
                 {
-                    AppLogger.Warn($"[DashboardViewModel:Join] Received join event with empty name for ID #{player.Id}.");
+                    AppLogger.Trace("[DashboardViewModel:OnPlayerJoined] Ignored player with empty name.");
                     return;
                 }
-
-                AppLogger.Debug($"[DashboardViewModel:Join] PlayerJoined: Name='{player.Name}', ID=#{player.Id}, UID='{player.Uid}', Location='{player.DisplayLocation}', Watchlisted={player.IsWatchlisted}");
 
                 var dedupeKey = $"{player.Id}_{player.Name.Trim()}";
                 var now = Stopwatch.GetTimestamp();
@@ -241,26 +276,24 @@ public partial class DashboardViewModel : ViewModelBase
                     var elapsedSec = Stopwatch.GetElapsedTime(lastDispatched).TotalSeconds;
                     if (elapsedSec < 6.0)
                     {
+                        AppLogger.Trace($"[DashboardViewModel:OnPlayerJoined] Debounced rapid duplicate alert for '{player.Name}' ({elapsedSec:F1}s).");
                         PlayersTab.AddOrUpdatePlayer(player);
                         OnlinePlayersCount = PlayersTab.Players.Count;
-                        AppLogger.Trace($"[DashboardViewModel:Join] Suppressed duplicate join alert for '{player.Name}' (Elapsed: {elapsedSec:F1}s).");
                         return;
                     }
                 }
 
                 _activeJoinToasts[dedupeKey] = now;
-
                 PlayersTab.AddOrUpdatePlayer(player);
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
                 var settings = SettingsTab.Settings;
+                AppLogger.Debug($"[DashboardViewModel:OnPlayerJoined] Handling join event: Name='{player.Name}', Watchlisted={player.IsWatchlisted}, AudioAlerts={settings.AudioAlerts}, ToastAlerts={settings.ToastNotifications}.");
 
                 if (player.IsWatchlisted)
                 {
                     if (settings.AlertOnWatchlistJoin)
                     {
-                        AppLogger.Info($"[DashboardViewModel:Alert] Watchlist Join Alert: '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
-
                         if (settings.AudioAlerts)
                         {
                             SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
@@ -284,8 +317,6 @@ public partial class DashboardViewModel : ViewModelBase
                 {
                     if (settings.AlertOnJoin)
                     {
-                        AppLogger.Info($"[DashboardViewModel:Alert] Player Join Alert: '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
-
                         if (settings.AudioAlerts)
                         {
                             SoundNotificationService.PlayAlert(SoundAlertType.PlayerJoined);
@@ -312,9 +343,6 @@ public partial class DashboardViewModel : ViewModelBase
                         );
                     }
                 }
-
-                var durationMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                AppLogger.Trace($"[DashboardViewModel:Join] Handled join for '{player.Name}' in {durationMs:F2}ms.");
             });
         });
     }
@@ -325,14 +353,11 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                var start = Stopwatch.GetTimestamp();
                 if (string.IsNullOrWhiteSpace(player.Name))
                 {
-                    AppLogger.Warn($"[DashboardViewModel:Leave] Received leave event with empty name for ID #{player.Id}.");
+                    AppLogger.Trace("[DashboardViewModel:OnPlayerLeft] Ignored player with empty name.");
                     return;
                 }
-
-                AppLogger.Debug($"[DashboardViewModel:Leave] PlayerLeft: Name='{player.Name}', ID=#{player.Id}, UID='{player.Uid}', Watchlisted={player.IsWatchlisted}");
 
                 var dedupeKey = $"{player.Id}_{player.Name.Trim()}";
                 _activeJoinToasts.TryRemove(dedupeKey, out _);
@@ -341,13 +366,12 @@ public partial class DashboardViewModel : ViewModelBase
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
                 var settings = SettingsTab.Settings;
+                AppLogger.Debug($"[DashboardViewModel:OnPlayerLeft] Handling leave event: Name='{player.Name}', Watchlisted={player.IsWatchlisted}.");
 
                 if (player.IsWatchlisted)
                 {
                     if (settings.AlertOnWatchlistLeave)
                     {
-                        AppLogger.Info($"[DashboardViewModel:Alert] Watchlist Leave Alert: '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
-
                         if (settings.AudioAlerts)
                         {
                             SoundNotificationService.PlayAlert(SoundAlertType.WatchlistAlert);
@@ -371,8 +395,6 @@ public partial class DashboardViewModel : ViewModelBase
                 {
                     if (settings.AlertOnLeave)
                     {
-                        AppLogger.Info($"[DashboardViewModel:Alert] Player Leave Alert: '{player.Name}' (Audio: {settings.AudioAlerts}, Toast: {settings.ToastNotifications}, Push: {settings.PushNotifications})");
-
                         if (settings.AudioAlerts)
                         {
                             SoundNotificationService.PlayAlert(SoundAlertType.PlayerLeft);
@@ -399,9 +421,6 @@ public partial class DashboardViewModel : ViewModelBase
                         );
                     }
                 }
-
-                var durationMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                AppLogger.Trace($"[DashboardViewModel:Leave] Handled leave for '{player.Name}' in {durationMs:F2}ms.");
             });
         });
     }
@@ -412,8 +431,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                var start = Stopwatch.GetTimestamp();
-                AppLogger.Info($"[DashboardViewModel:StreamKick] Event: Player Kicked '{e.Name}' (ID: #{e.Id}, Reason: '{e.Reason}')");
+                AppLogger.Info($"[DashboardViewModel:Stream] Player kicked stream notification: '{e.Name}' (ID: #{e.Id}, Reason: '{e.Reason}').");
                 PlayersTab.RemovePlayerFromList(new PlayerModel { Id = e.Id, Name = e.Name });
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
@@ -429,9 +447,6 @@ public partial class DashboardViewModel : ViewModelBase
                 {
                     PushNotificationService.SendNotification("Player Kicked", $"{e.Name} was kicked from the server (Reason: {e.Reason}).", "system");
                 }
-
-                var durationMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                AppLogger.Trace($"[DashboardViewModel:StreamKick] Handled in {durationMs:F2}ms.");
             });
         });
     }
@@ -442,8 +457,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                var start = Stopwatch.GetTimestamp();
-                AppLogger.Info($"[DashboardViewModel:StreamBan] Event: Player Banned '{e.Name}' (ID: #{e.Id}, GUID: '{e.Guid}', Reason: '{e.Reason}')");
+                AppLogger.Info($"[DashboardViewModel:Stream] Player banned stream notification: '{e.Name}' (ID: #{e.Id}, GUID: '{e.Guid}', Reason: '{e.Reason}').");
                 PlayersTab.RemovePlayerFromList(new PlayerModel { Id = e.Id, Name = e.Name, Guid = e.Guid, BattlEyeGuid = e.Guid });
                 OnlinePlayersCount = PlayersTab.Players.Count;
 
@@ -461,8 +475,6 @@ public partial class DashboardViewModel : ViewModelBase
                 }
 
                 _ = BansTab.RefreshBansAsync();
-                var durationMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                AppLogger.Trace($"[DashboardViewModel:StreamBan] Handled in {durationMs:F2}ms.");
             });
         });
     }
@@ -473,21 +485,19 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                AppLogger.Info($"[DashboardViewModel:StreamAdmin] Admin logged in: #{e.AdminId} from {e.Endpoint}");
+                AppLogger.Info($"[DashboardViewModel:Stream] Admin connected stream notification: Admin #{e.AdminId} from {e.Endpoint}.");
                 if (IsBattlEyeProtocol)
                 {
                     _ = Task.Run(async () =>
                     {
-                        var start = Stopwatch.GetTimestamp();
                         try
                         {
                             var admins = await _rconService.GetAdminsAsync().ConfigureAwait(false);
                             Dispatcher.UIThread.Post(() => ConnectedAdminsCount = admins.Count);
-                            AppLogger.Debug($"[DashboardViewModel:StreamAdmin] Refreshed admins count ({admins.Count}) in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Error($"[DashboardViewModel:StreamAdmin] Error refreshing admins on stream event: {ex.Message}", ex);
+                            AppLogger.Error($"[DashboardViewModel:Stream] Error refreshing admins on stream event: {ex.Message}", ex);
                         }
                     });
                 }
@@ -501,7 +511,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             ExecuteSafe(() =>
             {
-                AppLogger.Fatal($"[DashboardViewModel:ConnectionLost] Disconnection notice: '{reason}' for {Profile.ServerIp}:{Profile.Port}");
+                AppLogger.Warn($"[DashboardViewModel:ConnectionLost] Remote connection lost. Reason: '{reason}'");
                 _timer.Stop();
                 IsConnected = false;
                 IsHeartbeatVisible = false;
@@ -528,6 +538,7 @@ public partial class DashboardViewModel : ViewModelBase
                     _rconService,
                     onReconnected: () =>
                     {
+                        AppLogger.Info("[DashboardViewModel:ConnectionLost] Reconnection successful. Resuming dashboard timer...");
                         IsConnected = true;
                         CloseDialog();
                         _timer.Start();
@@ -535,12 +546,18 @@ public partial class DashboardViewModel : ViewModelBase
                     },
                     onReturnToLogin: () =>
                     {
+                        AppLogger.Info("[DashboardViewModel:ConnectionLost] User selected return to login screen.");
                         CloseDialog();
                         _detachedConsoleWindow?.Close();
                         _detachedConsoleWindow = null;
+                        Dispose();
                         _onDisconnectRequested();
                     },
-                    onDismiss: () => CloseDialog()
+                    onDismiss: () =>
+                    {
+                        AppLogger.Debug("[DashboardViewModel:ConnectionLost] Connection lost dialog dismissed by user.");
+                        CloseDialog();
+                    }
                 ));
             });
         });
@@ -551,7 +568,7 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Info("[DashboardViewModel:Admins] Opening AdminsDialog...");
+            AppLogger.Info("[DashboardViewModel:Dialog] Opening connected RCON admins dialog...");
             AppLogger.TrackEvent("dialog_opened", new Dictionary<string, object> { ["dialog"] = "AdminsDialog" });
             ShowDialog(new AdminsDialogViewModel(_rconService, this));
         });
@@ -567,7 +584,7 @@ public partial class DashboardViewModel : ViewModelBase
 
         ExecuteSafe(() =>
         {
-            AppLogger.Debug($"[DashboardViewModel:Dialog] Displaying overlay: {dialog.GetType().Name}");
+            AppLogger.Debug($"[DashboardViewModel:Dialog] Presenting dialog: {dialog.GetType().Name}.");
             ActiveDialog = dialog;
             IsDialogVisible = true;
         });
@@ -584,10 +601,7 @@ public partial class DashboardViewModel : ViewModelBase
 
         ExecuteSafe(() =>
         {
-            if (ActiveDialog != null)
-            {
-                AppLogger.Debug($"[DashboardViewModel:Dialog] Dismissing overlay: {ActiveDialog.GetType().Name}");
-            }
+            AppLogger.Debug("[DashboardViewModel:Dialog] Closing active dialog.");
             IsDialogVisible = false;
             ActiveDialog = null;
         });
@@ -599,7 +613,6 @@ public partial class DashboardViewModel : ViewModelBase
         {
             if (!_rconService.IsConnected && IsConnected)
             {
-                AppLogger.Warn("[DashboardViewModel:Timer] Detected socket disconnect state.");
                 OnConnectionLost(this, "Connection timed out (No packets received)");
                 return;
             }
@@ -609,8 +622,8 @@ public partial class DashboardViewModel : ViewModelBase
                 RefreshCountdown--;
                 if (RefreshCountdown <= 0)
                 {
+                    AppLogger.Debug("[DashboardViewModel:Timer] Auto-refresh countdown expired. Triggering periodic refresh...");
                     RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
-                    AppLogger.Trace("[DashboardViewModel:Timer] Auto-refresh triggered by countdown timer.");
                     await RefreshAllInternalAsync(forceBans: false).ConfigureAwait(false);
                 }
 
@@ -627,6 +640,7 @@ public partial class DashboardViewModel : ViewModelBase
     [RelayCommand]
     public Task<bool> RefreshAllAsync()
     {
+        AppLogger.Info("[DashboardViewModel:ManualRefresh] Manual refresh requested by user.");
         RefreshCountdown = Math.Max(1, SettingsTab.Settings.RefreshIntervalSeconds);
         RefreshProgress = 100;
         return RefreshAllInternalAsync(forceBans: true);
@@ -638,32 +652,39 @@ public partial class DashboardViewModel : ViewModelBase
         {
             if (!_rconService.IsConnected)
             {
-                AppLogger.Trace("[DashboardViewModel:RefreshAll] Skipped: not connected.");
+                AppLogger.Warn("[DashboardViewModel:RefreshAll] Refresh aborted: RconService is not connected.");
                 return;
             }
 
             var start = Stopwatch.GetTimestamp();
+            var context = new Dictionary<string, object?>
+            {
+                ["force_bans"] = forceBans,
+                ["protocol"] = Profile.Protocol.ToString()
+            };
             using var timing = AppLogger.Measure($"DashboardViewModel.RefreshAllAsync(ForceBans: {forceBans})");
 
+            AppLogger.Debug("[DashboardViewModel:RefreshAll] Refreshing active players tab...", context);
             await PlayersTab.RefreshPlayersAsync().ConfigureAwait(false);
             await Dispatcher.UIThread.InvokeAsync(() => OnlinePlayersCount = PlayersTab.Players.Count);
 
             if (forceBans || SettingsTab.Settings.AutoRefreshBans)
             {
+                AppLogger.Debug("[DashboardViewModel:RefreshAll] Refreshing bans tab...", context);
                 await BansTab.RefreshBansAsync().ConfigureAwait(false);
                 await Dispatcher.UIThread.InvokeAsync(() => ActiveBansCount = BansTab.Bans.Count);
             }
 
             if (IsBattlEyeProtocol)
             {
+                AppLogger.Debug("[DashboardViewModel:RefreshAll] Refreshing connected admins list...", context);
                 var admins = await _rconService.GetAdminsAsync().ConfigureAwait(false);
                 await Dispatcher.UIThread.InvokeAsync(() => ConnectedAdminsCount = admins.Count);
             }
 
-            await DatabaseTab.LoadDbAsync().ConfigureAwait(false);
-
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Debug($"[DashboardViewModel:RefreshAll] Finished in {elapsedMs:F2}ms.");
+            context["duration_ms"] = elapsedMs;
+            AppLogger.Info($"[DashboardViewModel:RefreshAll] Global refresh cycle completed in {elapsedMs:F2}ms (Players={OnlinePlayersCount}, Bans={ActiveBansCount}).", context);
         });
     }
 
@@ -671,12 +692,11 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            var start = Stopwatch.GetTimestamp();
-            AppLogger.Trace($"[DashboardViewModel:Search] SearchQuery='{value}' (Type={SearchType})");
+            var sanitized = AppLogger.SanitizeSensitiveData(value);
+            AppLogger.Trace($"[DashboardViewModel:Search] Search query changed to '{sanitized}' (Type='{SearchType}').");
             PlayersTab.ApplyFilter(value, SearchType);
             BansTab.ApplyFilter(value, SearchType);
             DatabaseTab.ApplyFilter(value, SearchType);
-            AppLogger.Trace($"[DashboardViewModel:Search] Filter dispatched in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         });
     }
 
@@ -684,19 +704,16 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            var start = Stopwatch.GetTimestamp();
-            AppLogger.Trace($"[DashboardViewModel:Search] SearchType='{value}' (Query='{SearchQuery}')");
+            AppLogger.Debug($"[DashboardViewModel:Search] Search target type switched to '{value}'.");
             PlayersTab.ApplyFilter(SearchQuery, value);
             BansTab.ApplyFilter(SearchQuery, value);
             DatabaseTab.ApplyFilter(SearchQuery, value);
-            AppLogger.Trace($"[DashboardViewModel:Search] Search type filter dispatched in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
         });
     }
 
     [RelayCommand]
     public static void ToggleTheme()
     {
-        var start = Stopwatch.GetTimestamp();
         LuminaThemeManager.ToggleThemeVariant();
         var currentActual = Application.Current?.ActualThemeVariant;
         var newMode = currentActual == ThemeVariant.Dark ? "Dark" : "Light";
@@ -705,8 +722,7 @@ public partial class DashboardViewModel : ViewModelBase
         settings.ThemeMode = newMode;
         AppSettings.SaveToDisk(settings);
 
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[DashboardViewModel:Theme] Switched theme to '{newMode}' in {elapsedMs:F2}ms.");
+        AppLogger.Info($"[DashboardViewModel:Theme] Theme toggled to: {newMode}");
         AppLogger.TrackEvent("theme_toggled", new Dictionary<string, object>
         {
             ["theme_mode"] = newMode
@@ -720,7 +736,8 @@ public partial class DashboardViewModel : ViewModelBase
         {
             IsConsoleFullscreen = !IsConsoleFullscreen;
             ConsoleTab.IsFullscreen = IsConsoleFullscreen;
-            AppLogger.Debug($"[DashboardViewModel:Console] Fullscreen toggled: {IsConsoleFullscreen}");
+            AppLogger.Info($"[DashboardViewModel:Layout] Console fullscreen toggled: {IsConsoleFullscreen}");
+            UpdateLayoutDimensions();
         });
     }
 
@@ -731,6 +748,7 @@ public partial class DashboardViewModel : ViewModelBase
         {
             if (IsConsoleDetached)
             {
+                AppLogger.Debug("[DashboardViewModel:Layout] Activating already detached console window.");
                 _detachedConsoleWindow?.Activate();
                 return;
             }
@@ -739,16 +757,16 @@ public partial class DashboardViewModel : ViewModelBase
             ConsoleTab.IsDetached = true;
             UpdateLayoutDimensions();
 
-            AppLogger.Info("[DashboardViewModel:Console] Detached console into standalone window.");
+            AppLogger.Info("[DashboardViewModel:Layout] Detaching console to standalone window.");
             AppLogger.TrackEvent("console_detached");
 
             _detachedConsoleWindow = new ConsoleWindow(ConsoleTab, () =>
             {
+                AppLogger.Info("[DashboardViewModel:Layout] Reattaching console window via closing event callback.");
                 IsConsoleDetached = false;
                 ConsoleTab.IsDetached = false;
                 _detachedConsoleWindow = null;
                 UpdateLayoutDimensions();
-                AppLogger.Info("[DashboardViewModel:Console] Standalone console window closed and re-docked.");
             });
 
             if (Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop && desktop.MainWindow != null)
@@ -767,7 +785,7 @@ public partial class DashboardViewModel : ViewModelBase
     {
         ExecuteSafe(() =>
         {
-            AppLogger.Info("[DashboardViewModel:Console] Reattach console invoked.");
+            AppLogger.Info("[DashboardViewModel:Layout] User manually requested console reattachment.");
             _detachedConsoleWindow?.Close();
             _detachedConsoleWindow = null;
             IsConsoleDetached = false;
@@ -784,12 +802,19 @@ public partial class DashboardViewModel : ViewModelBase
             SplitterRowHeight = new GridLength(0, GridUnitType.Pixel);
             ConsoleRowHeight = new GridLength(0, GridUnitType.Pixel);
         }
+        else if (IsConsoleFullscreen)
+        {
+            TabsRowHeight = new GridLength(0, GridUnitType.Pixel);
+            SplitterRowHeight = new GridLength(0, GridUnitType.Pixel);
+            ConsoleRowHeight = new GridLength(1, GridUnitType.Star);
+        }
         else
         {
             TabsRowHeight = new GridLength(3, GridUnitType.Star);
             SplitterRowHeight = new GridLength(8, GridUnitType.Pixel);
             ConsoleRowHeight = new GridLength(2, GridUnitType.Star);
         }
+        AppLogger.Trace($"[DashboardViewModel:Layout] Layout row dimensions updated (Detached={IsConsoleDetached}, Fullscreen={IsConsoleFullscreen}).");
     }
 
     [RelayCommand]
@@ -798,21 +823,56 @@ public partial class DashboardViewModel : ViewModelBase
         return ExecuteSafeAsync(async () =>
         {
             var start = Stopwatch.GetTimestamp();
-            AppLogger.Info("[DashboardViewModel:Disconnect] Initiating clean disconnect...");
-            _timer.Stop();
-            _rconService.ConnectionLost -= OnConnectionLost;
-            _rconService.PlayerJoined -= OnPlayerJoined;
-            _rconService.PlayerLeft -= OnPlayerLeft;
-            _rconService.PlayerKickedStream -= OnPlayerKickedStream;
-            _rconService.PlayerBannedStream -= OnPlayerBannedStream;
-            _rconService.AdminConnectedStream -= OnAdminConnectedStream;
-            _rconService.ProtocolMismatchDetected -= OnProtocolMismatchDetected;
-            _detachedConsoleWindow?.Close();
-            _detachedConsoleWindow = null;
+            AppLogger.Info($"[DashboardViewModel:Disconnect] Manual disconnection requested by administrator for {Profile.ServerIp}:{Profile.Port}...");
+            Dispose();
             await _rconService.DisconnectAsync().ConfigureAwait(false);
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Info($"[DashboardViewModel:Disconnect] Disconnect sequence complete in {elapsedMs:F2}ms.");
+            AppLogger.Info($"[DashboardViewModel:Disconnect] Disconnection complete in {elapsedMs:F2}ms. Transitioning to login view.");
             _onDisconnectRequested();
         });
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!_isDisposed)
+        {
+            if (disposing)
+            {
+                AppLogger.Debug("[DashboardViewModel:Dispose] Disposing timer, subscriptions, and sub-tabs...");
+                _timer.Stop();
+                _timer.Tick -= OnTimerTick;
+
+                _rconService.ConnectionLost -= OnConnectionLost;
+                _rconService.PlayerJoined -= OnPlayerJoined;
+                _rconService.PlayerLeft -= OnPlayerLeft;
+                _rconService.PlayerKickedStream -= OnPlayerKickedStream;
+                _rconService.PlayerBannedStream -= OnPlayerBannedStream;
+                _rconService.AdminConnectedStream -= OnAdminConnectedStream;
+                _rconService.ProtocolMismatchDetected -= OnProtocolMismatchDetected;
+
+                DatabaseTab.Dispose();
+
+                if (_detachedConsoleWindow != null)
+                {
+                    try
+                    {
+                        AppLogger.Trace("[DashboardViewModel:Dispose] Closing detached console window...");
+                        _detachedConsoleWindow.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Trace($"[DashboardViewModel:Dispose] Notice closing detached console: {ex.Message}");
+                    }
+                    _detachedConsoleWindow = null;
+                }
+            }
+            _isDisposed = true;
+        }
     }
 }

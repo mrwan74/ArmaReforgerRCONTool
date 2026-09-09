@@ -4,7 +4,10 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Threading;
 
 namespace ReforgerRcon.Services;
 
@@ -13,6 +16,8 @@ public static class DebugLayoutLoggerService
     private static readonly string LogFile = Path.Combine(AppContext.BaseDirectory, "appdata", "debug_layout.txt");
     private static Window? _mainWindow;
     private static readonly Dictionary<string, DataGrid> RegisteredGrids = [];
+    private static readonly Lock DumpLock = new();
+    private static CancellationTokenSource? _debounceCts;
 
     public static void AttachMainWindow(Window window)
     {
@@ -45,6 +50,38 @@ public static class DebugLayoutLoggerService
     }
 
     public static void Dump()
+    {
+        lock (DumpLock)
+        {
+            _debounceCts?.Cancel();
+            _debounceCts?.Dispose();
+            _debounceCts = new CancellationTokenSource();
+            var token = _debounceCts.Token;
+
+            _ = ScheduleDebouncedDumpAsync(token);
+        }
+    }
+
+    private static async Task ScheduleDebouncedDumpAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(400, token).ConfigureAwait(false);
+            if (token.IsCancellationRequested) return;
+
+            Dispatcher.UIThread.Post(ExecuteDump, DispatcherPriority.Background);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on debounce cancellation
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[DebugLayoutLogger] Debounce notice: {ex.Message}");
+        }
+    }
+
+    private static void ExecuteDump()
     {
         var start = Stopwatch.GetTimestamp();
         try

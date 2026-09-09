@@ -43,6 +43,56 @@
             </StackPanel>
           </Button>
 
+          <!-- Reforger Ban Paging Controls -->
+          <Border Background="{DynamicResource LuminaNavigationPaneBrush}"
+                  BorderBrush="{DynamicResource LuminaBorderSubtleBrush}"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="6,2"
+                  IsVisible="{Binding IsReforgerProtocol}"
+                  VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <TextBlock Text="Paging:" Classes="Caption" VerticalAlignment="Center" FontWeight="SemiBold" />
+              
+              <ComboBox ItemsSource="{Binding FetchModes}" 
+                        SelectedItem="{Binding SelectedFetchMode}"
+                        Height="28"
+                        FontSize="11.5"
+                        VerticalAlignment="Center" />
+
+              <NumericUpDown Value="{Binding CustomPageLimit}" 
+                             Minimum="1" 
+                             Maximum="50" 
+                             FormatString="0 'pgs'"
+                             Height="28" 
+                             Width="90" 
+                             FontSize="11.5"
+                             IsVisible="{Binding IsCustomFetchMode}"
+                             VerticalAlignment="Center" 
+                             ToolTip.Tip="Maximum number of pages to fetch from the server (1 to 50)" />
+
+              <!-- Clickable Help Button -->
+              <Button Classes="Small Ghost Icon" 
+                      Command="{Binding OpenPaginationHelpCommand}"
+                      Width="26" Height="26"
+                      VerticalAlignment="Center">
+                <ToolTip.Tip>
+                  <StackPanel Spacing="4" MaxWidth="320">
+                    <TextBlock Text="Reforger Ban List Pagination (Click to read full guide)" FontWeight="Bold" FontSize="12" />
+                    <TextBlock Text="The server returns 25 bans per page via '#ban list [page]'." FontSize="11" TextWrapping="Wrap" />
+                    <TextBlock Text="• All Pages: Programmatically requests each page sequentially until all bans are retrieved." FontSize="11" TextWrapping="Wrap" />
+                    <TextBlock Text="• First Page Only: Fetches only the first 25 bans (fastest, minimal server traffic)." FontSize="11" TextWrapping="Wrap" />
+                    <TextBlock Text="• Custom Limit: Fetches sequentially up to the specified number of pages." FontSize="11" TextWrapping="Wrap" />
+                  </StackPanel>
+                </ToolTip.Tip>
+                <icons:MaterialIcon Kind="HelpCircleOutline" 
+                                   Width="16" Height="16" 
+                                   Foreground="{DynamicResource LuminaPrimaryBrush}" 
+                                   VerticalAlignment="Center" />
+              </Button>
+            </StackPanel>
+          </Border>
+
           <Button Classes="Outline Small" 
                   Content="Load Bans" 
                   Command="{Binding LoadBansCommand}" 
@@ -54,6 +104,22 @@
                   Command="{Binding WriteBansCommand}" 
                   IsVisible="{Binding IsBattlEyeProtocol}"
                   ToolTip.Tip="Re-write the current ban list to bans.txt in your BE working directory. This command can be used to remove expired bans." />
+
+          <!-- Import Bans (.txt) Button -->
+          <Button Classes="Outline Small" Command="{Binding ImportBansCommand}" ToolTip.Tip="Import bans from a .txt file">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="FileImportOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaPrimaryBrush}" />
+              <TextBlock Text="Import Bans (.txt)" />
+            </StackPanel>
+          </Button>
+
+          <!-- Export Bans (.txt) Button -->
+          <Button Classes="Outline Small" Command="{Binding ExportBansCommand}" ToolTip.Tip="Export current server bans to a .txt file">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <icons:MaterialIcon Kind="FileExportOutline" Width="14" Height="14" />
+              <TextBlock Text="Export Bans (.txt)" />
+            </StackPanel>
+          </Button>
         </StackPanel>
 
         <ToggleButton Grid.Column="2" Classes="Outline Small" IsChecked="{Binding IsMultiSelectMode}" Content="Multi-Select" />
@@ -88,7 +154,6 @@
       </DataGrid.ContextMenu>
 
       <DataGrid.Columns>
-        <!-- Select / Select All Checkbox Column -->
         <DataGridTemplateColumn Tag="ColSelect" 
                                 Width="50" 
                                 MinWidth="50" 

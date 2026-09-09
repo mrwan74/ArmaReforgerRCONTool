@@ -16,7 +16,18 @@ public class CountryInfo
 
     public string Name { get; set; } = "Unknown Region";
 
-    public Bitmap? FlagImage => FlagAssetService.GetFlag(Code);
+    public Bitmap? FlagImage
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_code) || _code is "xx" or "unknown" or "?" or "-")
+            {
+                return null;
+            }
+
+            return FlagAssetService.GetFlag(_code);
+        }
+    }
 
     public string FlagUrl => $"avares://ReforgerRcon/Assets/flags/{ResolveFlagFileName(Code, Name)}.svg";
 
@@ -34,7 +45,6 @@ public class CountryInfo
             return "xx";
         }
 
-        // Avoid confusing Unknown Region with the United Nations
         if (normalized == "un" && !string.Equals(name?.Trim(), "United Nations", StringComparison.OrdinalIgnoreCase))
         {
             return "xx";

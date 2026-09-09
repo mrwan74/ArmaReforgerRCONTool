@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet" alt=".NET 10" />
   <img src="https://img.shields.io/badge/AvaloniaUI-12.1.2-8E44AD?style=flat-square" alt="Avalonia UI" />
-  <img src="https://img.shields.io/badge/LuminaUI-0.6.8-0EA5E9?style=flat-square" alt="LuminaUI" />
+  <img src="https://img.shields.io/badge/LuminaUI-0.6.9-0EA5E9?style=flat-square" alt="LuminaUI" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-22C55E?style=flat-square" alt="Cross-Platform" />
   <img src="https://img.shields.io/badge/License-GNU AGPLv3-blue?style=flat-square" alt="MIT License" />
   <img src="https://img.shields.io/badge/Architecture-x64-F59E0B?style=flat-square" alt="Architecture" />
@@ -23,8 +23,8 @@
 
 ---
 
-> ### Latest Release: [`v0.8.121-alpha`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.8.121-alpha)
-> **Released on:** Sept 4, 2026, 03:40 PM (UTC) 
+> ### Latest Release: [`v0.9.0-alpha`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha)
+> **Released on:** Sept 9, 2026, 00:50 PM (UTC) 
 
 ---
 
@@ -86,15 +86,11 @@ Unlike legacy tools designed for older arma titles, ARRT natively accommodates t
 
 ## <a id="screenshots"></a> Screenshots
 
-<!-- Tip: In GitHub's web editor, simply drag and drop your screenshots or paste them (Ctrl+V) over the placeholder lines below -->
+<img width="1696" height="937" alt="image" src="https://github.com/user-attachments/assets/e9eec2ab-ea01-4e13-aeae-55279d45816b" />
+<img width="1696" height="937" alt="image" src="https://github.com/user-attachments/assets/a3b9d38c-5c6e-4bea-91bb-683bce3e94d3" />
+<img width="1696" height="937" alt="image" src="https://github.com/user-attachments/assets/1711f6a0-4e7d-4f87-bde9-e7e53ee71037" />
+<img width="1696" height="937" alt="image" src="https://github.com/user-attachments/assets/b4628ae3-b2e1-4da6-ae7e-a62623ddb80b" />
 
-| Main Dashboard & Live Monitoring | Players Management & Moderation |
-| :---: | :---: |
-| _<!-- Paste or drag Dashboard screenshot here -->_ | _<!-- Paste or drag Players screenshot here -->_ |
-
-| Detached & Split Console | Bans & Historical Database |
-| :---: | :---: |
-| _<!-- Paste or drag Console screenshot here -->_ | _<!-- Paste or drag Database screenshot here -->_ |
 
 ---
 
@@ -222,7 +218,7 @@ https://community.bistudio.com/wiki/Arma_Reforger:Server_Hosting#BattlEye
 - **Runtime**: [.NET 10.0](https://dotnet.microsoft.com/) (`net10.0`)
 - **Language**: C# 13 (Latest Roslyn Analyzers & strict Nullable reference types enabled)
 - **UI Framework**: [Avalonia UI 12.1.2](https://avaloniaui.net/)
-- **Theme & Controls**: [LuminaUI 0.6.8](https://github.com/lumina-ui) & `LuminaUI.DataGrid`
+- **Theme & Controls**: [LuminaUI 0.6.9](https://github.com/lumina-ui) & `LuminaUI.DataGrid`
 - **MVVM Pattern**: [CommunityToolkit.Mvvm 8.4.2](https://learn.microsoft.com/en-us/dotnet/communitytoolkit/mvvm/)
 - **Embedded Database**: [Microsoft.Data.Sqlite 10.0.11](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/) with `SQLitePCLRaw.bundle_e_sqlite3`
 - **Geolocation**: [MaxMind.GeoIP2 6.1.0](https://github.com/maxmind/GeoIP2-dotnet) & [TimeZoneConverter 7.2.0](https://github.com/mattjohnsonpint/TimeZoneConverter)
@@ -372,11 +368,15 @@ Special thanks to the authors of the open-source projects and libraries used in 
 * **[LuminaUI](https://github.com/j4587698/LuminaUI)** by **[@j4587698](https://github.com/j4587698)** – UI component and theming library for Avalonia.
 * **[Avalonia UI](https://github.com/AvaloniaUI/Avalonia)** by **[@AvaloniaUI](https://github.com/AvaloniaUI)** – Avalonia is a cross-platform UI framework for .NET providing a flexible styling system and supporting a wide range of operating systems.
 * **[MaxMind GeoIP2](https://github.com/maxmind/GeoIP2-dotnet)** by **[@maxmind](https://github.com/maxmind)** – IP Geolocation engine.
+* **[MaxMind GeoIP Databases](https://dev.maxmind.com/geoip/docs/databases/city-and-country/)** by **[@maxmind](https://www.maxmind.com/en/home)** Geolocation Databases GeoIP Country And City Databases 
+
 * **[Serilog](https://github.com/serilog/serilog)** by **[@serilog](https://github.com/serilog)** – Structured logging framework.
 * **[Sentry .NET SDK](https://github.com/getsentry/sentry-dotnet)** by **[@getsentry](https://github.com/getsentry)** – Application diagnostics and crash analytics.
 * **[flags-icons](https://github.com/lipis/flag-icons)** by **[@lipis](https://github.com/lipis)** – Country flags
 * **[Aptabase](https://aptabase.com)** by **[@aptabase](https://github.com/aptabase)** — Open Source, Privacy-First Analytics for Mobile, Desktop, and Web Apps.
 * The `Aptabase.Avalonia` client included in this repository is directly adapted and ported from Aptabase's official [.NET MAUI SDK](https://github.com/aptabase/aptabase-maui) to support Avalonia. All original SDK architecture and code remain the intellectual property of the Aptabase team.
+
+among many others,for a full list of packages uses check the .csproj files 
 
 ---
 

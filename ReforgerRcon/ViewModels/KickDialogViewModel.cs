@@ -27,6 +27,7 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
         if (IsExecuting) return;
         IsExecuting = true;
 
+        var start = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure($"KickDialogViewModel.ConfirmKickAsync({_targets.Count} targets)");
         int successCount = 0;
         int failedCount = 0;
@@ -67,7 +68,21 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
                 }
             }
 
-            AppLogger.Info($"[KickDialog:Execute] Kick execution complete (Success: {successCount}, Failed: {failedCount}).");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[KickDialog:Execute] Kick execution complete in {elapsedMs:F2}ms (Success: {successCount}, Failed: {failedCount}).");
+
+            if (total > 1)
+            {
+                AppLogger.TrackEvent("moderation_batch_action", new Dictionary<string, object>
+                {
+                    ["action_type"] = "kick",
+                    ["protocol"] = _rconService.CurrentProtocol.ToString(),
+                    ["target_count"] = total,
+                    ["success_count"] = successCount,
+                    ["failed_count"] = failedCount,
+                    ["duration_ms"] = elapsedMs
+                });
+            }
 
             await Dispatcher.UIThread.InvokeAsync(() => _parent.CloseDialog());
 

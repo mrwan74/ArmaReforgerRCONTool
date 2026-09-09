@@ -43,5 +43,5 @@ public partial class PlayerModel : ObservableObject
     public string FormattedEndpoint => $"{Ip}:{Port}";
     public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);
     public string WatchlistActionText => IsWatchlisted ? "Remove from Watchlist" : "Add to Watchlist";
-    public string PingDisplay => $"{Ping} ms";
+    public string PingDisplay => Ping < 0 ? $"{Ping}" : $"{Ping} ms";
 }

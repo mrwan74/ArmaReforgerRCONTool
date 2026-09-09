@@ -97,7 +97,6 @@
       </DataGrid.ContextMenu>
 
       <DataGrid.Columns>
-        <!-- Select / Select All Checkbox Column -->
         <DataGridTemplateColumn Tag="ColSelect" 
                                 Width="50" 
                                 MinWidth="50" 
@@ -172,7 +171,8 @@
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="models:PlayerModel">
               <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center">
-                <Border CornerRadius="3" ClipToBounds="True" BoxShadow="0 1 3 #30000000">
+                <Border CornerRadius="3" ClipToBounds="True" BoxShadow="0 1 3 #30000000"
+                        IsVisible="{Binding Country.FlagImage, Converter={x:Static ObjectConverters.IsNotNull}}">
                   <Image Source="{Binding Country.FlagImage}" 
                          Width="36" Height="25" 
                          Stretch="Uniform" 

@@ -40,6 +40,7 @@ public partial class BansTabView : UserControl
                         }
 
                         var gridKey = vm.IsBattlEyeProtocol ? "BansGrid_BattlEye" : "BansGrid_Reforger";
+                        AppLogger.Debug($"[BansTabView:Bind] Binding persistence for DataGrid with key: '{gridKey}'...");
                         ColumnLayoutStorageService.BindPersistence(BansGrid, gridKey);
 
                         UpdateColumnVisibilities(vm);
@@ -47,29 +48,39 @@ public partial class BansTabView : UserControl
 
                         vm.PropertyChanged += (s, e) =>
                         {
-                            if (e.PropertyName is nameof(BansViewModel.IsMultiSelectMode) or
-                                                 nameof(BansViewModel.IsReforgerProtocol) or
-                                                 nameof(BansViewModel.IsBattlEyeProtocol))
+                            try
                             {
-                                UpdateColumnVisibilities(vm);
-                                UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+                                if (e.PropertyName is nameof(BansViewModel.IsMultiSelectMode) or
+                                                     nameof(BansViewModel.IsReforgerProtocol) or
+                                                     nameof(BansViewModel.IsBattlEyeProtocol))
+                                {
+                                    AppLogger.Debug($"[BansTabView:PropertyChange] Updating visual state due to '{e.PropertyName}' change.");
+                                    UpdateColumnVisibilities(vm);
+                                    UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
+                                }
+                            }
+                            catch (Exception propEx)
+                            {
+                                AppLogger.Error("[BansTabView:PropertyChange] Error handling property change: " + propEx.Message, propEx);
                             }
                         };
                         AppLogger.Debug($"[BansTabView:Bind] DataContext bound in {Stopwatch.GetElapsedTime(bindStart).TotalMilliseconds:F2}ms.");
                     }
                     catch (Exception ex)
                     {
-                        AppLogger.Error("Failed configuring BansTabView bindings.", ex);
+                        AppLogger.Error("[BansTabView:Bind] Failed configuring BansTabView bindings: " + ex.Message, ex);
+                        ToastNotificationService.Instance.ShowError("UI Binding Error", "Failed initializing Bans tab bindings.");
                     }
                 }
             };
 
-            DebugLayoutLoggerService.RegisterDataGrid("BansGrid", BansGrid);
             AppLogger.Debug($"[BansTabView:Init] Initialized in {Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds:F2}ms.");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("Failed during BansTabView initialization.", ex);
+            AppLogger.Fatal("[BansTabView:Init] Failed during BansTabView initialization.", ex);
+            CrashReportService.HandleFatalException("BansTabView.Constructor", ex, isTerminating: false);
+            throw;
         }
     }
 
@@ -88,6 +99,7 @@ public partial class BansTabView : UserControl
             e.Handled = true;
             if (DataContext is BansViewModel vm)
             {
+                AppLogger.Debug($"[BansTabView:Sort] User clicked column header '{tag}'. Cycling column sort...");
                 vm.CycleColumnSort(tag);
                 UpdateColumnSortGlyphs(vm.CurrentSortField, vm.CurrentSortAscending);
             }
@@ -96,6 +108,7 @@ public partial class BansTabView : UserControl
         catch (Exception ex)
         {
             AppLogger.Error("[BansTabView:Sort] Error in sorting: " + ex.Message, ex);
+            ToastNotificationService.Instance.ShowWarning("Sort Error", "Unable to sort bans column: " + ex.Message);
         }
     }
 
@@ -144,6 +157,7 @@ public partial class BansTabView : UserControl
         var start = Stopwatch.GetTimestamp();
         try
         {
+            int updatedCount = 0;
             foreach (var col in BansGrid.Columns)
             {
                 var tag = col.Tag?.ToString();
@@ -154,24 +168,27 @@ public partial class BansTabView : UserControl
                     case ColSelectTag:
                         col.IsVisible = vm.IsMultiSelectMode;
                         col.Header = vm;
+                        updatedCount++;
                         break;
                     case "ColReforgerBannedName":
                     case "ColReforgerIdentity":
                         col.IsVisible = vm.IsReforgerProtocol;
+                        updatedCount++;
                         break;
                     case "ColBeBanNo":
                     case "ColBeIdentity":
                     case "ColBeMinutes":
                     case "ColBeReason":
                         col.IsVisible = vm.IsBattlEyeProtocol;
+                        updatedCount++;
                         break;
                 }
             }
-            AppLogger.Trace($"[BansTabView:Visibility] Updated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
+            AppLogger.Trace($"[BansTabView:Visibility] Evaluated {updatedCount} columns in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms (MultiSelect={vm.IsMultiSelectMode}, Protocol={vm.IsBattlEyeProtocol}).");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("Error updating BansGrid column visibility.", ex);
+            AppLogger.Error("[BansTabView:Visibility] Error updating BansGrid column visibility: " + ex.Message, ex);
         }
     }
 
@@ -186,6 +203,7 @@ public partial class BansTabView : UserControl
                 var header = leftVisual.FindAncestorOfType<DataGridColumnHeader>();
                 if (header?.FindDescendantOfType<CheckBox>() is not null && leftVisual.FindAncestorOfType<CheckBox>() is null && DataContext is BansViewModel vm)
                 {
+                    AppLogger.Debug("[BansTabView:Pointer] Left-click on column header checkbox detected. Toggling select-all...");
                     vm.ToggleSelectAll();
                     e.Handled = true;
                     return;
@@ -197,6 +215,7 @@ public partial class BansTabView : UserControl
                 var row = visual.FindAncestorOfType<DataGridRow>();
                 if (row?.DataContext is BanModel ban)
                 {
+                    AppLogger.Trace($"[BansTabView:Pointer] Right-click selection targeting Ban #{ban.BanNumber} ({ban.IdentityId}).");
                     BansGrid.SelectedItem = ban;
                 }
                 else
@@ -207,7 +226,7 @@ public partial class BansTabView : UserControl
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[BansTabView:Pointer] Lookup notice: {ex.Message}");
+            AppLogger.Trace($"[BansTabView:Pointer] Pointer lookup notice: {ex.Message}");
         }
     }
 
@@ -220,6 +239,7 @@ public partial class BansTabView : UserControl
                 var row = visual.FindAncestorOfType<DataGridRow>();
                 if (row?.DataContext is BanModel ban)
                 {
+                    AppLogger.Trace($"[BansTabView:Context] Context requested for Ban #{ban.BanNumber}.");
                     BansGrid.SelectedItem = ban;
                     return;
                 }
@@ -230,7 +250,7 @@ public partial class BansTabView : UserControl
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[BansTabView:Context] Lookup notice: {ex.Message}");
+            AppLogger.Trace($"[BansTabView:Context] Context lookup notice: {ex.Message}");
             e.Handled = true;
         }
     }

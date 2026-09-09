@@ -1,7 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.IO;
-using System.Text.Json;
 using LuminaUI.Controls;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
@@ -51,17 +49,9 @@ public partial class ConsoleWindow : LuminaWindow
     {
         try
         {
-            var settingsFile = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json");
-            if (File.Exists(settingsFile))
-            {
-                var json = File.ReadAllText(settingsFile);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json);
-                if (settings != null)
-                {
-                    UseWindowGlass = settings.EnableWindowGlass;
-                    AppLogger.Debug($"[ConsoleWindow:Glass] Initialized UseWindowGlass={UseWindowGlass}");
-                }
-            }
+            var settings = AppSettings.LoadFromDisk();
+            UseWindowGlass = settings.EnableWindowGlass;
+            AppLogger.Debug($"[ConsoleWindow:Glass] Initialized UseWindowGlass={UseWindowGlass}");
         }
         catch (Exception ex)
         {

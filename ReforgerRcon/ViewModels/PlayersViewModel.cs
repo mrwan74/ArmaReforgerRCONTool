@@ -45,7 +45,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 OnPropertyChanged(nameof(SelectAllTooltipText));
                 OnPropertyChanged(nameof(SelectAllButtonText));
 
-                // Propagate selection to all players when toggled by user
                 if (!_isUpdatingSelection && value.HasValue)
                 {
                     ApplySelectAll(value.Value);
@@ -82,9 +81,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     {
         var start = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("PlayersViewModel.RefreshPlayersAsync");
-        AppLogger.Debug($"[PlayersViewModel:Refresh] Querying live player list ({_rconService.CurrentProtocol})...");
 
-        // Preserve current selections across auto-refresh
         var selectedUids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var selectedIds = new HashSet<int>();
         bool wasAllSelected = IsAllSelected is true;
@@ -103,24 +100,8 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
         _allPlayers = await _rconService.GetPlayersAsync().ConfigureAwait(false);
 
-        // Auto-resolve GeoIP and restore selections
         foreach (var p in _allPlayers)
         {
-            if ((p.Country == null || p.Country.Code == "xx") &&
-                !string.IsNullOrWhiteSpace(p.Ip) &&
-                !p.Ip.Equals("N/A", StringComparison.OrdinalIgnoreCase))
-            {
-                var resolved = GeoIpService.GetLocation(p.Ip);
-                if (resolved.CountryCode != "xx")
-                {
-                    p.Country = new CountryInfo { Code = resolved.CountryCode, Name = resolved.CountryName };
-                    p.DisplayLocation = resolved.NaturalLocation;
-                    p.TimeZone = resolved.TimeZone;
-                    p.LocationCity = resolved.CityName;
-                    p.LocationState = resolved.SubdivisionName;
-                }
-            }
-
             var uid = !string.IsNullOrWhiteSpace(p.Guid) && !p.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
                 ? p.Guid
                 : p.Uid;
@@ -217,20 +198,16 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 {
                     existing.Country = player.Country;
                 }
-                else if (existing.Country == null || existing.Country.Code == "xx")
+                else if (IsBattlEyeProtocol && (existing.Country == null || existing.Country.Code == "xx") && GeoIpService.TryGetCachedLocation(existing.Ip, out var resolved))
                 {
-                    var resolved = GeoIpService.GetLocation(existing.Ip);
-                    if (resolved.CountryCode != "xx")
-                    {
-                        existing.Country = new CountryInfo { Code = resolved.CountryCode, Name = resolved.CountryName };
-                    }
+                    existing.Country = new CountryInfo { Code = resolved.CountryCode, Name = resolved.CountryName };
                 }
 
                 if (!string.IsNullOrEmpty(player.DisplayLocation) && !player.DisplayLocation.Equals("Unknown Region", StringComparison.OrdinalIgnoreCase)) existing.DisplayLocation = player.DisplayLocation;
                 if (!string.IsNullOrEmpty(player.TimeZone)) existing.TimeZone = player.TimeZone;
                 if (!string.IsNullOrEmpty(player.Guid) && !player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)) existing.Guid = player.Guid;
                 if (!string.IsNullOrEmpty(player.Uid) && !player.Uid.StartsWith("init", StringComparison.OrdinalIgnoreCase)) existing.Uid = player.Uid;
-                if (player.Ping > 0) existing.Ping = player.Ping;
+                existing.Ping = player.Ping;
             }
             else
             {
@@ -301,11 +278,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             var start = Stopwatch.GetTimestamp();
             using var timing = AppLogger.Measure($"PlayersViewModel.ApplyFilter('{query}', '{searchType}')");
 
-            foreach (var p in Players)
-            {
-                p.PropertyChanged -= OnPlayerPropertyChanged;
-            }
-
             IEnumerable<PlayerModel> filtered = _allPlayers;
 
             if (!string.IsNullOrWhiteSpace(query))
@@ -356,16 +328,23 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 };
             }
 
-            Players = new ObservableCollection<PlayerModel>(filtered);
+            var filteredList = filtered.ToList();
 
             foreach (var p in Players)
+            {
+                p.PropertyChanged -= OnPlayerPropertyChanged;
+            }
+
+            foreach (var p in filteredList)
             {
                 p.PropertyChanged += OnPlayerPropertyChanged;
             }
 
+            Players = new ObservableCollection<PlayerModel>(filteredList);
+
             UpdateSelectedCount();
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Trace($"[PlayersViewModel:Filter] Filtered {Players.Count}/{_allPlayers.Count} players in {elapsedMs:F2}ms (Query='{query}', Sort='{sortField}', Asc={isAscending}).");
+            AppLogger.Trace($"[PlayersViewModel:Filter] Synced {Players.Count}/{_allPlayers.Count} players in {elapsedMs:F2}ms (Query='{query}', Sort='{sortField}', Asc={isAscending}).");
         });
     }
 
@@ -494,10 +473,8 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null)
             {
-                AppLogger.Warn("[PlayersViewModel:Details] OpenPlayerDetails called with null target.");
                 return;
             }
-            AppLogger.Info($"[PlayersViewModel:Details] Opening details for '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "PlayerDetailDialog" });
             _dashboard.ShowDialog(new PlayerDetailViewModel(player, _rconService, this));
         });
@@ -510,7 +487,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            AppLogger.Info($"[PlayersViewModel:Kick] Opening kick dialog for '{player.Name}' (ID: #{player.Id}).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "KickDialog" });
             _dashboard.ShowDialog(new KickDialogViewModel([player], _rconService, this));
         });
@@ -523,7 +499,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            AppLogger.Info($"[PlayersViewModel:Ban] Opening ban dialog for '{player.Name}' (ID: #{player.Id}, UID: {player.Uid}).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BanDialog" });
             _dashboard.ShowDialog(new BanDialogViewModel([player], _rconService, this));
         });
@@ -537,7 +512,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
             player ??= SelectedPlayer;
             if (player == null) return;
 
-            AppLogger.Info($"[PlayersViewModel:QuickBan] Prompting quick permanent ban for '{player.Name}' (ID: #{player.Id}).");
             _dashboard.ShowDialog(new ConfirmDialogViewModel(
                 "Quick Permanent Ban",
                 $"Are you sure you want to PERMANENTLY ban {player.Name} (Player #{player.Id})?",
@@ -545,8 +519,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                 true,
                 async () =>
                 {
-                    var start = Stopwatch.GetTimestamp();
-                    AppLogger.Info($"[PlayersViewModel:QuickBan] Executing ban for '{player.Name}'...");
                     bool isSuccess = await _rconService.BanPlayerAsync(player, 0, "Quick Permanent Ban by Administrator").ConfigureAwait(false);
                     var cmd = _rconService.CurrentProtocol == RconProtocol.ReforgerBuiltIn
                         ? $"#ban create {player.Id} 0 Quick Ban"
@@ -556,7 +528,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                     {
                         ToastNotificationService.Instance.ShowSuccess("Permanent Ban", $"Banned {player.Name}", cmd, async () =>
                         {
-                            AppLogger.Info($"[PlayersViewModel:QuickBan] Undo triggered for '{player.Name}'. Reinstating unban...");
                             var allBans = await _rconService.GetBansAsync().ConfigureAwait(false);
                             var ban = allBans.FirstOrDefault(b => b.IdentityId == player.Uid || b.IdentityId == player.Guid);
                             if (ban != null)
@@ -573,7 +544,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                     {
                         ToastNotificationService.Instance.ShowError("Permanent Ban Failed", $"Could not ban {player.Name}.", cmd);
                     }
-                    AppLogger.Debug($"[PlayersViewModel:QuickBan] Finished in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
                 },
                 () => _dashboard.CloseDialog()
             ));
@@ -587,7 +557,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             player ??= SelectedPlayer;
             if (player == null) return;
-            AppLogger.Debug($"[PlayersViewModel:Comment] Opening comment editor for '{player.Name}'.");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "SetCommentDialog" });
             _dashboard.ShowDialog(new SetCommentDialogViewModel(player.Name, player.Uid, player.Comment, _rconService, _dashboard));
         });
@@ -609,14 +578,9 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         string identifier;
         if (IsBattlEyeProtocol)
         {
-            if (string.IsNullOrWhiteSpace(player.Guid) || player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase))
-            {
-                identifier = player.Uid;
-            }
-            else
-            {
-                identifier = player.Guid;
-            }
+            identifier = string.IsNullOrWhiteSpace(player.Guid) || player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
+                ? player.Uid
+                : player.Guid;
         }
         else
         {
@@ -649,7 +613,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
                $"Name: {p.Name}\n" +
                $"BattlEye GUID: {p.Guid}\n" +
                $"IP:Port: {p.FormattedEndpoint}\n" +
-               $"Ping: {p.Ping} ms\n" +
+               $"Ping: {p.PingDisplay}\n" +
                $"Comment: {p.Comment}";
     }
 
@@ -673,7 +637,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             var selected = Players.Where(p => p.IsSelected).ToList();
             if (selected.Count == 0) return;
-            AppLogger.Info($"[PlayersViewModel:BatchKick] Opening batch kick for {selected.Count} player(s).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BatchKickDialog", ["count"] = selected.Count });
             _dashboard.ShowDialog(new KickDialogViewModel(selected, _rconService, this));
         });
@@ -686,7 +649,6 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
         {
             var selected = Players.Where(p => p.IsSelected).ToList();
             if (selected.Count == 0) return;
-            AppLogger.Info($"[PlayersViewModel:BatchBan] Opening batch ban for {selected.Count} player(s).");
             AppLogger.TrackEvent(DialogOpenedEvent, new Dictionary<string, object> { [DialogKey] = "BatchBanDialog", ["count"] = selected.Count });
             _dashboard.ShowDialog(new BanDialogViewModel(selected, _rconService, this));
         });
@@ -713,73 +675,47 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
     [RelayCommand]
     public void OpenGlobalMessage() => ExecuteSafe(() =>
-    {
-        AppLogger.Info("[PlayersViewModel] Opening global message dialog.");
-        _dashboard.ShowDialog(new GlobalMessageDialogViewModel(_rconService, this));
-    });
+        _dashboard.ShowDialog(new GlobalMessageDialogViewModel(_rconService, this)));
 
     [RelayCommand]
     public void OpenAnnouncement() => ExecuteSafe(() =>
-    {
-        AppLogger.Info("[PlayersViewModel] Opening announcement dialog.");
-        _dashboard.ShowDialog(new AnnouncementDialogViewModel(_rconService, this));
-    });
+        _dashboard.ShowDialog(new AnnouncementDialogViewModel(_rconService, this)));
 
     [RelayCommand]
     public Task<bool> RestartServerAsync() => ExecuteSafeAsync(async () =>
     {
-        var start = Stopwatch.GetTimestamp();
-        AppLogger.Info("[PlayersViewModel] Dispatching '#restart' command...");
         AppLogger.TrackEvent("server_restart_dispatched");
         await _rconService.RestartServerAsync().ConfigureAwait(false);
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Debug($"[PlayersViewModel] Server restart dispatched in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Server Restart", "Restart command sent.", "#restart");
     });
 
     [RelayCommand]
-    public void ConfirmRestart()
-    {
-        ExecuteSafe(() =>
-        {
-            AppLogger.Info("[PlayersViewModel] Prompting confirmation for server restart.");
-            _dashboard.ShowDialog(new ConfirmDialogViewModel(
-                "Restart Server",
-                "Are you sure you want to trigger a server restart now?",
-                "Restart Server",
-                true,
-                () => _rconService.RestartServerAsync(),
-                () => _dashboard.CloseDialog()
-            ));
-        });
-    }
+    public void ConfirmRestart() =>
+        ExecuteSafe(() => _dashboard.ShowDialog(new ConfirmDialogViewModel(
+            "Restart Server",
+            "Are you sure you want to trigger a server restart now?",
+            "Restart Server",
+            true,
+            () => _rconService.RestartServerAsync(),
+            () => _dashboard.CloseDialog()
+        )));
 
     [RelayCommand]
     public Task<bool> ShutdownServerAsync() => ExecuteSafeAsync(async () =>
     {
-        var start = Stopwatch.GetTimestamp();
-        AppLogger.Info("[PlayersViewModel] Dispatching '#shutdown' command...");
         AppLogger.TrackEvent("server_shutdown_dispatched");
         await _rconService.ShutdownServerAsync().ConfigureAwait(false);
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Debug($"[PlayersViewModel] Server shutdown dispatched in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Server Shutdown", "Shutdown command sent.", "#shutdown");
     });
 
     [RelayCommand]
-    public void ConfirmShutdown()
-    {
-        ExecuteSafe(() =>
-        {
-            AppLogger.Info("[PlayersViewModel] Prompting confirmation for server shutdown.");
-            _dashboard.ShowDialog(new ConfirmDialogViewModel(
-                "Shutdown Server",
-                "Are you sure you want to trigger a server shutdown now?",
-                "Shutdown Server",
-                true,
-                () => _rconService.ShutdownServerAsync(),
-                () => _dashboard.CloseDialog()
-            ));
-        });
-    }
+    public void ConfirmShutdown() =>
+        ExecuteSafe(() => _dashboard.ShowDialog(new ConfirmDialogViewModel(
+            "Shutdown Server",
+            "Are you sure you want to trigger a server shutdown now?",
+            "Shutdown Server",
+            true,
+            () => _rconService.ShutdownServerAsync(),
+            () => _dashboard.CloseDialog()
+        )));
 }

@@ -28,8 +28,9 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
     private bool _isSyncingProfile;
     private bool _isLoadingProfiles = true;
     private CancellationTokenSource? _connectCts;
+    private CancellationTokenSource? _saveProfileDebounceCts;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
-    private bool _disposed;
+    private int _disposed;
 
     [SuppressMessage("Security", "S1313:Hardcoded IP address", Justification = "Default localhost placeholder configuration")]
     [ObservableProperty] public partial string ServerIp { get; set; } = "127.0.0.1";
@@ -68,27 +69,11 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
     public char PasswordMaskChar => IsPasswordRevealed ? '\0' : '•';
     public MaterialIconKind PasswordIconKind => IsPasswordRevealed ? MaterialIconKind.EyeOff : MaterialIconKind.Eye;
 
-    public AsyncRelayCommand<ServerProfile?> SaveProfileChangesCommand { get; }
-    public AsyncRelayCommand SaveCurrentAsNewProfileCommand { get; }
-    public AsyncRelayCommand SaveCurrentProfileCommand { get; }
-    public RelayCommand<ServerProfile?> StartEditProfileNameCommand { get; }
-    public AsyncRelayCommand<ServerProfile?> ConfirmEditProfileNameCommand { get; }
-    public RelayCommand<ServerProfile?> CancelEditProfileNameCommand { get; }
-    public AsyncRelayCommand<ServerProfile?> DeleteProfileCommand { get; }
-
     public LoginViewModel(Action<ServerProfile, IRconService> onLoginSuccess, bool isStartup = false)
     {
         var start = Stopwatch.GetTimestamp();
         _onLoginSuccess = onLoginSuccess;
         _isStartup = isStartup;
-
-        SaveProfileChangesCommand = new AsyncRelayCommand<ServerProfile?>(SaveProfileChangesAsync);
-        SaveCurrentAsNewProfileCommand = new AsyncRelayCommand(SaveCurrentAsNewProfileAsync);
-        SaveCurrentProfileCommand = new AsyncRelayCommand(SaveCurrentProfileAsync);
-        StartEditProfileNameCommand = new RelayCommand<ServerProfile?>(StartEditProfileName);
-        ConfirmEditProfileNameCommand = new AsyncRelayCommand<ServerProfile?>(ConfirmEditProfileNameAsync);
-        CancelEditProfileNameCommand = new RelayCommand<ServerProfile?>(CancelEditProfileName);
-        DeleteProfileCommand = new AsyncRelayCommand<ServerProfile?>(DeleteProfileAsync);
 
         InitializeProfilesInstant();
         AppLogger.Trace($"[LoginViewModel:Init] Initialization finished in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
@@ -192,7 +177,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         {
             if (value is null || _isLoadingProfiles) return;
 
-            var start = Stopwatch.GetTimestamp();
             _isSyncingProfile = true;
             try
             {
@@ -212,7 +196,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(Port));
                 OnPropertyChanged(nameof(IsReforgerProtocol));
                 OnPropertyChanged(nameof(IsBattlEyeProtocol));
-                AppLogger.Trace($"[LoginViewModel:Profile] Switch complete in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
             }
             finally
             {
@@ -243,7 +226,30 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            _ = Task.Run(() => ProfileStorageService.SaveProfilesFast([.. Profiles]), CancellationToken.None);
+            _saveProfileDebounceCts?.Cancel();
+            _saveProfileDebounceCts?.Dispose();
+            _saveProfileDebounceCts = new CancellationTokenSource();
+            var token = _saveProfileDebounceCts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(400, token).ConfigureAwait(false);
+                    if (!token.IsCancellationRequested)
+                    {
+                        ProfileStorageService.SaveProfilesFast([.. Profiles]);
+                    }
+                }
+                catch (OperationCanceledException opEx)
+                {
+                    AppLogger.Trace($"[LoginViewModel:Sync] Debounce save canceled: {opEx.Message}");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Trace($"[LoginViewModel:Sync] Debounce save notice: {ex.Message}");
+                }
+            }, token);
         }
         catch (Exception ex)
         {
@@ -297,13 +303,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 PortText = DefaultReforgerPort.ToString(CultureInfo.InvariantCulture);
             }
 
-            AppLogger.Info($"[LoginViewModel:Protocol] Changed protocol to {value} (Current Port: {Port})");
-
-            AppLogger.TrackEvent("protocol_toggled", new Dictionary<string, object>
-            {
-                ["selected_protocol"] = value.ToString()
-            });
-
             SyncCurrentFormToSelectedProfile();
         });
     }
@@ -313,7 +312,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         ExecuteSafe(() =>
         {
             if (_isSyncingProfile || _isLoadingProfiles) return;
-            AppLogger.Debug($"[LoginViewModel:AutoConnect] AutoConnect toggled: {value}");
             SyncCurrentFormToSelectedProfile();
         });
     }
@@ -367,6 +365,7 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         });
     }
 
+    [RelayCommand]
     public void StartEditProfileName(ServerProfile? profile)
     {
         ExecuteSafe(() =>
@@ -384,12 +383,12 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         });
     }
 
-    public Task ConfirmEditProfileNameAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
+    [RelayCommand]
+    public Task<bool> ConfirmEditProfileNameAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
     {
         profile ??= SelectedProfile;
         if (profile is null) return;
 
-        var previousName = profile.Name;
         if (!string.IsNullOrWhiteSpace(profile.EditNameBuffer))
         {
             profile.Name = profile.EditNameBuffer.Trim();
@@ -397,10 +396,10 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
 
         profile.IsEditing = false;
         await ProfileStorageService.SaveProfilesAsync([.. Profiles]).ConfigureAwait(false);
-        AppLogger.Info($"[LoginViewModel:ProfileEdit] Renamed profile '{previousName}' -> '{profile.Name}'.");
         ToastNotificationService.Instance.ShowToast("Profile Renamed", $"Renamed profile to '{profile.Name}'.");
     }, "Failed to rename profile.");
 
+    [RelayCommand]
     public void CancelEditProfileName(ServerProfile? profile)
     {
         ExecuteSafe(() =>
@@ -411,7 +410,8 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         });
     }
 
-    public Task SaveProfileChangesAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
+    [RelayCommand]
+    public Task<bool> SaveProfileChangesAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
     {
         profile ??= SelectedProfile;
         if (profile is null)
@@ -440,7 +440,8 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         ToastNotificationService.Instance.ShowToast("Profile Saved", $"Saved changes to '{profile.Name}'.");
     }, "Failed to update profile settings.");
 
-    public Task SaveCurrentAsNewProfileAsync() => ExecuteSafeAsync(async () =>
+    [RelayCommand]
+    public Task<bool> SaveCurrentAsNewProfileAsync() => ExecuteSafeAsync(async () =>
     {
         var name = string.IsNullOrWhiteSpace(NewProfileName)
             ? $"Server {ServerIp.Trim()}:{Port}"
@@ -478,11 +479,13 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         ToastNotificationService.Instance.ShowToast("New Profile Added", $"Created server profile '{name}'.");
     }, "Failed to save new server profile.");
 
-    public Task SaveCurrentProfileAsync() => SelectedProfile is not null
+    [RelayCommand]
+    public Task<bool> SaveCurrentProfileAsync() => SelectedProfile is not null
         ? SaveProfileChangesAsync(SelectedProfile)
         : SaveCurrentAsNewProfileAsync();
 
-    public Task DeleteProfileAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
+    [RelayCommand]
+    public Task<bool> DeleteProfileAsync(ServerProfile? profile) => ExecuteSafeAsync(async () =>
     {
         profile ??= SelectedProfile;
         if (profile is null) return;
@@ -536,112 +539,134 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
 
     private async Task ConnectInternalAsync(CancellationToken cancellationToken)
     {
-        await _connectLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        if (Volatile.Read(ref _disposed) != 0) return;
+
         try
         {
-            if (IsConnecting && _connectCts != null)
+            await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException ex)
+        {
+            AppLogger.Trace($"[LoginViewModel:Connect] Lock acquisition bypassed - instance disposed: {ex.Message}");
+            return;
+        }
+        catch (OperationCanceledException ex)
+        {
+            AppLogger.Trace($"[LoginViewModel:Connect] Lock acquisition canceled: {ex.Message}");
+            return;
+        }
+
+        try
+        {
+            if (Volatile.Read(ref _disposed) != 0) return;
+
+            IsConnecting = true;
+            ErrorMessage = string.Empty;
+
+            if (_connectCts != null)
             {
                 try
                 {
                     await _connectCts.CancelAsync().ConfigureAwait(false);
                     _connectCts.Dispose();
                 }
-                catch (ObjectDisposedException ex)
+                catch (Exception ex)
                 {
-                    AppLogger.Trace($"[LoginViewModel:Connect] CTS notice: {ex.Message}");
+                    AppLogger.Trace($"[LoginViewModel:Connect] CTS cleanup notice: {ex.Message}");
                 }
             }
 
             _connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        }
-        finally
-        {
-            _connectLock.Release();
-        }
+            var ct = _connectCts.Token;
 
-        var ct = _connectCts.Token;
-
-        await ExecuteSafeAsync(async () =>
-        {
-            var start = Stopwatch.GetTimestamp();
-            IsConnecting = true;
-            ErrorMessage = string.Empty;
-
-            var profile = new ServerProfile
+            await ExecuteSafeAsync(async () =>
             {
-                Name = SelectedProfile?.Name ?? $"Server {ServerIp.Trim()}:{Port}",
-                ServerIp = ServerIp.Trim(),
-                Port = Port,
-                Password = Password,
-                Protocol = Protocol,
-                AutoConnect = AutoConnect,
-                IsLastSelected = true
-            };
+                var start = Stopwatch.GetTimestamp();
 
-            var rconService = new RconService();
-            var success = await rconService.ConnectAsync(profile, ct).ConfigureAwait(false);
-
-            ct.ThrowIfCancellationRequested();
-            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-
-            if (success)
-            {
-                if (SelectedProfile != null)
+                var profile = new ServerProfile
                 {
-                    SelectedProfile.ServerIp = ServerIp.Trim();
-                    SelectedProfile.Port = Port;
-                    SelectedProfile.Password = Password;
-                    SelectedProfile.Protocol = Protocol;
-                    SelectedProfile.AutoConnect = AutoConnect;
-                    SelectedProfile.IsLastSelected = true;
+                    Name = SelectedProfile?.Name ?? $"Server {ServerIp.Trim()}:{Port}",
+                    ServerIp = ServerIp.Trim(),
+                    Port = Port,
+                    Password = Password,
+                    Protocol = Protocol,
+                    AutoConnect = AutoConnect,
+                    IsLastSelected = true
+                };
 
-                    foreach (var p in Profiles.Where(p => p != SelectedProfile))
+                var rconService = new RconService();
+                var success = await rconService.ConnectAsync(profile, ct).ConfigureAwait(false);
+
+                ct.ThrowIfCancellationRequested();
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+                if (success)
+                {
+                    if (SelectedProfile != null)
                     {
-                        p.IsLastSelected = false;
+                        SelectedProfile.ServerIp = ServerIp.Trim();
+                        SelectedProfile.Port = Port;
+                        SelectedProfile.Password = Password;
+                        SelectedProfile.Protocol = Protocol;
+                        SelectedProfile.AutoConnect = AutoConnect;
+                        SelectedProfile.IsLastSelected = true;
+
+                        foreach (var p in Profiles.Where(p => p != SelectedProfile))
+                        {
+                            p.IsLastSelected = false;
+                        }
                     }
-                }
-                else if (Profiles.Count > 0)
-                {
-                    Profiles[0].ServerIp = ServerIp.Trim();
-                    Profiles[0].Port = Port;
-                    Profiles[0].Password = Password;
-                    Profiles[0].Protocol = Protocol;
-                    Profiles[0].AutoConnect = AutoConnect;
-                    Profiles[0].IsLastSelected = true;
-                    SelectedProfile = Profiles[0];
+                    else if (Profiles.Count > 0)
+                    {
+                        Profiles[0].ServerIp = ServerIp.Trim();
+                        Profiles[0].Port = Port;
+                        Profiles[0].Password = Password;
+                        Profiles[0].Protocol = Protocol;
+                        Profiles[0].AutoConnect = AutoConnect;
+                        Profiles[0].IsLastSelected = true;
+                        SelectedProfile = Profiles[0];
+                    }
+                    else
+                    {
+                        Profiles.Add(profile);
+                        SelectedProfile = profile;
+                    }
+
+                    AppLogger.Info($"[LoginViewModel:Connect] Connected in {elapsedMs:F2}ms (Port: {profile.Port}, Protocol: {profile.Protocol}). Transitioning immediately...");
+
+                    Dispatcher.UIThread.Post(() => _onLoginSuccess(profile, rconService));
+                    _ = Task.Run(() => ProfileStorageService.SaveProfilesFast([.. Profiles]), CancellationToken.None);
                 }
                 else
                 {
-                    Profiles.Add(profile);
-                    SelectedProfile = profile;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        ErrorMessage = !string.IsNullOrWhiteSpace(rconService.LastConnectionError)
+                            ? rconService.LastConnectionError
+                            : "Failed to connect to server. Verify server IP, RCON port, and password.";
+                    });
                 }
-
-                _ = Task.Run(() => ProfileStorageService.SaveProfilesFast([.. Profiles]), CancellationToken.None);
-                AppLogger.Info($"[LoginViewModel:Connect] Connected to '{SelectedProfile?.Name}' in {elapsedMs:F2}ms (Port: {profile.Port}, Protocol: {profile.Protocol}).");
-
-                Dispatcher.UIThread.Post(() => _onLoginSuccess(profile, rconService));
-            }
-            else
-            {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    ErrorMessage = !string.IsNullOrWhiteSpace(rconService.LastConnectionError)
-                        ? rconService.LastConnectionError
-                        : "Failed to connect to server. Verify server IP, RCON port, and password.";
-
-                    AppLogger.Warn($"[LoginViewModel:Connect] Connection failed for {profile.ServerIp}:{profile.Port} after {elapsedMs:F2}ms. Reason: {ErrorMessage}");
-                });
-            }
-        }).ConfigureAwait(false);
-
-        await _connectLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-        try
-        {
-            IsConnecting = false;
+            }).ConfigureAwait(false);
         }
         finally
         {
-            _connectLock.Release();
+            IsConnecting = false;
+
+            try
+            {
+                if (Volatile.Read(ref _disposed) == 0)
+                {
+                    _connectLock.Release();
+                }
+            }
+            catch (ObjectDisposedException ex)
+            {
+                AppLogger.Trace($"[LoginViewModel:Connect] Lock already disposed during release: {ex.Message}");
+            }
+            catch (SemaphoreFullException ex)
+            {
+                AppLogger.Trace($"[LoginViewModel:Connect] Lock already at maximum capacity: {ex.Message}");
+            }
         }
     }
 
@@ -671,7 +696,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 AutoConnect = false
             };
 
-            AppLogger.Info($"[LoginViewModel:Demo] Launching simulated demo mode ({profile.Protocol}, Port: {profile.Port})...");
             var mockService = new MockRconService();
             await mockService.ConnectAsync(profile, CancellationToken.None).ConfigureAwait(false);
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
@@ -689,24 +713,24 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
-        {
-            if (disposing)
-            {
-                try
-                {
-                    _connectCts?.Cancel();
-                    _connectCts?.Dispose();
-                    _connectCts = null;
-                }
-                catch (ObjectDisposedException ex)
-                {
-                    Debug.WriteLine($"[LoginViewModel:Dispose] CTS notice: {ex.Message}");
-                }
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-                _connectLock.Dispose();
+        if (disposing)
+        {
+            try
+            {
+                _connectCts?.Cancel();
+                _connectCts?.Dispose();
+                _connectCts = null;
+
+                _saveProfileDebounceCts?.Cancel();
+                _saveProfileDebounceCts?.Dispose();
+                _saveProfileDebounceCts = null;
             }
-            _disposed = true;
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[LoginViewModel:Dispose] CTS notice: {ex.Message}");
+            }
         }
     }
 }

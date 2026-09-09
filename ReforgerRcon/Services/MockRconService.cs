@@ -110,14 +110,14 @@ public class MockRconService : IRconService
         cancellationToken.ThrowIfCancellationRequested();
         var start = Stopwatch.GetTimestamp();
         _currentProfile = profile;
-        await Task.Delay(400, cancellationToken);
+        await Task.Delay(400, cancellationToken).ConfigureAwait(false);
         IsConnected = true;
         LastPacketTime = DateTime.UtcNow;
 
         OutputReceived?.Invoke(this, $"[SYSTEM] Connected to {profile.ServerIp}:{profile.Port} via {profile.Protocol}");
         OutputReceived?.Invoke(this, "[RCON] Logged in successfully as Administrator (Demo Simulation Mode).");
 
-        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players, profile.Protocol);
+        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players, profile.Protocol).ConfigureAwait(false);
 
         if (profile.Protocol == RconProtocol.BattlEye)
         {
@@ -132,9 +132,9 @@ public class MockRconService : IRconService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var start = Stopwatch.GetTimestamp();
-        await Task.Delay(100, cancellationToken);
+        await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         IsConnected = false;
-        await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol);
+        await PlayerDatabaseStorageService.SetAllOfflineAsync(CurrentProtocol).ConfigureAwait(false);
         OutputReceived?.Invoke(this, "[SYSTEM] Disconnected from server.");
         AppLogger.Info($"[MockRconService] Disconnected simulated in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
     }
@@ -170,14 +170,20 @@ public class MockRconService : IRconService
     {
         cancellationToken.ThrowIfCancellationRequested();
         LastPacketTime = DateTime.UtcNow;
-        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players, CurrentProtocol);
+        await PlayerDatabaseStorageService.RecordSeenPlayersAsync(_players, CurrentProtocol).ConfigureAwait(false);
         return [.. _players];
     }
 
-    public Task<List<BanModel>> GetBansAsync(CancellationToken cancellationToken = default)
+    public Task<List<BanModel>> GetBansAsync(int maxPages = 0, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         LastPacketTime = DateTime.UtcNow;
+
+        if (maxPages == 1)
+        {
+            return Task.FromResult(_bans.Take(5).ToList());
+        }
+
         return Task.FromResult(_bans.ToList());
     }
 
@@ -191,13 +197,63 @@ public class MockRconService : IRconService
         });
     }
 
-    public Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default) => PlayerDatabaseStorageService.GetAllAsync(CurrentProtocol);
+    public async Task<List<DatabasePlayerModel>> GetDatabasePlayersAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Debug($"[MockRconService:Database] Querying all simulated database records for protocol {CurrentProtocol}...");
+        try
+        {
+            var result = await PlayerDatabaseStorageService.GetAllAsync(CurrentProtocol).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[MockRconService:Database] Retrieved {result.Count} simulated database records in {elapsedMs:F2}ms.");
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Trace($"[MockRconService:Database] GetDatabasePlayersAsync cancelled after {elapsedMs:F2}ms.");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Error($"[MockRconService:Database] Failed retrieving simulated database players after {elapsedMs:F2}ms: {ex.Message}", ex);
+            ToastNotificationService.Instance.ShowError("Simulation Error", $"Failed loading player database: {ex.Message}");
+            throw;
+        }
+    }
+
+    public async Task<PagedResult<DatabasePlayerModel>> GetPagedDatabasePlayersAsync(DatabaseQueryParameters parameters, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Debug($"[MockRconService:Database] Simulated paginated query: Page={parameters.PageIndex}, Size={parameters.PageSize}, Protocol={parameters.Protocol}...");
+        try
+        {
+            var result = await PlayerDatabaseStorageService.GetPagedAsync(parameters, cancellationToken).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[MockRconService:Database] Simulated paged query completed in {elapsedMs:F2}ms (Returned={result.Items.Count}, Total={result.TotalCount}).");
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Error($"[MockRconService:Database] Error in GetPagedDatabasePlayersAsync after {elapsedMs:F2}ms: {ex.Message}", ex);
+            ToastNotificationService.Instance.ShowError("Simulation Error", $"Database simulation failure: {ex.Message}");
+            throw;
+        }
+    }
 
     public Task<bool> KickPlayerAsync(PlayerModel player, string reason, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _players.Remove(player);
-        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#kick {player.Id} {reason}" : $"kick {player.Id} {reason}";
+        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#kick {player.Id}" : $"kick {player.Id} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         OutputReceived?.Invoke(this, $"[RCON IN] Player '{player.Name}' kicked!");
         PlayerLeft?.Invoke(this, player);
@@ -249,7 +305,7 @@ public class MockRconService : IRconService
         };
         _bans.Add(ban);
 
-        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {identity} {durationSeconds} {reason}" : $"addBan {identity} {durationSeconds / 60} {reason}";
+        var cmd = CurrentProtocol == RconProtocol.ReforgerBuiltIn ? $"#ban create {identity} {durationSeconds}" : $"addBan {identity} {durationSeconds / 60} {reason}";
         OutputReceived?.Invoke(this, $"[RCON OUT] {cmd}");
         AppLogger.Info($"[MockRconService:Moderation] Simulated offline ban for '{identity}'");
         return Task.FromResult(true);

@@ -47,6 +47,9 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
 
     private async Task RunUpdateAsync()
     {
+        var start = Stopwatch.GetTimestamp();
+        AppLogger.Info("[GeoIpUpdateDialog:Update] Initiating MaxMind GeoIP update task...");
+
         var progressHandler = new Progress<GeoIpProgressReport>(report =>
         {
             Dispatcher.UIThread.Post(() =>
@@ -58,6 +61,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
                 {
                     var timestamp = DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
                     ActivityLogs.Add($"[{timestamp}] {report.DetailLog}");
+                    AppLogger.Trace($"[GeoIpUpdateDialog:Progress] [{report.OverallProgressPercentage:F0}%] {report.DetailLog}");
                 }
 
                 UpdateStepState(report.CityStatus, report.CityStatusMessage, k => CityIconKind = k, s => CityStatusText = s);
@@ -67,8 +71,8 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
 
         try
         {
-            AppLogger.Info("[GeoIpUpdateDialog:Update] Starting MaxMind GeoIP update task...");
             bool success = await GeoIpService.UpdateDatabasesAsync(force: true, progressHandler, _cts.Token).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
             Dispatcher.UIThread.Post(() =>
             {
@@ -79,32 +83,39 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
                 if (success)
                 {
                     CurrentStatusTitle = "Databases Updated Successfully";
+                    AppLogger.Info($"[GeoIpUpdateDialog:Update] MaxMind GeoIP databases updated successfully in {elapsedMs:F2}ms.");
                 }
                 else if (_cts.IsCancellationRequested)
                 {
                     CurrentStatusTitle = "Update Canceled";
+                    AppLogger.Info($"[GeoIpUpdateDialog:Update] Update was cancelled by operator after {elapsedMs:F2}ms.");
                 }
                 else
                 {
                     CurrentStatusTitle = "Update Completed with Warnings";
+                    AppLogger.Warn($"[GeoIpUpdateDialog:Update] GeoIP update completed with warnings after {elapsedMs:F2}ms. Inspect activity log.");
                 }
 
                 ProgressPercentage = 100;
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException opEx)
         {
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[GeoIpUpdateDialog:Update] Operation cancelled after {elapsedMs:F2}ms: {opEx.Message}");
             Dispatcher.UIThread.Post(() =>
             {
                 IsInProgress = false;
                 IsFinished = true;
                 CurrentStatusTitle = "Update Canceled by Operator";
-                ActivityLogs.Add($"[{DateTime.Now:HH:mm:ss.fff}] Canceled by operator.");
+                ActivityLogs.Add($"[{DateTime.Now:HH:mm:ss.fff}] Cancelled by operator.");
             });
         }
         catch (Exception ex)
         {
-            AppLogger.Error($"[GeoIpUpdateDialog:Update] Fatal error: {ex.Message}", ex);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Error($"[GeoIpUpdateDialog:Update] Fatal error updating GeoIP databases after {elapsedMs:F2}ms: {ex.Message}", ex);
+            ToastNotificationService.Instance.ShowError("GeoIP Update Failed", $"Fatal error updating MaxMind databases: {ex.Message}");
             Dispatcher.UIThread.Post(() =>
             {
                 IsInProgress = false;
@@ -140,17 +151,17 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
         {
             try
             {
-                AppLogger.Warn("[GeoIpUpdateDialog:Cancel] Cancellation requested.");
+                AppLogger.Warn("[GeoIpUpdateDialog:Cancel] Cancellation requested by operator.");
                 _cts.Cancel();
             }
             catch (ObjectDisposedException)
             {
-                // Already disposed
+                // Disposed CTS safely bypassed
             }
         }
         else
         {
-            AppLogger.Debug("[GeoIpUpdateDialog:Close] Dialog closed.");
+            AppLogger.Debug("[GeoIpUpdateDialog:Close] Dialog dismissed.");
             _onClose();
         }
     }
@@ -160,9 +171,9 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
     {
         var start = Stopwatch.GetTimestamp();
         var text = string.Join(Environment.NewLine, ActivityLogs);
-        await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
+        await ClipboardService.SetTextAsync(text, CancellationToken.None).ConfigureAwait(false);
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[GeoIpUpdateDialog:Clipboard] Copied {ActivityLogs.Count} update log lines in {elapsedMs:F2}ms.");
+        AppLogger.Info($"[GeoIpUpdateDialog:Clipboard] Copied {ActivityLogs.Count} update log line(s) ({text.Length} chars) in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("Copied", "Copied update activity log to clipboard.");
     }
 
@@ -178,6 +189,7 @@ public partial class GeoIpUpdateDialogViewModel : ViewModelBase, IDisposable
         {
             if (disposing)
             {
+                AppLogger.Debug("[GeoIpUpdateDialog:Dispose] Disposing dialog CTS...");
                 _cts.Dispose();
             }
             _isDisposed = true;
