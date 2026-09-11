@@ -358,7 +358,7 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
         }
         catch (OperationCanceledException)
         {
-            // Expected
+            // Expected on shutdown
         }
         catch (TimeoutException)
         {

@@ -4,13 +4,16 @@ using Avalonia.Controls;
 using Avalonia.Labs.Notifications;
 using Avalonia.Logging;
 using Avalonia.Platform;
+using Avalonia.Skia;
 using Avalonia.Threading;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
 using Sentry;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
@@ -18,6 +21,8 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using TimeZoneConverter;
+using Velopack;
+using Velopack.Logging;
 
 namespace ReforgerRcon;
 
@@ -25,7 +30,7 @@ namespace ReforgerRcon;
 internal static partial class Program
 {
     private const uint MbIconWarning = 0x00000030;
-    private const string AppDataDirectoryName = "appdata";
+    private const uint MbIconError = 0x00000010;
     private static Mutex? _directoryMutex;
     private static FileStream? _directoryLockStream;
     private static IDisposable? _sentrySdk;
@@ -34,55 +39,168 @@ internal static partial class Program
     private static partial int MessageBox(IntPtr hWnd, string lpText, string lpCaption, uint uType);
 
     [STAThread]
-    public static void Main(string[] args)
+    public static int Main(string[] args)
     {
+        var bootTimestamp = Stopwatch.GetTimestamp();
+
+        // =========================================================================
+        // 1. VELOPACK HOOK INTERCEPTOR (MUST BE LINE 1 OF MAIN)
+        // =========================================================================
+        try
+        {
+            VelopackApp.Build()
+                .SetLogger(VelopackLoggerBridge.Instance)
+                .SetAutoApplyOnStartup(false) // Gives operator explicit UI control over restart
+                .OnFirstRun(v => System.Diagnostics.Trace.TraceInformation($"[Velopack] First launch detected for installed version: {v}"))
+                .OnRestarted(v => System.Diagnostics.Trace.TraceInformation($"[Velopack] Application restarted successfully following update to version: {v}"))
+                .Run();
+        }
+        catch (Exception veloEx)
+        {
+            System.Diagnostics.Trace.TraceError($"[CRITICAL] Velopack hook interceptor threw an exception: {veloEx}");
+        }
+
+        // =========================================================================
+        // 2. UNHANDLED EXCEPTION SAFETY NETS
+        // =========================================================================
         AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
 
+        AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+        {
+            var ex = e.ExceptionObject as Exception ?? new InvalidOperationException($"Non-exception domain object: {e.ExceptionObject}");
+            var context = new Dictionary<string, object?>
+            {
+                ["is_terminating"] = e.IsTerminating,
+                ["thread_id"] = Environment.CurrentManagedThreadId,
+                ["ram_mb"] = Math.Round(Environment.WorkingSet / (1024.0 * 1024.0), 1)
+            };
+            AppLogger.Fatal($"[Program:AppDomain] Unhandled domain exception captured (Terminating: {e.IsTerminating})", ex, context);
+            CrashReportService.HandleFatalException("AppDomain.UnhandledException", ex, e.IsTerminating);
+        };
+
+        TaskScheduler.UnobservedTaskException += (s, e) =>
+        {
+            var context = new Dictionary<string, object?>
+            {
+                ["thread_id"] = Environment.CurrentManagedThreadId,
+                ["inner_count"] = e.Exception.InnerExceptions.Count
+            };
+            AppLogger.Error("[Program:TaskScheduler] Unobserved task exception captured on finalizer thread", e.Exception, context);
+            CrashReportService.HandleFatalException("TaskScheduler.UnobservedTaskException", e.Exception, isTerminating: false);
+            e.SetObserved();
+        };
+
+        // =========================================================================
+        // 3. SINGLE INSTANCE DIRECTORY MUTEX LOCK
+        // =========================================================================
+        var lockStart = Stopwatch.GetTimestamp();
         if (!TryAcquireDirectoryLock(out var instanceLockHandle))
         {
             var runningDir = AppContext.BaseDirectory;
+            var lockElapsedMs = Stopwatch.GetElapsedTime(lockStart).TotalMilliseconds;
             var alertMessage = $"Another instance of ARMA Reforger RCON is already running from this directory:\n\n{runningDir}\n\nOnly one instance per directory is allowed. To run multiple instances simultaneously, place the application in a separate folder.";
+
+            try
+            {
+                var aptabaseKey = AppLogger.ResolveAptabaseAppKey();
+                if (!string.IsNullOrWhiteSpace(aptabaseKey) && AppSettings.IsCrashReportingEnabled())
+                {
+                    var ephemeralClient = new AptabaseClient(aptabaseKey, null, null);
+                    try
+                    {
+                        ephemeralClient.TrackEvent("double_launch_blocked", new Dictionary<string, object>
+                        {
+                            ["running_dir_hash"] = runningDir.GetHashCode().ToString("X8", CultureInfo.InvariantCulture),
+                            ["os_platform"] = RuntimeInformation.OSDescription,
+                            ["lock_check_ms"] = lockElapsedMs
+                        }).Wait(TimeSpan.FromSeconds(1.5));
+                    }
+                    finally
+                    {
+                        ephemeralClient.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(1));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Program:DoubleLaunchCheck] Telemetry dispatch notice: {ex.Message}");
+            }
 
             if (OperatingSystem.IsWindows())
             {
                 MessageBox(IntPtr.Zero, alertMessage, "ARMA Reforger RCON - Instance Already Running", MbIconWarning);
             }
-            return;
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Error.WriteLine(alertMessage);
+                Console.ResetColor();
+            }
+            return 1;
         }
 
         using (instanceLockHandle)
         {
-            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            try
             {
-                var ex = e.ExceptionObject as Exception ?? new InvalidOperationException($"Non-exception domain object: {e.ExceptionObject}");
-                CrashReportService.HandleFatalException("AppDomain.UnhandledException", ex, e.IsTerminating);
-            };
+                AppLogger.InitializeFullLogging();
+                CrashReportService.Initialize();
+                var bootElapsedMs = Stopwatch.GetElapsedTime(bootTimestamp).TotalMilliseconds;
+                AppLogger.Info($"[Program:Main] Launching Avalonia application with ClassicDesktopStyle lifetime (PreBootTime={bootElapsedMs:F2}ms)...");
 
-            TaskScheduler.UnobservedTaskException += (_, e) =>
+                var exitCode = BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
+
+                AppLogger.Info($"[Program:Main] Application exited normally with return code {exitCode}.");
+                return exitCode;
+            }
+            catch (Exception fatalAppEx)
             {
-                CrashReportService.HandleFatalException("TaskScheduler.UnobservedTaskException", e.Exception, isTerminating: false);
-                e.SetObserved();
-            };
+                AppLogger.Fatal("[Program:Main] Application terminated unexpectedly due to an uncaught top-level exception.", fatalAppEx);
+                CrashReportService.HandleFatalException("Program.Main", fatalAppEx, isTerminating: true);
 
-            AppLogger.InitializeFullLogging();
-            CrashReportService.Initialize();
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnMainWindowClose);
+                if (OperatingSystem.IsWindows())
+                {
+                    MessageBox(IntPtr.Zero,
+                        $"The application terminated unexpectedly:\n\n{fatalAppEx.GetType().Name}: {fatalAppEx.Message}\n\nA detailed diagnostic crash report has been generated in appdata/crash_reports/.",
+                        "ARMA Reforger RCON - Critical Fault",
+                        MbIconError);
+                }
 
-            if (AptabaseExtensions.IsInitialized)
+                return 1;
+            }
+            finally
             {
+                var teardownStart = Stopwatch.GetTimestamp();
+                AppLogger.Info("[Program:Main] Executing application teardown and resource flushing...");
+
+                if (AptabaseExtensions.IsInitialized)
+                {
+                    try
+                    {
+                        AptabaseExtensions.Instance.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Trace($"[Program:Shutdown] Aptabase disposal notice: {ex.Message}");
+                    }
+                }
+
+                GeoIpService.Shutdown();
+
                 try
                 {
-                    AptabaseExtensions.Instance.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+                    _sentrySdk?.Dispose();
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Trace($"[Program:Shutdown] Aptabase disposal notice: {ex.Message}");
+                    AppLogger.Trace($"[Program:Shutdown] Sentry disposal notice: {ex.Message}");
                 }
-            }
 
-            GeoIpService.Shutdown();
-            _sentrySdk?.Dispose();
-            AppLogger.Shutdown();
+                AppLogger.Flush();
+                AppLogger.Shutdown();
+                var teardownMs = Stopwatch.GetElapsedTime(teardownStart).TotalMilliseconds;
+                System.Diagnostics.Trace.TraceInformation($"[Program:Main] Teardown complete in {teardownMs:F2}ms.");
+            }
         }
     }
 
@@ -92,21 +210,32 @@ internal static partial class Program
         {
             _ = Task.Run(async () =>
             {
+                var bgStart = Stopwatch.GetTimestamp();
+                AppLogger.Debug("[Program:Background] Commencing background services pre-warming...");
+
                 try
                 {
-                    await Task.Delay(20).ConfigureAwait(false);
+                    await Task.Delay(100).ConfigureAwait(false);
 
                     ColumnLayoutStorageService.Prewarm();
                     SQLitePCL.Batteries_V2.Init();
                     _ = PlayerDatabaseStorageService.InitializeAsync();
+
+                    await Task.Yield();
                     FlagAssetService.PrewarmCommonFlags();
                     _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
                     GeoIpService.Initialize();
                     PushNotificationService.Initialize();
+
+                    // Prewarm UpdateService engine
+                    _ = ReforgerRcon.Services.UpdateService.Instance;
+
+                    var bgElapsedMs = Stopwatch.GetElapsedTime(bgStart).TotalMilliseconds;
+                    AppLogger.Info($"[Program:Background] All background worker services initialized in {bgElapsedMs:F2}ms.");
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Trace($"[Program:Background] Pre-warm notice: {ex.Message}");
+                    AppLogger.Error($"[Program:Background] Pre-warm service initialization notice: {ex.Message}", ex);
                 }
 
                 if (AppSettings.IsCrashReportingEnabled())
@@ -124,6 +253,7 @@ internal static partial class Program
         var dsn = AppLogger.ResolveSentryDsn();
         if (string.IsNullOrWhiteSpace(dsn)) return;
 
+        var start = Stopwatch.GetTimestamp();
         try
         {
             _sentrySdk = SentrySdk.Init(options =>
@@ -136,7 +266,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@0.8.122";
+                options.Release = "ReforgerRcon@0.9.0-alpha.1";
 
                 options.SetBeforeSend((sentryEvent, _) => AppSettings.IsCrashReportingEnabled() ? sentryEvent : null);
                 options.SetBeforeSendTransaction((tx, _) => AppSettings.IsCrashReportingEnabled() ? tx : null);
@@ -147,6 +277,9 @@ internal static partial class Program
                 scope.User = new SentryUser { Id = AppLogger.InstallationId };
                 scope.SetTag("installation_id", AppLogger.InstallationId);
             });
+
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Debug($"[Program:Sentry] Sentry telemetry engine initialized successfully in {elapsedMs:F2}ms.");
         }
         catch (Exception ex)
         {
@@ -172,17 +305,17 @@ internal static partial class Program
     private static bool TryAcquireDirectoryLock(out IDisposable lockHandle)
     {
         lockHandle = null!;
+        var start = Stopwatch.GetTimestamp();
         try
         {
-            var baseDir = AppContext.BaseDirectory;
+            var baseDir = AppPaths.AppDataDirectory;
             var mutexName = $"Local\\ReforgerRcon_DirLock_{baseDir.GetHashCode():X8}";
             _directoryMutex = new Mutex(true, mutexName, out bool createdNew);
             if (!createdNew) return false;
 
-            var appDataDir = Path.Combine(baseDir, AppDataDirectoryName);
-            if (!Directory.Exists(appDataDir)) Directory.CreateDirectory(appDataDir);
+            if (!Directory.Exists(baseDir)) Directory.CreateDirectory(baseDir);
 
-            var lockFilePath = Path.Combine(appDataDir, "process.lock");
+            var lockFilePath = Path.Combine(baseDir, "process.lock");
             _directoryLockStream = new FileStream(lockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
             lockHandle = new DirectoryLockDisposable(_directoryMutex, _directoryLockStream);
@@ -190,7 +323,8 @@ internal static partial class Program
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[Program:Lock] Directory lock acquisition notice: {ex.Message}");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            System.Diagnostics.Trace.TraceWarning($"[Program:Lock] Directory lock acquisition notice after {elapsedMs:F2}ms: {ex.Message}");
             _directoryLockStream?.Dispose();
             _directoryLockStream = null;
             _directoryMutex?.Dispose();
@@ -203,7 +337,11 @@ internal static partial class Program
     {
         var builder = AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont();
+            .WithInterFont()
+            .With(new SkiaOptions
+            {
+                MaxGpuResourceSizeBytes = 256 * 1024 * 1024
+            });
 
         try
         {
@@ -230,12 +368,12 @@ internal static partial class Program
         {
             try
             {
-                var storagePath = Path.Combine(AppContext.BaseDirectory, AppDataDirectoryName, "analytics");
+                var storagePath = Path.Combine(AppPaths.AppDataDirectory, "analytics");
 
                 builder.UseAptabase(aptabaseKey, new AptabaseOptions
                 {
                     EnablePersistence = true,
-                    EnableCrashReporting = true,
+                    EnableCrashReporting = false,
                     CaptureAvaloniaFrameworkLogs = false,
                     StoragePath = storagePath,
                     SuppressUIThreadCrashes = true,

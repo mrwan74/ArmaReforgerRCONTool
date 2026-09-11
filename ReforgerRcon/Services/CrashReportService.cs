@@ -21,7 +21,7 @@ namespace ReforgerRcon.Services;
 public static partial class CrashReportService
 {
     private const uint MbIconError = 0x00000010;
-    private static readonly string CrashDirectory = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
+    private static readonly string CrashDirectory = AppPaths.CrashReportsDirectory;
     public static event Action<ErrorReportModel>? UnhandledErrorCaptured;
     private static readonly ConcurrentQueue<ErrorReportModel> PendingReports = new();
     private static int _isHandlingCrash;
@@ -406,7 +406,6 @@ public static partial class CrashReportService
             }
         }
 
-        // Cross-platform Linux / macOS core dump generation via DiagnosticsClient
         try
         {
             var pid = Environment.ProcessId;

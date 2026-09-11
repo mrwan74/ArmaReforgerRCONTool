@@ -32,8 +32,8 @@ public partial class SettingsViewModel : ViewModelBase
     private const string DefaultSortOption = "Default";
 
     private readonly DashboardViewModel? _dashboard;
-    private static readonly string SettingsFile = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json");
-    private static readonly string TempSettingsFile = Path.Combine(AppContext.BaseDirectory, "appdata", "settings.json.tmp");
+    private static readonly string SettingsFile = Path.Combine(AppPaths.AppDataDirectory, "settings.json");
+    private static readonly string TempSettingsFile = Path.Combine(AppPaths.AppDataDirectory, "settings.json.tmp");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly SemaphoreSlim FileLock = new(1, 1);
 
@@ -48,6 +48,13 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] public partial string DatabaseEngineText { get; set; } = "SQLite 3 (WAL Mode Active)";
     [ObservableProperty] public partial string DatabaseSizeText { get; set; } = "Ready";
     [ObservableProperty] public partial string DatabaseRecordsText { get; set; } = "Ready";
+
+    // Velopack Auto-Update Observables
+    [ObservableProperty] public partial string UpdateStatusText { get; set; } = UpdateService.Instance.StatusDetails;
+    [ObservableProperty] public partial bool IsCheckingForUpdates { get; set; }
+    [ObservableProperty] public partial bool IsUpdateAvailable { get; set; }
+    [ObservableProperty] public partial bool IsUpdateReadyToRestart { get; set; }
+    [ObservableProperty] public partial int UpdateDownloadProgress { get; set; }
 
     public ObservableCollection<string> ThemeOptions { get; } = [SystemDefaultTheme, DarkModeTheme, LightModeTheme];
     public ObservableCollection<string> PlayersSortOptions { get; } = [DefaultSortOption, "Status", "Country", "Name", "BattlEye GUID", "IP:Port", "Ping", "Comment"];
@@ -74,10 +81,19 @@ public partial class SettingsViewModel : ViewModelBase
 
             if (Settings.ThemeMode != mode)
             {
+                var prevMode = Settings.ThemeMode;
                 Settings.ThemeMode = mode;
                 OnPropertyChanged(nameof(SelectedThemeOption));
                 AppSettings.ApplyThemeMode(mode);
-                AppLogger.Info($"[SettingsViewModel:Theme] Theme mode set to: {mode}");
+                AppLogger.Info($"[SettingsViewModel:Theme] Theme mode changed: '{prevMode}' -> '{mode}'");
+
+                AppLogger.TrackEvent("theme_choice_updated", new Dictionary<string, object>
+                {
+                    ["previous_theme"] = prevMode,
+                    ["theme_mode"] = mode,
+                    ["is_startup"] = false
+                });
+
                 _ = SaveSettingsAsync(showToast: false);
             }
         }
@@ -92,7 +108,44 @@ public partial class SettingsViewModel : ViewModelBase
         _dashboard = dashboard;
         AppLogger.Debug("[SettingsViewModel:Init] Initializing SettingsViewModel...");
         LoadSettingsFast();
-        AppLogger.Trace($"[SettingsViewModel:Init] Initialized in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
+
+        // Wire UpdateService reactive state changes to the UI
+        UpdateService.Instance.StateChanged += () =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                UpdateStatusText = UpdateService.Instance.StatusDetails;
+                IsCheckingForUpdates = UpdateService.Instance.CurrentStatus == UpdateStatus.Checking ||
+                                       UpdateService.Instance.CurrentStatus == UpdateStatus.Downloading;
+                IsUpdateAvailable = UpdateService.Instance.CurrentStatus == UpdateStatus.UpdateAvailable;
+                IsUpdateReadyToRestart = UpdateService.Instance.CurrentStatus == UpdateStatus.ReadyToRestart;
+                UpdateDownloadProgress = UpdateService.Instance.DownloadPercentage;
+            });
+        };
+
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Trace($"[SettingsViewModel:Init] Initialized in {elapsedMs:F2}ms.");
+    }
+
+    [RelayCommand]
+    public static Task CheckForUpdatesManualAsync()
+    {
+        AppLogger.Info("[SettingsViewModel:Update] User clicked Check For Updates.");
+        return UpdateService.Instance.CheckForUpdatesAsync(isManual: true);
+    }
+
+    [RelayCommand]
+    public static Task DownloadUpdateManualAsync()
+    {
+        AppLogger.Info("[SettingsViewModel:Update] User clicked Download Update.");
+        return UpdateService.Instance.DownloadUpdateAsync();
+    }
+
+    [RelayCommand]
+    public static void RestartToApplyUpdate()
+    {
+        AppLogger.Info("[SettingsViewModel:Update] User clicked Restart & Apply.");
+        UpdateService.Instance.RestartAndApply();
     }
 
     public static void ApplyWindowGlassState(bool enableWindowGlass)
@@ -117,7 +170,7 @@ public partial class SettingsViewModel : ViewModelBase
                 }
             }
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Debug($"[SettingsViewModel:Glass] Window glass state applied in {elapsedMs:F2}ms (UseWindowGlass={enableWindowGlass}).");
+            AppLogger.Debug($"[SettingsViewModel:Glass] Window glass backdrop applied in {elapsedMs:F2}ms (UseWindowGlass={enableWindowGlass}).");
         }
         catch (InvalidOperationException invEx)
         {
@@ -156,11 +209,21 @@ public partial class SettingsViewModel : ViewModelBase
         ExecuteSafe(() =>
         {
             var start = Stopwatch.GetTimestamp();
-            AppLogger.Debug($"[SettingsViewModel:Sort] Sorting preferences changed (Players: {Settings.PlayersSortBy}, Bans: {Settings.BansSortBy}, DB: {Settings.DatabaseSortBy}). Re-filtering...");
+            var context = new Dictionary<string, object?>
+            {
+                ["players_sort"] = Settings.PlayersSortBy,
+                ["players_asc"] = Settings.PlayersSortAscending,
+                ["bans_sort"] = Settings.BansSortBy,
+                ["bans_asc"] = Settings.BansSortAscending,
+                ["db_sort"] = Settings.DatabaseSortBy,
+                ["db_asc"] = Settings.DatabaseSortAscending
+            };
+            AppLogger.Debug("[SettingsViewModel:Sort] Sorting preferences changed. Re-filtering all active tabs...", context);
             _dashboard?.PlayersTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard?.BansTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
             _dashboard?.DatabaseTab.ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
-            AppLogger.Trace($"[SettingsViewModel:Sort] Re-filter complete in {Stopwatch.GetElapsedTime(start).TotalMilliseconds:F2}ms.");
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Trace($"[SettingsViewModel:Sort] Re-filter completed in {elapsedMs:F2}ms.");
         });
     }
 
@@ -269,6 +332,20 @@ public partial class SettingsViewModel : ViewModelBase
             {
                 FileLock.Release();
             }
+
+            AppLogger.TrackEvent("settings_preferences_saved", new Dictionary<string, object>
+            {
+                ["theme_mode"] = Settings.ThemeMode,
+                ["audio_alerts_enabled"] = Settings.AudioAlerts,
+                ["toast_notifications_enabled"] = Settings.ToastNotifications,
+                ["push_notifications_enabled"] = Settings.PushNotifications,
+                ["alert_on_join"] = Settings.AlertOnJoin,
+                ["alert_on_leave"] = Settings.AlertOnLeave,
+                ["alert_on_watchlist_join"] = Settings.AlertOnWatchlistJoin,
+                ["alert_on_watchlist_leave"] = Settings.AlertOnWatchlistLeave,
+                ["refresh_interval_seconds"] = Settings.RefreshIntervalSeconds,
+                ["window_glass_enabled"] = Settings.EnableWindowGlass
+            });
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {

@@ -68,6 +68,7 @@ public sealed partial class RconService : IRconService
     private DateTime _lastMessageChunkUtc = DateTime.UtcNow;
     private int _lastChunkSizeBytes;
     private int _messageChunksCount;
+    private int _totalCommandsDispatched;
     private bool _isDisposed;
     private volatile bool _hasInitialPlayerSnapshot;
     private volatile bool _isInitialConnectPhase;
@@ -328,6 +329,7 @@ public sealed partial class RconService : IRconService
             _isManualDisconnecting = false;
             DetectedProtocolMismatch = null;
             _protocolMismatchFired = 0;
+            _totalCommandsDispatched = 0;
             _sessionStartTimeUtc = DateTime.UtcNow;
             _recentlyAnnouncedJoins.Clear();
             _recentlyAnnouncedLeaves.Clear();
@@ -423,11 +425,23 @@ public sealed partial class RconService : IRconService
                 if (_isManualDisconnecting) return;
 
                 var uptimeSeconds = Math.Max(0, (int)(DateTime.UtcNow - _sessionStartTimeUtc).TotalSeconds);
+                var disconnectReason = args.DisconnectionType?.ToString() ?? "Unknown";
+
+                AppLogger.TrackEvent("rcon_session_summary", new Dictionary<string, object>
+                {
+                    [ProtocolMetricKey] = CurrentProtocol.ToString(),
+                    [DurationSecondsMetricKey] = uptimeSeconds,
+                    ["duration_minutes"] = Math.Round(uptimeSeconds / 60.0, 1),
+                    ["disconnect_reason"] = disconnectReason,
+                    ["avg_ping_ms"] = PingMs,
+                    ["commands_dispatched"] = _totalCommandsDispatched,
+                    ["is_clean_disconnect"] = false
+                });
 
                 AppLogger.TrackEvent("rcon_reconnect_triggered", new Dictionary<string, object>
                 {
                     [ProtocolMetricKey] = CurrentProtocol.ToString(),
-                    ["disconnection_type"] = args.DisconnectionType?.ToString() ?? "Unknown",
+                    ["disconnection_type"] = disconnectReason,
                     ["uptime_seconds"] = uptimeSeconds,
                     ["is_automatic"] = args.DisconnectionType != BattlEyeDisconnectionType.Manual
                 });
@@ -592,9 +606,23 @@ public sealed partial class RconService : IRconService
 
             Volatile.Write(ref _inFlightPlayersTask, null);
 
+            var uptimeSeconds = Math.Max(0, (int)(DateTime.UtcNow - _sessionStartTimeUtc).TotalSeconds);
+
+            AppLogger.TrackEvent("rcon_session_summary", new Dictionary<string, object>
+            {
+                [ProtocolMetricKey] = CurrentProtocol.ToString(),
+                [DurationSecondsMetricKey] = uptimeSeconds,
+                ["duration_minutes"] = Math.Round(uptimeSeconds / 60.0, 1),
+                ["disconnect_reason"] = "Manual",
+                ["avg_ping_ms"] = PingMs,
+                ["commands_dispatched"] = _totalCommandsDispatched,
+                ["is_clean_disconnect"] = true
+            });
+
             AppLogger.TrackEvent("rcon_disconnect", new Dictionary<string, object>
             {
-                [ProtocolMetricKey] = CurrentProtocol.ToString()
+                [ProtocolMetricKey] = CurrentProtocol.ToString(),
+                [DurationSecondsMetricKey] = uptimeSeconds
             });
 
             if (_client is { Connected: true } && CurrentProtocol == RconProtocol.ReforgerBuiltIn)
@@ -1296,6 +1324,8 @@ public sealed partial class RconService : IRconService
             ToastNotificationService.Instance.ShowWarning("Socket Disconnected", "Cannot dispatch command: socket connection is offline.");
             return Task.CompletedTask;
         }
+
+        Interlocked.Increment(ref _totalCommandsDispatched);
 
         AppLogger.TrackEvent("rcon_command_dispatched", new Dictionary<string, object>
         {

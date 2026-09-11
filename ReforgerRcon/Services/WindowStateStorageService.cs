@@ -19,7 +19,7 @@ public class WindowStateModel
 
 public static class WindowStateStorageService
 {
-    private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
+    private static readonly string StorageDirectory = AppPaths.AppDataDirectory;
     private static readonly string StorageFile = Path.Combine(StorageDirectory, "window_state.json");
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static Dictionary<string, WindowStateModel>? _cachedDictionary;

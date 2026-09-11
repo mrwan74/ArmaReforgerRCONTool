@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -24,40 +26,66 @@ public partial class PlayerDetailViewModel(PlayerModel player, IRconService rcon
         if (string.IsNullOrEmpty(text)) return;
 
         var start = Stopwatch.GetTimestamp();
-        AppLogger.Debug($"[PlayerDetailViewModel:Clipboard] Copying value ({text.Length} chars): '{text}'");
-        await ClipboardService.SetTextAsync(text);
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Trace($"[PlayerDetailViewModel:Clipboard] Copied in {elapsedMs:F2}ms.");
-        ToastNotificationService.Instance.ShowToast("Copied", $"Copied: {text}");
+        var sanitized = AppLogger.SanitizeSensitiveData(text);
+        AppLogger.Debug($"[PlayerDetailViewModel:Clipboard] Copying attribute to clipboard: '{sanitized}' ({text.Length} chars)...");
+
+        try
+        {
+            bool success = await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+            if (success)
+            {
+                AppLogger.Trace($"[PlayerDetailViewModel:Clipboard] Field copied in {elapsedMs:F2}ms.");
+                ToastNotificationService.Instance.ShowToast("Copied", $"Copied: {sanitized}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[PlayerDetailViewModel:Clipboard] Failed copying field value: {ex.Message}", ex);
+            ToastNotificationService.Instance.ShowError("Clipboard Error", "Failed copying value to clipboard.");
+        }
     }
 
     [RelayCommand]
     private void EditComment()
     {
-        AppLogger.Debug($"[PlayerDetailViewModel:Comment] Editing comment for '{Player.Name}' (UID: {Player.Uid}).");
-        _parent.OpenSetComment(Player);
+        ExecuteSafe(() =>
+        {
+            AppLogger.Debug($"[PlayerDetailViewModel:Comment] Opening comment editor for '{Player.Name}' (UID: {Player.Uid}).");
+            _parent.OpenSetComment(Player);
+        });
     }
 
     [RelayCommand]
     private void Kick()
     {
-        AppLogger.Info($"[PlayerDetailViewModel:Kick] Opening kick dialog for '{Player.Name}' (ID: #{Player.Id}).");
-        _parent.CloseDialog();
-        _parent.OpenKickDialog(Player);
+        ExecuteSafe(() =>
+        {
+            AppLogger.Info($"[PlayerDetailViewModel:Kick] Triggering kick dialog from detail overlay for '{Player.Name}' (ID: #{Player.Id}).");
+            _parent.CloseDialog();
+            _parent.OpenKickDialog(Player);
+        });
     }
 
     [RelayCommand]
     private void Ban()
     {
-        AppLogger.Info($"[PlayerDetailViewModel:Ban] Opening ban dialog for '{Player.Name}' (ID: #{Player.Id}).");
-        _parent.CloseDialog();
-        _parent.OpenBanDialog(Player);
+        ExecuteSafe(() =>
+        {
+            AppLogger.Info($"[PlayerDetailViewModel:Ban] Triggering ban dialog from detail overlay for '{Player.Name}' (ID: #{Player.Id}).");
+            _parent.CloseDialog();
+            _parent.OpenBanDialog(Player);
+        });
     }
 
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[PlayerDetailViewModel:Close] Dialog closed.");
-        _parent.CloseDialog();
+        ExecuteSafe(() =>
+        {
+            AppLogger.Debug($"[PlayerDetailViewModel:Close] Closed detail dialog for '{Player.Name}'.");
+            _parent.CloseDialog();
+        });
     }
 }

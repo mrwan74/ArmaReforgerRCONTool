@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Threading.Tasks;
@@ -36,9 +37,18 @@ public class ToastNotificationService
             toast.UndoCommand = new AsyncRelayCommand(async () =>
             {
                 var sw = Stopwatch.StartNew();
+                var secondsSinceAction = Math.Round((DateTime.UtcNow - toast.CreatedAt).TotalSeconds, 1);
+
+                AppLogger.TrackEvent("moderation_undo_clicked", new Dictionary<string, object>
+                {
+                    ["action_title"] = title,
+                    ["command_executed"] = commandExecuted ?? "Unknown",
+                    ["seconds_since_action"] = secondsSinceAction
+                });
+
                 try
                 {
-                    AppLogger.Info($"[ToastNotificationService:Undo] Executing undo action for '{title}'...");
+                    AppLogger.Info($"[ToastNotificationService:Undo] Executing undo action for '{title}' (Age={secondsSinceAction}s)...");
                     await Dispatcher.UIThread.InvokeAsync(() => ActiveToasts.Remove(toast));
                     await undoAction().ConfigureAwait(false);
                     sw.Stop();

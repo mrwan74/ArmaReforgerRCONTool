@@ -33,8 +33,11 @@ public static class FlagAssetService
 
     public static void PrewarmCommonFlags()
     {
-        _ = Task.Run(() =>
+        _ = Task.Run(async () =>
         {
+            // Give UI thread full priority on startup before rasterizing flags
+            await Task.Delay(250).ConfigureAwait(false);
+
             var sw = Stopwatch.StartNew();
             int count = 0;
             try
@@ -47,6 +50,7 @@ public static class FlagAssetService
                     {
                         count++;
                     }
+                    await Task.Yield();
                 }
             }
             catch (Exception ex)

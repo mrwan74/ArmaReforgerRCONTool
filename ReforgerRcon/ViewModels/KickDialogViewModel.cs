@@ -37,6 +37,23 @@ public partial class KickDialogViewModel(List<PlayerModel> targets, IRconService
             int total = _targets.Count;
             AppLogger.Info($"[KickDialog:Execute] Starting kick sequence for {total} player(s) (Reason: '{Reason}')...");
 
+            AppLogger.TrackEvent("moderation_kick_executed", new Dictionary<string, object>
+            {
+                ["protocol"] = _rconService.CurrentProtocol.ToString(),
+                ["target_count"] = total,
+                ["is_batch"] = total > 1
+            });
+
+            if (total >= 10)
+            {
+                AppLogger.TrackEvent("moderation_large_batch_action", new Dictionary<string, object>
+                {
+                    ["action_type"] = "kick",
+                    ["target_count"] = total,
+                    ["protocol"] = _rconService.CurrentProtocol.ToString()
+                });
+            }
+
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];

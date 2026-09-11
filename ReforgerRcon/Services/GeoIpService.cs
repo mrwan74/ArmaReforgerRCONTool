@@ -222,8 +222,7 @@ public static class GeoIpService
     private const string SuccessKey = "success";
     private const string StatusFailed = "Failed";
 
-    private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
-    private static readonly string GeoIpDirectory = Path.Combine(StorageDirectory, "geoip");
+    private static readonly string GeoIpDirectory = AppPaths.GeoIpDirectory;
     private static readonly string ConfFile = Path.Combine(GeoIpDirectory, "GeoIP.conf");
 
     private static readonly string CityDbPath = Path.Combine(GeoIpDirectory, "GeoLite2-City.mmdb");

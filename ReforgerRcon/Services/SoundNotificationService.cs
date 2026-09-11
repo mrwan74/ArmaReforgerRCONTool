@@ -220,7 +220,6 @@ public static partial class SoundNotificationService
                     }
                     catch (Exception cleanupEx)
                     {
-                        // Temporary audio file may still be locked by Windows media player; ignore deletion failure
                         AppLogger.Trace($"[SoundNotificationService:Cleanup] Delayed audio cleanup notice for '{fileToDelete}': {cleanupEx.Message}");
                     }
                 }, TaskScheduler.Default);

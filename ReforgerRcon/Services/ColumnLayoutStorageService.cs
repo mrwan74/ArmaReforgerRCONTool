@@ -27,7 +27,7 @@ public static class ColumnLayoutStorageService
     private const string ColReforgerUidKey = "ColReforgerUid";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
+    private static readonly string StorageDirectory = AppPaths.AppDataDirectory;
     private static readonly string StorageFile = Path.Combine(StorageDirectory, "grid_columns.json");
 
     private static Dictionary<string, Dictionary<string, ColumnState>> _cache = [];

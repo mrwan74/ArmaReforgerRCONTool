@@ -23,8 +23,8 @@
 
 ---
 
-> ### Latest Release: [`v0.9.0-alpha`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha)
-> **Released on:** Sept 9, 2026, 00:50 PM (UTC) 
+> ### Latest Release: [`v0.9.0-alpha.1`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha.1)
+> **Released on:** Sept 11, 2026, 11:43 PM (UTC) 
 
 ---
 
@@ -351,7 +351,7 @@ dotnet publish ReforgerRcon/ReforgerRcon.csproj \
 - [x] **Audio Alerts & Push Notifications:** Implement sound chimes and external notification channels (desktop alerts) for user-configured triggers     
 - [ ] **RCON Macro & Scheduled Commands**: Automated recurring server announcements and scheduled `#restart` timers.
 - [ ] **Discord Webhook Integration**: Real-time moderation and player join/leave dispatch to Discord channels.
-- [ ] **Auto App Updater:** Check for new GitHub releases directly within the app and provide a one-click download & update.
+- [x] **Auto App Updater:** Check for new GitHub releases directly within the app and provide a one-click download & update.
 - [ ] **Custom Commands & Plugin System:** Register custom RCON commands and mod actions as clickable toolbar buttons (for Reforger).
 - [ ] **Global Player Database Synchronization:** A cloud syncing feature enabling administrators to synchronise the player database list with a master community database.
 - [ ] **Session and Playtime Tracking:** Record total play hours, session durations, and historical join/leave event tracking.

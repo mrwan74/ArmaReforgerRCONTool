@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
@@ -71,12 +72,13 @@ public static class PlayerDatabaseStorageService
     private const string ParamLimit = "@Limit";
     private const string ParamOffset = "@Offset";
 
-    private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
+    private static readonly string StorageDirectory = AppPaths.AppDataDirectory;
     private static readonly string DatabaseFile = Path.Combine(StorageDirectory, "player_database.db");
     private static readonly string ConnectionString = $"Data Source={DatabaseFile};Mode=ReadWriteCreate;Cache=Shared;Pooling=True;";
 
     private static readonly SemaphoreSlim DbLock = new(1, 1);
     private static volatile bool _isInitialized;
+    private static readonly ConcurrentDictionary<int, byte> ObservedMilestones = new();
 
     public static async Task InitializeAsync()
     {
@@ -162,7 +164,7 @@ public static class PlayerDatabaseStorageService
         const string pragmaSql = @"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
-            PRAGMA busy_timeout = 5000;
+            PRAGMA busy_timeout = 3000;
             PRAGMA temp_store = MEMORY;
         ";
 
@@ -170,7 +172,7 @@ public static class PlayerDatabaseStorageService
         command.CommandText = pragmaSql;
         await command.ExecuteNonQueryAsync().ConfigureAwait(false);
         var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-        AppLogger.Debug($"[PlayerDatabase:Pragmas] WAL PRAGMAs executed in {elapsedMs:F2}ms (journal_mode=WAL, synchronous=NORMAL, busy_timeout=5000ms).");
+        AppLogger.Debug($"[PlayerDatabase:Pragmas] WAL PRAGMAs executed in {elapsedMs:F2}ms (journal_mode=WAL, synchronous=NORMAL, busy_timeout=3000ms).");
     }
 
     private static async Task CreateSchemaAsync(SqliteConnection connection)
@@ -250,7 +252,7 @@ public static class PlayerDatabaseStorageService
     {
         try
         {
-            return JsonSerializer.Serialize(aliases.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+            return JsonSerializer.Serialize(aliases.Where(static a => !string.IsNullOrWhiteSpace(a)).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
         }
         catch (Exception ex)
         {
@@ -352,8 +354,8 @@ public static class PlayerDatabaseStorageService
                 if (protocol == RconProtocol.BattlEye)
                 {
                     var activeGuids = playersList
-                        .Select(p => !string.IsNullOrWhiteSpace(p.BattlEyeGuid) ? p.BattlEyeGuid : p.Guid)
-                        .Where(g => !string.IsNullOrWhiteSpace(g) && !g.StartsWith("init", StringComparison.OrdinalIgnoreCase))
+                        .Select(static p => !string.IsNullOrWhiteSpace(p.BattlEyeGuid) ? p.BattlEyeGuid : p.Guid)
+                        .Where(static g => !string.IsNullOrWhiteSpace(g) && !g.StartsWith("init", StringComparison.OrdinalIgnoreCase))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
@@ -367,13 +369,16 @@ public static class PlayerDatabaseStorageService
                           AND BattlEyeGuid NOT IN (SELECT value FROM json_each(@ActiveGuidsJson));
                     ";
 
-                    await using var setOfflineCmd = connection.CreateCommand();
-                    setOfflineCmd.Transaction = (SqliteTransaction)dbTransaction;
-                    setOfflineCmd.CommandText = setOfflineBeSql;
-                    setOfflineCmd.Parameters.AddWithValue(ParamActiveGuidsJson, JsonSerializer.Serialize(activeGuids));
-                    var setOfflineRows = await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                    AppLogger.Trace($"[PlayerDatabase:Upsert] Marked {setOfflineRows} non-active BattlEye players offline.");
+                    await using (var setOfflineCmd = connection.CreateCommand())
+                    {
+                        setOfflineCmd.Transaction = (SqliteTransaction)dbTransaction;
+                        setOfflineCmd.CommandText = setOfflineBeSql;
+                        setOfflineCmd.Parameters.AddWithValue(ParamActiveGuidsJson, JsonSerializer.Serialize(activeGuids));
+                        var setOfflineRows = await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        AppLogger.Trace($"[PlayerDatabase:Upsert] Marked {setOfflineRows} non-active BattlEye players offline.");
+                    }
 
+                    // Alias tracking pre-fetch loop
                     var existingBeMap = new Dictionary<string, (string Name, List<string> Aliases)>(StringComparer.OrdinalIgnoreCase);
                     const string fetchBeSql = @"
                         SELECT BattlEyeGuid, Name, Aliases 
@@ -382,12 +387,12 @@ public static class PlayerDatabaseStorageService
                     ";
 
                     var fetchStart = Stopwatch.GetTimestamp();
-                    await using var fetchBeCmd = connection.CreateCommand();
-                    fetchBeCmd.Transaction = (SqliteTransaction)dbTransaction;
-                    fetchBeCmd.CommandText = fetchBeSql;
-                    fetchBeCmd.Parameters.AddWithValue(ParamActiveGuidsJson, JsonSerializer.Serialize(activeGuids));
-                    await using (var reader = await fetchBeCmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    await using (var fetchBeCmd = connection.CreateCommand())
                     {
+                        fetchBeCmd.Transaction = (SqliteTransaction)dbTransaction;
+                        fetchBeCmd.CommandText = fetchBeSql;
+                        fetchBeCmd.Parameters.AddWithValue(ParamActiveGuidsJson, JsonSerializer.Serialize(activeGuids));
+                        await using var reader = await fetchBeCmd.ExecuteReaderAsync().ConfigureAwait(false);
                         while (await reader.ReadAsync().ConfigureAwait(false))
                         {
                             var guid = reader.GetString(0);
@@ -442,12 +447,8 @@ public static class PlayerDatabaseStorageService
 
                     foreach (var player in playersList)
                     {
-                        var beGuid = player.BattlEyeGuid;
-                        if (string.IsNullOrWhiteSpace(beGuid) && !string.IsNullOrWhiteSpace(player.Guid) && !player.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase))
-                        {
-                            beGuid = player.Guid.Trim();
-                        }
-                        else if (string.IsNullOrWhiteSpace(beGuid) && !string.IsNullOrWhiteSpace(player.Uid) && player.Uid.Length == 32 && !player.Uid.Contains('-'))
+                        var beGuid = !string.IsNullOrWhiteSpace(player.BattlEyeGuid) ? player.BattlEyeGuid : player.Guid;
+                        if (string.IsNullOrWhiteSpace(beGuid) && !string.IsNullOrWhiteSpace(player.Uid) && player.Uid.Length == 32 && !player.Uid.Contains('-'))
                         {
                             beGuid = player.Uid.Trim();
                         }
@@ -504,8 +505,8 @@ public static class PlayerDatabaseStorageService
                 else
                 {
                     var activeUids = playersList
-                        .Select(p => !string.IsNullOrWhiteSpace(p.ReforgerUid) ? p.ReforgerUid : p.Uid)
-                        .Where(u => !string.IsNullOrWhiteSpace(u))
+                        .Select(static p => !string.IsNullOrWhiteSpace(p.ReforgerUid) ? p.ReforgerUid : p.Uid)
+                        .Where(static u => !string.IsNullOrWhiteSpace(u))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
@@ -519,13 +520,16 @@ public static class PlayerDatabaseStorageService
                           AND ReforgerUid NOT IN (SELECT value FROM json_each(@ActiveUidsJson));
                     ";
 
-                    await using var setOfflineCmd = connection.CreateCommand();
-                    setOfflineCmd.Transaction = (SqliteTransaction)dbTransaction;
-                    setOfflineCmd.CommandText = setOfflineRefSql;
-                    setOfflineCmd.Parameters.AddWithValue(ParamActiveUidsJson, JsonSerializer.Serialize(activeUids));
-                    var setOfflineRows = await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
-                    AppLogger.Trace($"[PlayerDatabase:Upsert] Marked {setOfflineRows} non-active Reforger players offline.");
+                    await using (var setOfflineCmd = connection.CreateCommand())
+                    {
+                        setOfflineCmd.Transaction = (SqliteTransaction)dbTransaction;
+                        setOfflineCmd.CommandText = setOfflineRefSql;
+                        setOfflineCmd.Parameters.AddWithValue(ParamActiveUidsJson, JsonSerializer.Serialize(activeUids));
+                        var setOfflineRows = await setOfflineCmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                        AppLogger.Trace($"[PlayerDatabase:Upsert] Marked {setOfflineRows} non-active Reforger players offline.");
+                    }
 
+                    // Alias tracking pre-fetch loop
                     var existingRefMap = new Dictionary<string, (string Name, List<string> Aliases)>(StringComparer.OrdinalIgnoreCase);
                     const string fetchRefSql = @"
                         SELECT ReforgerUid, Name, Aliases 
@@ -534,12 +538,12 @@ public static class PlayerDatabaseStorageService
                     ";
 
                     var fetchStart = Stopwatch.GetTimestamp();
-                    await using var fetchRefCmd = connection.CreateCommand();
-                    fetchRefCmd.Transaction = (SqliteTransaction)dbTransaction;
-                    fetchRefCmd.CommandText = fetchRefSql;
-                    fetchRefCmd.Parameters.AddWithValue(ParamActiveUidsJson, JsonSerializer.Serialize(activeUids));
-                    await using (var reader = await fetchRefCmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    await using (var fetchRefCmd = connection.CreateCommand())
                     {
+                        fetchRefCmd.Transaction = (SqliteTransaction)dbTransaction;
+                        fetchRefCmd.CommandText = fetchRefSql;
+                        fetchRefCmd.Parameters.AddWithValue(ParamActiveUidsJson, JsonSerializer.Serialize(activeUids));
+                        await using var reader = await fetchRefCmd.ExecuteReaderAsync().ConfigureAwait(false);
                         while (await reader.ReadAsync().ConfigureAwait(false))
                         {
                             var uid = reader.GetString(0);
@@ -580,12 +584,7 @@ public static class PlayerDatabaseStorageService
 
                     foreach (var player in playersList)
                     {
-                        var reforgerUid = player.ReforgerUid;
-                        if (string.IsNullOrWhiteSpace(reforgerUid) && !string.IsNullOrWhiteSpace(player.Uid))
-                        {
-                            reforgerUid = player.Uid.Trim();
-                        }
-
+                        var reforgerUid = !string.IsNullOrWhiteSpace(player.ReforgerUid) ? player.ReforgerUid : player.Uid;
                         if (string.IsNullOrWhiteSpace(reforgerUid))
                         {
                             continue;
@@ -630,6 +629,8 @@ public static class PlayerDatabaseStorageService
                 context["updated_count"] = updatedCount;
                 context[ContextDurationMs] = elapsedMs;
                 AppLogger.Info($"[PlayerDatabase:Upsert] Successfully committed batch upsert of {updatedCount}/{playersList.Count} {protocol} active player records in {elapsedMs:F2}ms.", context);
+
+                _ = CheckMilestoneAsync(connection, protocol);
             }
             catch (Exception txEx)
             {
@@ -660,6 +661,36 @@ public static class PlayerDatabaseStorageService
         finally
         {
             DbLock.Release();
+        }
+    }
+
+    private static async Task CheckMilestoneAsync(SqliteConnection connection, RconProtocol protocol)
+    {
+        try
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = protocol == RconProtocol.BattlEye
+                ? "SELECT COUNT(*) FROM BattlEyePlayers;"
+                : "SELECT COUNT(*) FROM ReforgerPlayers;";
+
+            var countObj = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
+            int total = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
+
+            int[] milestoneThresholds = [1000, 5000, 10000, 25000, 50000];
+            foreach (var milestone in milestoneThresholds.Where(m => total >= m && ObservedMilestones.TryAdd(m, 1)))
+            {
+                AppLogger.Info($"[PlayerDatabase:Milestone] Player database crossed milestone: {milestone:N0} records ({total} total).");
+                AppLogger.TrackEvent("database_size_milestone", new Dictionary<string, object>
+                {
+                    ["milestone_threshold"] = milestone,
+                    ["actual_count"] = total,
+                    ["protocol"] = protocol.ToString()
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"[PlayerDatabase:Milestone] Check notice: {ex.Message}");
         }
     }
 
@@ -713,7 +744,9 @@ public static class PlayerDatabaseStorageService
         catch (SqliteException sqlEx)
         {
             transaction.Finish(SpanStatus.InternalError);
-            context["sqlite_error"] = sqlEx.Message;
+            var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            context[ContextDurationMs] = elapsedMs;
+            context[ContextSqliteErrorCode] = sqlEx.SqliteErrorCode;
             AppLogger.Error($"[PlayerDatabase:Offline] SQLite error setting players offline: {sqlEx.Message}", sqlEx, context);
             ToastNotificationService.Instance.ShowError(DatabaseErrorTitle, $"Failed updating offline states in SQLite: {sqlEx.Message}");
         }
@@ -937,6 +970,21 @@ public static class PlayerDatabaseStorageService
             context["total_matches"] = totalCount;
             context["fetch_latency_ms"] = fetchElapsedMs;
             context["total_latency_ms"] = elapsedMs;
+
+            if (elapsedMs >= 250.0)
+            {
+                AppLogger.Warn($"[PlayerDatabase:SlowQuery] Query took {elapsedMs:F2}ms (Threshold: 250ms) across {totalCount} records.", null, context);
+                AppLogger.TrackEvent("database_query_slow", new Dictionary<string, object>
+                {
+                    ["duration_ms"] = Math.Round(elapsedMs, 1),
+                    ["total_records"] = totalCount,
+                    ["protocol"] = parameters.Protocol.ToString(),
+                    ["page_index"] = safePageIndex,
+                    ["page_size"] = safePageSize,
+                    ["search_type"] = parameters.SearchType ?? "All",
+                    ["has_query"] = !string.IsNullOrWhiteSpace(cleanQuery)
+                });
+            }
 
             AppLogger.TrackEvent("database_query_executed", new Dictionary<string, object>
             {
@@ -1232,6 +1280,8 @@ public static class PlayerDatabaseStorageService
             }
             var vacuumElapsedMs = Stopwatch.GetElapsedTime(vacuumStart).TotalMilliseconds;
             AppLogger.Debug($"[PlayerDatabase:Purge] SQLite VACUUM completed in {vacuumElapsedMs:F2}ms.");
+
+            ObservedMilestones.Clear();
 
             transaction.Finish(SpanStatus.Ok);
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;

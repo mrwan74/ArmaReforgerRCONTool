@@ -13,7 +13,7 @@ namespace ReforgerRcon.Services;
 
 public static class DebugLayoutLoggerService
 {
-    private static readonly string LogFile = Path.Combine(AppContext.BaseDirectory, "appdata", "debug_layout.txt");
+    private static readonly string LogFile = Path.Combine(AppPaths.AppDataDirectory, "debug_layout.txt");
     private static Window? _mainWindow;
     private static readonly Dictionary<string, DataGrid> RegisteredGrids = [];
     private static readonly Lock DumpLock = new();

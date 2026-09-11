@@ -26,6 +26,7 @@ namespace ReforgerRcon.ViewModels;
 public partial class BansViewModel : ViewModelBase
 {
     public const string DefaultSortKey = "Default";
+    private const string ProtocolTelemetryKey = "protocol";
 
     private readonly IRconService _rconService;
     private readonly DashboardViewModel _dashboard;
@@ -560,11 +561,21 @@ public partial class BansViewModel : ViewModelBase
                 AppLogger.TrackEvent("moderation_batch_action", new Dictionary<string, object>
                 {
                     ["action_type"] = "remove_ban",
-                    ["protocol"] = _rconService.CurrentProtocol.ToString(),
+                    [ProtocolTelemetryKey] = _rconService.CurrentProtocol.ToString(),
                     ["target_count"] = total,
                     ["success_count"] = successCount,
                     ["failed_count"] = failedCount,
                     ["duration_ms"] = elapsedMs
+                });
+            }
+
+            if (total >= 10)
+            {
+                AppLogger.TrackEvent("moderation_large_batch_action", new Dictionary<string, object>
+                {
+                    ["action_type"] = "remove_ban",
+                    ["target_count"] = total,
+                    [ProtocolTelemetryKey] = _rconService.CurrentProtocol.ToString()
                 });
             }
 
@@ -630,6 +641,14 @@ public partial class BansViewModel : ViewModelBase
                     var writeElapsedMs = Stopwatch.GetElapsedTime(writeStart).TotalMilliseconds;
                     var totalElapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
+                    AppLogger.TrackEvent("ban_export_completed", new Dictionary<string, object>
+                    {
+                        [ProtocolTelemetryKey] = _rconService.CurrentProtocol.ToString(),
+                        ["total_bans"] = _allBans.Count,
+                        ["destination"] = "File",
+                        ["duration_ms"] = Math.Round(totalElapsedMs, 1)
+                    });
+
                     AppLogger.Info($"[BansViewModel:Export] Successfully wrote {_allBans.Count} ban records ({payload.Length} chars) to '{file.Name}' in {writeElapsedMs:F2}ms (Total: {totalElapsedMs:F2}ms).");
 
                     await Dispatcher.UIThread.InvokeAsync(() =>
@@ -650,6 +669,15 @@ public partial class BansViewModel : ViewModelBase
 
         await ClipboardService.SetTextAsync(payload).ConfigureAwait(false);
         var clipboardElapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+        AppLogger.TrackEvent("ban_export_completed", new Dictionary<string, object>
+        {
+            [ProtocolTelemetryKey] = _rconService.CurrentProtocol.ToString(),
+            ["total_bans"] = _allBans.Count,
+            ["destination"] = "Clipboard",
+            ["duration_ms"] = Math.Round(clipboardElapsedMs, 1)
+        });
+
         AppLogger.Info($"[BansViewModel:Export] Fallback clipboard copy complete in {clipboardElapsedMs:F2}ms ({_allBans.Count} ban records).");
         ToastNotificationService.Instance.ShowToast("Bans Exported", $"Copied {_allBans.Count} ban records (.txt) to clipboard.");
     }, "Failed exporting bans to file.");
@@ -735,6 +763,16 @@ public partial class BansViewModel : ViewModelBase
         }
 
         var totalElapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+        AppLogger.TrackEvent("ban_import_file_selected", new Dictionary<string, object>
+        {
+            [ProtocolTelemetryKey] = _rconService.CurrentProtocol.ToString(),
+            ["parsed_count"] = parsed.Count,
+            ["new_count"] = parsed.Count(p => !p.IsDuplicate),
+            ["duplicate_count"] = parsed.Count(p => p.IsDuplicate),
+            ["parse_duration_ms"] = Math.Round(parseElapsedMs, 1)
+        });
+
         AppLogger.Info($"[BansViewModel:Import] Successfully processed '{selectedFileName}' in {totalElapsedMs:F2}ms (Parsed={parsed.Count}, New={parsed.Count(p => !p.IsDuplicate)}, Duplicates={parsed.Count(p => p.IsDuplicate)}). Displaying preview dialog...");
 
         await Dispatcher.UIThread.InvokeAsync(() =>

@@ -23,12 +23,15 @@ namespace ReforgerRcon.ViewModels;
 [SuppressMessage("Major Code Smell", "S1144:Unused private types or members should be removed", Justification = "Partial callback methods are invoked by CommunityToolkit.Mvvm generated property setters")]
 public partial class DashboardViewModel : ViewModelBase, IDisposable
 {
+    private const string ProtocolTelemetryKey = "protocol";
+
     private readonly IRconService _rconService;
     private readonly Action _onDisconnectRequested;
     private readonly Func<ServerProfile, RconProtocol, Task>? _onSwitchProtocolRequested;
     private readonly DispatcherTimer _timer;
     private readonly ConcurrentDictionary<string, long> _activeJoinToasts = new(StringComparer.OrdinalIgnoreCase);
     private ConsoleWindow? _detachedConsoleWindow;
+    private long _consoleDetachedStartTimestamp;
     private bool _hasPromptedProtocolMismatch;
     private bool _isDisposed;
 
@@ -95,7 +98,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
         {
             ["host"] = profile.ServerIp,
             ["port"] = profile.Port,
-            ["protocol"] = profile.Protocol.ToString()
+            [ProtocolTelemetryKey] = profile.Protocol.ToString()
         };
         AppLogger.Debug("[DashboardViewModel:Init] Constructing child tab ViewModels for session...", context);
 
@@ -209,7 +212,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
     private async Task RefreshInitialConnectAsync()
     {
         var start = Stopwatch.GetTimestamp();
-        var context = new Dictionary<string, object?> { ["protocol"] = Profile.Protocol.ToString() };
+        var context = new Dictionary<string, object?> { [ProtocolTelemetryKey] = Profile.Protocol.ToString() };
         AppLogger.Debug("[DashboardViewModel:InitSync] Executing initial background synchronization...", context);
 
         try
@@ -660,7 +663,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
             var context = new Dictionary<string, object?>
             {
                 ["force_bans"] = forceBans,
-                ["protocol"] = Profile.Protocol.ToString()
+                [ProtocolTelemetryKey] = Profile.Protocol.ToString()
             };
             using var timing = AppLogger.Measure($"DashboardViewModel.RefreshAllAsync(ForceBans: {forceBans})");
 
@@ -755,14 +758,28 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
 
             IsConsoleDetached = true;
             ConsoleTab.IsDetached = true;
+            _consoleDetachedStartTimestamp = Stopwatch.GetTimestamp();
             UpdateLayoutDimensions();
 
             AppLogger.Info("[DashboardViewModel:Layout] Detaching console to standalone window.");
-            AppLogger.TrackEvent("console_detached");
+            AppLogger.TrackEvent("console_detached", new Dictionary<string, object>
+            {
+                [ProtocolTelemetryKey] = Profile.Protocol.ToString()
+            });
 
             _detachedConsoleWindow = new ConsoleWindow(ConsoleTab, () =>
             {
                 AppLogger.Info("[DashboardViewModel:Layout] Reattaching console window via closing event callback.");
+                var durationSec = _consoleDetachedStartTimestamp > 0
+                    ? (int)Stopwatch.GetElapsedTime(_consoleDetachedStartTimestamp).TotalSeconds
+                    : 0;
+
+                AppLogger.TrackEvent("console_reattached", new Dictionary<string, object>
+                {
+                    [ProtocolTelemetryKey] = Profile.Protocol.ToString(),
+                    ["duration_detached_seconds"] = durationSec
+                });
+
                 IsConsoleDetached = false;
                 ConsoleTab.IsDetached = false;
                 _detachedConsoleWindow = null;
@@ -786,6 +803,16 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
         ExecuteSafe(() =>
         {
             AppLogger.Info("[DashboardViewModel:Layout] User manually requested console reattachment.");
+            var durationSec = _consoleDetachedStartTimestamp > 0
+                ? (int)Stopwatch.GetElapsedTime(_consoleDetachedStartTimestamp).TotalSeconds
+                : 0;
+
+            AppLogger.TrackEvent("console_reattached", new Dictionary<string, object>
+            {
+                [ProtocolTelemetryKey] = Profile.Protocol.ToString(),
+                ["duration_detached_seconds"] = durationSec
+            });
+
             _detachedConsoleWindow?.Close();
             _detachedConsoleWindow = null;
             IsConsoleDetached = false;

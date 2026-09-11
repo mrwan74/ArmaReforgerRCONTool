@@ -9,34 +9,35 @@ namespace ReforgerRcon.Services.Parsers;
 
 public static partial class BattlEyeResponseParser
 {
-    [GeneratedRegex(@"^\s*(\d+)\s+((?:\[[a-fA-F0-9:]+\]|[\d\.]+)):(\d+)\s+(-?\d+|\?+)\s+([a-fA-F0-9]{32}|\-)(?:\([^\)]*\))?\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    // Accommodates 1-5 digit IDs, bracketed IPv6 or IPv4, 1-5 digit ports, signed pings (e.g. -1 in dump Frame 8), 32-hex GUID with optional (?) suffix, and lobby names
+    [GeneratedRegex(@"^\s*(\d+)\s+((?:\[[a-fA-F0-9:]+\]|[\d\.]+)):(\d+)\s+(-?\d+|\?+)\s+([a-fA-F0-9]{32}|\-)(?:\([^\)]*\))?\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     private static partial Regex PlayerRowRegex();
 
-    [GeneratedRegex(@"^\s*(\d+)\s+([a-fA-F0-9]{32}|(?:\[[a-fA-F0-9:]+\]|[\d\.]+))\s+(\w+|-?\d+|-)\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^\s*(\d+)\s+([a-fA-F0-9]{32}|(?:\[[a-fA-F0-9:]+\]|[\d\.]+))\s+(\w+|-?\d+|-)\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     private static partial Regex BanRowRegex();
 
-    [GeneratedRegex(@"^\s*(\d+)\s+((?:\[[a-fA-F0-9:]+\]|[\d\.]+)):(\d+)\s*$", RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^\s*(\d+)\s+((?:\[[a-fA-F0-9:]+\]|[\d\.]+)):(\d+)\s*$", RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     private static partial Regex AdminRowRegex();
 
-    [GeneratedRegex(@"\((\d+)\s+players\s+in\s+total\)", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
+    [GeneratedRegex(@"\((\d+)\s+players\s+in\s+total\)", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 200)]
     private static partial Regex TotalPlayersFooterRegex();
 
-    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+\((.+?):(\d+)\)\s+connected", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+\((.+?):(\d+)\)\s+connected", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     public static partial Regex PlayerConnectedStreamRegex();
 
-    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+-\s+BE\s+GUID:\s+([a-fA-F0-9]{32})", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+-\s+BE\s+GUID:\s+([a-fA-F0-9]{32})", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     public static partial Regex PlayerGuidStreamRegex();
 
-    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+disconnected", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+disconnected", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     public static partial Regex PlayerDisconnectedStreamRegex();
 
-    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+\(([a-fA-F0-9]{32})\)\s+has\s+been\s+kicked\s+by\s+BattlEye:\s+Admin\s+Kick(?:\s*\((.*?)\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+\(([a-fA-F0-9]{32})\)\s+has\s+been\s+kicked\s+by\s+BattlEye:\s+Admin\s+Kick(?:\s*\((.*?)\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     public static partial Regex PlayerKickedStreamRegex();
 
-    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+\(([a-fA-F0-9]{32})\)\s+has\s+been\s+kicked\s+by\s+BattlEye:\s+Admin\s+Ban(?:\s*\((.*?)\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^Player\s+#(\d+)\s+(.+?)\s+\(([a-fA-F0-9]{32})\)\s+has\s+been\s+kicked\s+by\s+BattlEye:\s+Admin\s+Ban(?:\s*\((.*?)\))?$", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     public static partial Regex PlayerBannedStreamRegex();
 
-    [GeneratedRegex(@"^RCon\s+admin\s+#(\d+)\s+\((.+?)\)\s+logged\s+in", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 500)]
+    [GeneratedRegex(@"^RCon\s+admin\s+#(\d+)\s+\((.+?)\)\s+logged\s+in", RegexOptions.IgnoreCase | RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     public static partial Regex AdminConnectedStreamRegex();
 
     public static List<PlayerModel> ParsePlayers(string rawResponse)
@@ -168,6 +169,12 @@ public static partial class BattlEyeResponseParser
     {
         player = null;
 
+        // Try heuristic tokenizer first as a zero-backtracking fast path (matches Frame 8: "0   68.88.103.125:60464   -1   0ccf...(?)  Jbagofdonuts (Lobby)")
+        if (TryHeuristicPlayerLine(line, out player))
+        {
+            return true;
+        }
+
         try
         {
             var match = PlayerRowRegex().Match(line);
@@ -193,8 +200,20 @@ public static partial class BattlEyeResponseParser
                     cleanName = cleanName[..^8].TrimEnd();
                 }
 
-                var geo = GeoIpService.GetLocation(ip);
-                var country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
+                CountryInfo country = new() { Code = "xx", Name = "Unknown Region" };
+                string city = string.Empty;
+                string state = string.Empty;
+                string location = string.Empty;
+                string timezone = string.Empty;
+
+                if (GeoIpService.TryGetCachedLocation(ip, out var geo))
+                {
+                    country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
+                    city = geo.CityName;
+                    state = geo.SubdivisionName;
+                    location = geo.NaturalLocation;
+                    timezone = geo.TimeZone;
+                }
 
                 player = new PlayerModel
                 {
@@ -208,10 +227,10 @@ public static partial class BattlEyeResponseParser
                     Port = port,
                     Ping = ping,
                     Country = country,
-                    LocationCity = geo.CityName,
-                    LocationState = geo.SubdivisionName,
-                    DisplayLocation = geo.NaturalLocation,
-                    TimeZone = geo.TimeZone
+                    LocationCity = city,
+                    LocationState = state,
+                    DisplayLocation = location,
+                    TimeZone = timezone
                 };
 
                 return true;
@@ -226,7 +245,7 @@ public static partial class BattlEyeResponseParser
             AppLogger.Warn($"[BattlEyeResponseParser:Players] Error parsing player line #{lineIndex + 1}: '{line}': {ex.Message}");
         }
 
-        return TryHeuristicPlayerLine(line, out player);
+        return false;
     }
 
     private static bool TryHeuristicPlayerLine(string line, out PlayerModel? player)
@@ -235,6 +254,7 @@ public static partial class BattlEyeResponseParser
 
         try
         {
+            // Accommodates variable multi-space delimiters between [#], [IP:Port], [Ping], and [GUID]
             var tokens = line.Split([' ', '\t'], 5, StringSplitOptions.RemoveEmptyEntries);
             if (tokens.Length >= 5 &&
                 int.TryParse(tokens[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int id) &&
@@ -251,17 +271,32 @@ public static partial class BattlEyeResponseParser
 
                     var ip = endpointParts[0].Trim('[', ']');
                     var guidToken = tokens[3].Trim();
-                    var guid = guidToken.Contains('(') ? guidToken.Split('(')[0] : guidToken;
-                    var rawName = tokens[4].Trim();
 
+                    // Handles the (?) unverified status suffix captured in Frame 8 (e.g. "2a14da...(?)" -> "2a14da...")
+                    int parenIdx = guidToken.IndexOf('(');
+                    var guid = parenIdx >= 0 ? guidToken[..parenIdx].Trim() : guidToken;
+
+                    var rawName = tokens[4].Trim();
                     string cleanName = ReforgerResponseParser.SanitizePlayerName(rawName);
                     if (cleanName.EndsWith(" (Lobby)", StringComparison.OrdinalIgnoreCase))
                     {
                         cleanName = cleanName[..^8].TrimEnd();
                     }
 
-                    var geo = GeoIpService.GetLocation(ip);
-                    var country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
+                    CountryInfo country = new() { Code = "xx", Name = "Unknown Region" };
+                    string city = string.Empty;
+                    string state = string.Empty;
+                    string location = string.Empty;
+                    string timezone = string.Empty;
+
+                    if (GeoIpService.TryGetCachedLocation(ip, out var geo))
+                    {
+                        country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
+                        city = geo.CityName;
+                        state = geo.SubdivisionName;
+                        location = geo.NaturalLocation;
+                        timezone = geo.TimeZone;
+                    }
 
                     player = new PlayerModel
                     {
@@ -275,10 +310,10 @@ public static partial class BattlEyeResponseParser
                         Port = port,
                         Ping = ping,
                         Country = country,
-                        LocationCity = geo.CityName,
-                        LocationState = geo.SubdivisionName,
-                        DisplayLocation = geo.NaturalLocation,
-                        TimeZone = geo.TimeZone
+                        LocationCity = city,
+                        LocationState = state,
+                        DisplayLocation = location,
+                        TimeZone = timezone
                     };
                     return true;
                 }

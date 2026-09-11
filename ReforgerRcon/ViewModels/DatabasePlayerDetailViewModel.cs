@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -23,32 +24,55 @@ public partial class DatabasePlayerDetailViewModel(DatabasePlayerModel player, D
         if (string.IsNullOrEmpty(text)) return;
 
         var start = Stopwatch.GetTimestamp();
-        AppLogger.Debug($"[DatabasePlayerDetail:Clipboard] Copying value ({text.Length} chars): '{text}'");
-        await ClipboardService.SetTextAsync(text);
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Trace($"[DatabasePlayerDetail:Clipboard] Copied in {elapsedMs:F2}ms.");
-        ToastNotificationService.Instance.ShowToast("Copied", $"Copied: {text}");
+        var sanitized = AppLogger.SanitizeSensitiveData(text);
+        AppLogger.Debug($"[DatabasePlayerDetail:Clipboard] Copying value ({text.Length} chars): '{sanitized}'");
+
+        try
+        {
+            bool success = await ClipboardService.SetTextAsync(text).ConfigureAwait(false);
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+            if (success)
+            {
+                AppLogger.Trace($"[DatabasePlayerDetail:Clipboard] Copied in {elapsedMs:F2}ms.");
+                ToastNotificationService.Instance.ShowToast("Copied", $"Copied: {sanitized}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error($"[DatabasePlayerDetail:Clipboard] Failed copying value: {ex.Message}", ex);
+            ToastNotificationService.Instance.ShowError("Clipboard Error", "Unable to copy field.");
+        }
     }
 
     [RelayCommand]
     private void EditComment()
     {
-        AppLogger.Debug($"[DatabasePlayerDetail:Comment] Opening comment editor for '{Player.Name}' (UID: {Player.Uid}).");
-        _parent.OpenSetComment(Player);
+        ExecuteSafe(() =>
+        {
+            AppLogger.Debug($"[DatabasePlayerDetail:Comment] Opening comment editor for '{Player.Name}' (UID: {Player.Uid}).");
+            _parent.OpenSetComment(Player);
+        });
     }
 
     [RelayCommand]
     private void OfflineBan()
     {
-        AppLogger.Info($"[DatabasePlayerDetail:OfflineBan] Opening offline ban for '{Player.Name}' (UID: {Player.Uid}).");
-        _parent.CloseDialog();
-        _parent.OpenOfflineBan(Player);
+        ExecuteSafe(() =>
+        {
+            AppLogger.Info($"[DatabasePlayerDetail:OfflineBan] Opening offline ban dialog for '{Player.Name}' (UID: {Player.Uid}).");
+            _parent.CloseDialog();
+            _parent.OpenOfflineBan(Player);
+        });
     }
 
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[DatabasePlayerDetail:Close] Dialog closed.");
-        _parent.CloseDialog();
+        ExecuteSafe(() =>
+        {
+            AppLogger.Debug($"[DatabasePlayerDetail:Close] Dialog closed for '{Player.Name}'.");
+            _parent.CloseDialog();
+        });
     }
 }

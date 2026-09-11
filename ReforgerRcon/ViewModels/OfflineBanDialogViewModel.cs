@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net;
@@ -39,6 +40,7 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
 
     public OfflineBanDialogViewModel(string uid, string ip, IRconService rconService, DatabaseViewModel parent)
     {
+        var start = Stopwatch.GetTimestamp();
         _uid = uid?.Trim() ?? string.Empty;
         _ip = ip?.Trim() ?? string.Empty;
         _rconService = rconService;
@@ -70,14 +72,16 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
             IsTargetTypeSelectionVisible = false;
         }
 
-        AppLogger.Info($"[OfflineBanDialog:Init] Initialized for target UID: '{_uid}', IP: '{_ip}' ({TargetType})");
         UpdateCalculations();
+
+        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        AppLogger.Info($"[OfflineBanDialog:Init] Initialized dialog in {elapsedMs:F2}ms: UID='{_uid}', IP='{_ip}', Type='{TargetType}', Protocol={_rconService.CurrentProtocol}");
     }
 
     partial void OnSelectedPresetChanged(string value)
     {
         OnPropertyChanged(nameof(IsCustomSelected));
-        AppLogger.Debug($"[OfflineBanDialog:Preset] Changed to '{value}'.");
+        AppLogger.Debug($"[OfflineBanDialog:Preset] Preset changed to '{value}'.");
         UpdateCalculations();
     }
 
@@ -130,62 +134,94 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
             TotalCalculatedTimeText = $"Total: {(int)span.TotalDays} days, {span.Hours} hours, {span.Minutes} mins ({totalSec} seconds)";
             ExpiryDateText = $"Expires: {DateTime.Now.AddSeconds(totalSec):MMM dd, yyyy HH:mm}";
         }
+        AppLogger.Trace($"[OfflineBanDialog:Calculation] Duration={totalSec}s: {TotalCalculatedTimeText}");
     }
 
     [RelayCommand]
     private Task<bool> ConfirmAsync() => ExecuteSafeAsync(async () =>
     {
-        if (IsExecuting) return;
-        IsExecuting = true;
+        if (IsExecuting)
+        {
+            AppLogger.Warn("[OfflineBanDialog:Confirm] ConfirmAsync rejected: already executing.");
+            return;
+        }
 
-        using var timing = AppLogger.Measure($"OfflineBanDialogViewModel.ConfirmAsync('{_uid}')");
+        IsExecuting = true;
+        var start = Stopwatch.GetTimestamp();
+        var totalSec = CalculateTotalSeconds();
+
+        var context = new Dictionary<string, object?>
+        {
+            ["uid"] = _uid,
+            ["ip"] = _ip,
+            ["duration_seconds"] = totalSec,
+            ["target_type"] = TargetType,
+            ["reason"] = Reason,
+            ["protocol"] = _rconService.CurrentProtocol.ToString(),
+            ["thread_id"] = Environment.CurrentManagedThreadId
+        };
+
+        AppLogger.Info($"[OfflineBanDialog:Confirm] Executing offline ban for target: UID='{_uid}', IP='{_ip}' ({TargetType}, Duration={totalSec}s)...", context);
 
         try
         {
-            var totalSec = CalculateTotalSeconds();
             bool banUid = IsReforgerProtocol || TargetType.Contains("GUID", StringComparison.OrdinalIgnoreCase) || TargetType.Contains("Both", StringComparison.OrdinalIgnoreCase);
             bool banIp = !IsReforgerProtocol && (TargetType.Contains("IP", StringComparison.OrdinalIgnoreCase) || TargetType.Contains("Both", StringComparison.OrdinalIgnoreCase));
 
             bool allSucceeded = true;
-            AppLogger.Info($"[OfflineBanDialog:Execute] UID: '{_uid}', IP: '{_ip}' (BanUID={banUid}, BanIP={banIp}, TotalSeconds={totalSec})...");
 
             if (banUid)
             {
                 if (!string.IsNullOrWhiteSpace(_uid) && !_uid.Equals("N/A", StringComparison.OrdinalIgnoreCase))
                 {
+                    AppLogger.Debug($"[OfflineBanDialog:Confirm] Dispatching offline UID ban: '{_uid}'...");
                     bool uidSuccess = await _rconService.OfflineBanAsync(_uid, totalSec, Reason, isIp: false).ConfigureAwait(false);
                     if (!uidSuccess)
                     {
                         allSucceeded = false;
-                        AppLogger.Warn($"[OfflineBanDialog:Execute] Server rejected offline ban for UID: '{_uid}'.");
-                        ToastNotificationService.Instance.ShowError("Offline Ban Failed", $"Server rejected ban for UID: {_uid}.");
+                        AppLogger.Warn($"[OfflineBanDialog:Confirm] Server rejected offline ban for UID: '{_uid}'.", null, context);
+                        ToastNotificationService.Instance.ShowError("Offline Ban Rejected", $"Server rejected ban command for UID: {_uid}.");
                     }
                 }
                 else
                 {
                     allSucceeded = false;
-                    AppLogger.Warn("[OfflineBanDialog:Execute] Offline ban aborted: UID missing or invalid.");
+                    AppLogger.Warn("[OfflineBanDialog:Confirm] Offline ban aborted: Target UID is missing or empty.", null, context);
                     ToastNotificationService.Instance.ShowError("Invalid Target", "Cannot ban target: UID is missing or invalid.");
                 }
             }
 
             if (banIp && allSucceeded && !string.IsNullOrWhiteSpace(_ip) && !_ip.Equals("N/A", StringComparison.OrdinalIgnoreCase) && IPAddress.TryParse(_ip, out _))
             {
+                AppLogger.Debug($"[OfflineBanDialog:Confirm] Dispatching offline IP ban: '{_ip}'...");
                 bool ipSuccess = await _rconService.OfflineBanAsync(_ip, totalSec, Reason, isIp: true).ConfigureAwait(false);
                 if (!ipSuccess)
                 {
                     allSucceeded = false;
-                    AppLogger.Warn($"[OfflineBanDialog:Execute] Server rejected offline IP ban for '{_ip}'.");
-                    ToastNotificationService.Instance.ShowError("IP Ban Failed", $"Server rejected IP ban for {_ip}.");
+                    AppLogger.Warn($"[OfflineBanDialog:Confirm] Server rejected offline IP ban for '{_ip}'.", null, context);
+                    ToastNotificationService.Instance.ShowError("IP Ban Rejected", $"Server rejected IP ban command for {_ip}.");
                 }
             }
 
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            context["elapsed_ms"] = elapsedMs;
+            context["success"] = allSucceeded;
+
             if (allSucceeded)
             {
-                AppLogger.Info("[OfflineBanDialog:Execute] Offline ban confirmed successfully.");
+                AppLogger.TrackEvent("moderation_offline_ban_confirmed", new Dictionary<string, object>
+                {
+                    ["protocol"] = _rconService.CurrentProtocol.ToString(),
+                    ["target_type"] = TargetType,
+                    ["duration_seconds"] = totalSec,
+                    ["is_permanent"] = totalSec <= 0
+                });
+
+                AppLogger.Info($"[OfflineBanDialog:Confirm] Offline ban sequence successfully completed in {elapsedMs:F2}ms.", context);
+
                 ToastNotificationService.Instance.ShowSuccess(
                     "Offline Ban Complete",
-                    $"Offline ban confirmed for {_uid}",
+                    $"Successfully registered offline ban for {_uid}",
                     IsReforgerProtocol ? $"#ban create {_uid} {totalSec}" : $"addBan {_uid}",
                     async () =>
                     {
@@ -203,18 +239,25 @@ public partial class OfflineBanDialogViewModel : ViewModelBase
                 _parent.CloseDialog();
                 await _parent.RefreshAfterOfflineBanAsync().ConfigureAwait(false);
             }
+            else
+            {
+                AppLogger.Warn($"[OfflineBanDialog:Confirm] Offline ban completed with errors in {elapsedMs:F2}ms.", null, context);
+            }
         }
         finally
         {
             IsExecuting = false;
         }
-    });
+    }, "Failed executing offline ban command.");
 
     [RelayCommand]
     private void Close()
     {
         if (IsExecuting) return;
-        AppLogger.Debug("[OfflineBanDialog:Close] Dialog closed.");
-        _parent.CloseDialog();
+        ExecuteSafe(() =>
+        {
+            AppLogger.Debug($"[OfflineBanDialog:Close] Dialog closed for '{_uid}'.");
+            _parent.CloseDialog();
+        });
     }
 }

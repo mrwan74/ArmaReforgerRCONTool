@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -21,7 +22,8 @@ public partial class AnnouncementDialogViewModel(IRconService rconService, Playe
     {
         if (string.IsNullOrWhiteSpace(Message))
         {
-            AppLogger.Warn("[AnnouncementDialog:Send] Broadcast canceled: Message text is empty.");
+            AppLogger.Warn("[AnnouncementDialog:Send] Broadcast rejected: Message text is empty.");
+            ToastNotificationService.Instance.ShowWarning("Empty Announcement", "Please enter announcement text before broadcasting.");
             return;
         }
 
@@ -29,16 +31,39 @@ public partial class AnnouncementDialogViewModel(IRconService rconService, Playe
         var cleanMessage = Message.Trim();
         var start = Stopwatch.GetTimestamp();
 
+        var context = new Dictionary<string, object?>
+        {
+            ["title"] = cleanTitle,
+            ["message_length"] = cleanMessage.Length,
+            ["protocol"] = _rconService.CurrentProtocol.ToString(),
+            ["thread_id"] = Environment.CurrentManagedThreadId
+        };
+
+        AppLogger.Info($"[AnnouncementDialog:Send] Broadcasting announcement: Header='{cleanTitle}', Length={cleanMessage.Length} chars...", context);
         IsSending = true;
+
         try
         {
-            AppLogger.Info($"[AnnouncementDialog:Send] Dispatching server announcement: Title='{cleanTitle}', Length={cleanMessage.Length} chars...");
             await _rconService.SendAnnouncementAsync(cleanTitle, cleanMessage).ConfigureAwait(false);
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            context["elapsed_ms"] = elapsedMs;
 
-            AppLogger.Info($"[AnnouncementDialog:Send] Announcement delivered in {elapsedMs:F2}ms.");
-            ToastNotificationService.Instance.ShowToast("Announcement", "Broadcast dispatched.", $"#say -1 [{cleanTitle}] {cleanMessage}");
+            AppLogger.TrackEvent("global_broadcast_dispatched", new Dictionary<string, object>
+            {
+                ["protocol"] = _rconService.CurrentProtocol.ToString(),
+                ["type"] = "Announcement",
+                ["char_length"] = cleanMessage.Length
+            });
+
+            AppLogger.Info($"[AnnouncementDialog:Send] Announcement broadcast dispatched successfully in {elapsedMs:F2}ms.", context);
+            ToastNotificationService.Instance.ShowSuccess("Announcement Sent", $"Broadcasted: [{cleanTitle}] {cleanMessage}", $"#say -1 [{cleanTitle}] {cleanMessage}");
             _parent.CloseDialog();
+        }
+        catch (Exception ex)
+        {
+            context["error"] = ex.Message;
+            AppLogger.Error($"[AnnouncementDialog:Send] Failed dispatching announcement: {ex.Message}", ex, context);
+            ToastNotificationService.Instance.ShowError("Broadcast Failed", $"Unable to send announcement: {ex.Message}");
         }
         finally
         {
@@ -49,7 +74,11 @@ public partial class AnnouncementDialogViewModel(IRconService rconService, Playe
     [RelayCommand]
     private void Close()
     {
-        AppLogger.Debug("[AnnouncementDialog:Close] Dialog closed.");
-        _parent.CloseDialog();
+        if (IsSending) return;
+        ExecuteSafe(() =>
+        {
+            AppLogger.Debug("[AnnouncementDialog:Close] Announcement dialog closed.");
+            _parent.CloseDialog();
+        });
     }
 }

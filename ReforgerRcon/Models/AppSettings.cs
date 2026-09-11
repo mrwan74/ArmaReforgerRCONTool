@@ -12,7 +12,7 @@ namespace ReforgerRcon.Models;
 public class AppSettings
 {
     private static readonly JsonSerializerOptions CachedJsonOptions = new() { WriteIndented = true };
-    private static readonly string SettingsDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
+    private static readonly string SettingsDirectory = AppPaths.AppDataDirectory;
     private static readonly string SettingsPath = Path.Combine(SettingsDirectory, "settings.json");
     private static readonly string TempSettingsPath = Path.Combine(SettingsDirectory, "settings.json.tmp");
     private static readonly Lock SyncLock = new();

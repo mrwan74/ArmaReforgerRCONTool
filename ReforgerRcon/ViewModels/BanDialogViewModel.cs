@@ -178,6 +178,28 @@ public partial class BanDialogViewModel : ViewModelBase
             int total = _targets.Count;
             AppLogger.Info($"[BanDialog:Execute] Starting sequential ban for {total} target(s) (Duration: {totalSec}s, Reason: '{Reason}', AlsoBanIp: {AlsoBanIpAddress})...");
 
+            AppLogger.TrackEvent("moderation_ban_executed", new Dictionary<string, object>
+            {
+                ["protocol"] = _rconService.CurrentProtocol.ToString(),
+                ["duration_seconds"] = totalSec,
+                ["preset_name"] = SelectedPreset,
+                ["is_permanent"] = totalSec <= 0,
+                ["is_custom"] = IsCustomSelected,
+                ["also_banned_ip"] = AlsoBanIpAddress,
+                ["target_count"] = total,
+                ["is_batch"] = total > 1
+            });
+
+            if (total >= 10)
+            {
+                AppLogger.TrackEvent("moderation_large_batch_action", new Dictionary<string, object>
+                {
+                    ["action_type"] = "ban",
+                    ["target_count"] = total,
+                    ["protocol"] = _rconService.CurrentProtocol.ToString()
+                });
+            }
+
             for (int i = 0; i < total; i++)
             {
                 var player = _targets[i];

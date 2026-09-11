@@ -212,13 +212,16 @@ public static partial class ReforgerResponseParser
         try
         {
             string normalizedResponse = rawResponse;
-            try
+            if (!rawResponse.Contains('\n') && rawResponse.Contains(';'))
             {
-                normalizedResponse = MissingNewlinePlayerSplitRegex().Replace(rawResponse, "\n$1");
-            }
-            catch (RegexMatchTimeoutException ex)
-            {
-                AppLogger.Trace($"[ReforgerResponseParser:Regex] Missing newline split regex timed out: {ex.Message}");
+                try
+                {
+                    normalizedResponse = MissingNewlinePlayerSplitRegex().Replace(rawResponse, "\n$1");
+                }
+                catch (RegexMatchTimeoutException ex)
+                {
+                    AppLogger.Trace($"[ReforgerResponseParser:Regex] Missing newline split regex timed out: {ex.Message}");
+                }
             }
 
             var lines = normalizedResponse.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

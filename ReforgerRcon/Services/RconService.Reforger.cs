@@ -18,14 +18,16 @@ public sealed partial class RconService
         var context = new Dictionary<string, object?>
         {
             [ContextProtocol] = "ReforgerBuiltIn",
-            ["timeout_sec"] = 5.0,
+            ["timeout_sec"] = 6.0,
             ["thread_id"] = Environment.CurrentManagedThreadId
         };
+
         AppLogger.Debug("[RconService:GetPlayers] Dispatching query command '#players' (ReforgerBuiltIn)...", context);
 
         try
         {
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("#players", TimeSpan.FromSeconds(5.0), cancellationToken).ConfigureAwait(false);
+            // Up to 6.0s timeout to allow large 70+ player lists (5-6 sequential packets over 170ms RTT) to stream completely
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("#players", TimeSpan.FromSeconds(6.0), cancellationToken).ConfigureAwait(false);
             var parseStart = Stopwatch.GetTimestamp();
             var currentPlayers = ReforgerResponseParser.ParsePlayers(rawResponse);
             var parseElapsed = Stopwatch.GetElapsedTime(parseStart).TotalMilliseconds;
@@ -62,6 +64,7 @@ public sealed partial class RconService
             [ContextProtocol] = "ReforgerBuiltIn",
             ["thread_id"] = Environment.CurrentManagedThreadId
         };
+
         AppLogger.Debug($"[RconService:GetBans] Dispatching Reforger '#ban list' query (ConfiguredMaxPages={maxPages})...", context);
 
         try
@@ -378,14 +381,16 @@ public sealed partial class RconService
         int lastChunkSize) =>
         commandKind switch
         {
+            // The Wireshark capture proves chunks 2, 3, 4, 5 are ~1000 bytes each. 
+            // Terminal token matches only when the player header has arrived AND the last chunk is a partial packet (< 900 bytes).
             RconCommandKind.PlayerList =>
                 currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) &&
                 chunksCount >= 2 &&
-                lastChunkSize < 800,
+                lastChunkSize < 900,
 
             RconCommandKind.BanList =>
                 currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) ||
-                (currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) && chunksCount >= 2 && lastChunkSize < 800),
+                (currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) && chunksCount >= 2 && lastChunkSize < 900),
 
             RconCommandKind.Kick =>
                 currentText.Contains(TokenKicked, StringComparison.OrdinalIgnoreCase) ||

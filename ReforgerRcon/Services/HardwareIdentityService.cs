@@ -14,7 +14,7 @@ namespace ReforgerRcon.Services;
 public static class HardwareIdentityService
 {
     private const string AppIdentitySalt = "ARRT_HARDWARE_IDENTITY_V1_79A5B3E8";
-    private static readonly string StorageDirectory = Path.Combine(AppContext.BaseDirectory, "appdata");
+    private static readonly string StorageDirectory = AppPaths.AppDataDirectory;
     private static readonly string FallbackSeedPath = Path.Combine(StorageDirectory, "device_id.dat");
     private static readonly Lock SyncLock = new();
     private static volatile string? _cachedHardwareId;

@@ -33,8 +33,7 @@ public static class ProfileStorageService
             {
                 var defaults = GetDefaultProfiles();
                 _cachedProfiles = CloneProfileList(defaults);
-                // Save defaults asynchronously to avoid blocking the main UI thread during window initialization
-                _ = Task.Run(() => SaveProfilesFast(defaults));
+                _ = Task.Run(() => SaveProfilesFast(defaults), CancellationToken.None);
                 var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
                 AppLogger.Info($"[ProfileStorageService:Load] Default profiles loaded in {elapsedMs:F2}ms.");
                 return CloneProfileList(defaults);
