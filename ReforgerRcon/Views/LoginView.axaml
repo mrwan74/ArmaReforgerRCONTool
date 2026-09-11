@@ -266,6 +266,9 @@
           <DataTemplate DataType="{x:Type vm:TelemetryConsentDialogViewModel}">
             <dialogs:TelemetryConsentDialog />
           </DataTemplate>
+          <DataTemplate DataType="{x:Type vm:UpdateDialogViewModel}">
+            <dialogs:UpdateDialog />
+          </DataTemplate>
         </ContentControl.DataTemplates>
       </ContentControl>
     </Border>

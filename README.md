@@ -23,8 +23,8 @@
 
 ---
 
-> ### Latest Release: [`v0.9.0-alpha.1`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha.1)
-> **Released on:** Sept 11, 2026, 11:43 PM (UTC) 
+> ### Latest Release: [`v0.9.0-alpha.2`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha.2)
+> **Released on:** Sept 11, 2026, 18:38 PM (UTC) 
 
 ---
 
