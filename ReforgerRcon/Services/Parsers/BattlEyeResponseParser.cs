@@ -169,7 +169,7 @@ public static partial class BattlEyeResponseParser
     {
         player = null;
 
-        // Try heuristic tokenizer first as a zero-backtracking fast path (matches Frame 8: "0   68.88.103.125:60464   -1   0ccf...(?)  Jbagofdonuts (Lobby)")
+        // Fast path tokenizer
         if (TryHeuristicPlayerLine(line, out player))
         {
             return true;
@@ -206,7 +206,8 @@ public static partial class BattlEyeResponseParser
                 string location = string.Empty;
                 string timezone = string.Empty;
 
-                if (GeoIpService.TryGetCachedLocation(ip, out var geo))
+                var geo = GeoIpService.GetLocation(ip);
+                if (geo.CountryCode != "xx")
                 {
                     country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
                     city = geo.CityName;
@@ -254,7 +255,6 @@ public static partial class BattlEyeResponseParser
 
         try
         {
-            // Accommodates variable multi-space delimiters between [#], [IP:Port], [Ping], and [GUID]
             var tokens = line.Split([' ', '\t'], 5, StringSplitOptions.RemoveEmptyEntries);
             if (tokens.Length >= 5 &&
                 int.TryParse(tokens[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int id) &&
@@ -272,7 +272,6 @@ public static partial class BattlEyeResponseParser
                     var ip = endpointParts[0].Trim('[', ']');
                     var guidToken = tokens[3].Trim();
 
-                    // Handles the (?) unverified status suffix captured in Frame 8 (e.g. "2a14da...(?)" -> "2a14da...")
                     int parenIdx = guidToken.IndexOf('(');
                     var guid = parenIdx >= 0 ? guidToken[..parenIdx].Trim() : guidToken;
 
@@ -289,7 +288,8 @@ public static partial class BattlEyeResponseParser
                     string location = string.Empty;
                     string timezone = string.Empty;
 
-                    if (GeoIpService.TryGetCachedLocation(ip, out var geo))
+                    var geo = GeoIpService.GetLocation(ip);
+                    if (geo.CountryCode != "xx")
                     {
                         country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
                         city = geo.CityName;

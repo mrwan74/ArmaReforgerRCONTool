@@ -2,61 +2,90 @@
 setlocal enabledelayedexpansion
 
 REM ============================================================================
-REM ARMA REFORGER RCON TOOL (ARRT) - LOCAL RELEASE PACKER
+REM ARMA REFORGER RCON TOOL (ARRT) - LOCAL RELEASE PACKER (MULTI-PLATFORM)
 REM ============================================================================
 
 if "%~1"=="" (
     echo.
     echo [ERROR] Missing version argument.
     echo Usage:   pack-release.bat ^<SemVer^>
-    echo Example: pack-release.bat 0.9.1-preview.1
+    echo Example: pack-release.bat 0.9.0-alpha.3
     echo.
     exit /b 1
 )
 
-set "VERSION=%~1"
+set "RAW_VER=%~1"
+if /i "!RAW_VER:~0,1!"=="v" set "RAW_VER=!RAW_VER:~1!"
+set "VERSION=!RAW_VER!"
+
 set "PACK_ID=ReforgerRcon"
 set "PACK_TITLE=ARMA Reforger RCON Tool"
 set "MAIN_EXE=ReforgerRcon.exe"
 set "PROJECT_PATH=%~dp0ReforgerRcon\ReforgerRcon.csproj"
-set "ICON_PATH=%~dp0ReforgerRcon\Assets\app.ico"
-set "PUBLISH_DIR=%~dp0publish"
+set "PROJECT_DIR=%~dp0ReforgerRcon"
+set "ICON_PATH=%PROJECT_DIR%\Assets\app.ico"
+set "PUBLISH_WIN=%~dp0publish\win-x64"
+set "PUBLISH_LINUX=%~dp0publish\linux-x64"
 set "RELEASES_DIR=%~dp0releases"
+set "STAGE_SCRIPT=%~dp0stage-portable.ps1"
+
+set "ZIP_WIN=ARRT_v!VERSION!_win-x64.zip"
+set "ZIP_LINUX=ARRT_v!VERSION!_linux-x64.zip"
 
 echo ============================================================================
-echo  PACKAGING FOR GITHUB WEB RELEASES: %PACK_ID% v%VERSION%
-echo  Configuration: Debug ^| Runtime: win-x64 ^| Self-Contained: true
+echo  PACKAGING FOR GITHUB RELEASES: %PACK_ID% v!VERSION!
+echo  Configuration : Debug
+echo  Features      : Single-File, ReadyToRun (R2R AOT), Self-Contained, PDBs, GeoIP
+echo  Platforms     : win-x64, linux-x64
 echo ============================================================================
 
-REM Clean only the temporary compilation directory
-if exist "%PUBLISH_DIR%" rmdir /s /q "%PUBLISH_DIR%"
+REM Clean temporary publish and Velopack directories
+if exist "%TEMP%\velopack" rmdir /s /q "%TEMP%\velopack" >nul 2>&1
+if exist "%~dp0publish" rmdir /s /q "%~dp0publish"
 
-REM IMPORTANT: We DO NOT delete %RELEASES_DIR% so vpk can use prior versions to build deltas!
+REM Retain %RELEASES_DIR% so vpk can compute deltas
 if not exist "%RELEASES_DIR%" mkdir "%RELEASES_DIR%"
 
+REM ----------------------------------------------------------------------------
+REM [1/4] Compile and publish Windows x64 (Debug, Single-File, ReadyToRun)
+REM ----------------------------------------------------------------------------
 echo.
-echo [1/2] Compiling and publishing .NET 10 project...
+echo [1/4] Compiling and publishing Windows x64 (Debug, Single-File, ReadyToRun)...
 dotnet publish "%PROJECT_PATH%" ^
     -c Debug ^
     -r win-x64 ^
     --self-contained true ^
-    /p:PublishSingleFile=false ^
-    -o "%PUBLISH_DIR%"
+    /p:PublishSingleFile=true ^
+    /p:PublishReadyToRun=true ^
+    /p:DebugType=portable ^
+    /p:DebugSymbols=true ^
+    /p:IncludeNativeLibrariesForSelfExtract=true ^
+    -o "%PUBLISH_WIN%"
 
 if errorlevel 1 (
-    echo [ERROR] dotnet publish failed. Aborting release.
+    echo [ERROR] dotnet publish for Windows failed. Aborting release.
     exit /b 1
 )
 
+REM Fallback verification: ensure GeoIP mmdb files exist in the publish directory
+if not exist "%PUBLISH_WIN%\GeoIP" mkdir "%PUBLISH_WIN%\GeoIP"
+if exist "%PROJECT_DIR%\GeoIP\*.mmdb" copy /y "%PROJECT_DIR%\GeoIP\*.mmdb" "%PUBLISH_WIN%\GeoIP\" >nul 2>&1
+if exist "%~dp0GeoIP\*.mmdb" copy /y "%~dp0GeoIP\*.mmdb" "%PUBLISH_WIN%\GeoIP\" >nul 2>&1
+if exist "%PROJECT_DIR%\appdata\geoip\*.mmdb" copy /y "%PROJECT_DIR%\appdata\geoip\*.mmdb" "%PUBLISH_WIN%\GeoIP\" >nul 2>&1
+
+REM ----------------------------------------------------------------------------
+REM [2/4] Velopack Packaging for Windows
+REM ----------------------------------------------------------------------------
 echo.
-echo [2/2] Running Velopack packaging (Creating Installer, Full .nupkg, and Delta)...
+echo [2/4] Running Velopack packaging for Windows (with PDBs and GeoIP included)...
 vpk pack ^
     -u "%PACK_ID%" ^
     -v "%VERSION%" ^
-    -p "%PUBLISH_DIR%" ^
+    -p "%PUBLISH_WIN%" ^
     -e "%MAIN_EXE%" ^
     --packTitle "%PACK_TITLE%" ^
     --icon "%ICON_PATH%" ^
+    --exclude "^$" ^
     -o "%RELEASES_DIR%"
 
 if errorlevel 1 (
@@ -64,10 +93,73 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Clean any Setup.exe
+if exist "%RELEASES_DIR%\*Setup.exe" del /f /q "%RELEASES_DIR%\*Setup.exe" >nul 2>&1
+if exist "%RELEASES_DIR%\*setup.exe" del /f /q "%RELEASES_DIR%\*setup.exe" >nul 2>&1
+
+REM Rename portable zip to ARRT_v<VERSION>_win-x64.zip
+if exist "%RELEASES_DIR%\!ZIP_WIN!" del /f /q "%RELEASES_DIR%\!ZIP_WIN!" >nul 2>&1
+
+if exist "%RELEASES_DIR%\%PACK_ID%-win-Portable.zip" move /y "%RELEASES_DIR%\%PACK_ID%-win-Portable.zip" "%RELEASES_DIR%\!ZIP_WIN!" >nul
+if exist "%RELEASES_DIR%\%PACK_ID%-Portable.zip" move /y "%RELEASES_DIR%\%PACK_ID%-Portable.zip" "%RELEASES_DIR%\!ZIP_WIN!" >nul
+
+REM ----------------------------------------------------------------------------
+REM [2.1/4] Staging base .nupkg for deltas, mirroring GeoIP & PDBs, fixing timestamps
+REM ----------------------------------------------------------------------------
+echo.
+echo [2.1/4] Staging delta package and normalizing portable archive entries...
+if exist "%STAGE_SCRIPT%" powershell -NoProfile -ExecutionPolicy Bypass -File "%STAGE_SCRIPT%" "%RELEASES_DIR%\!ZIP_WIN!" "%RELEASES_DIR%\%PACK_ID%-%VERSION%-full.nupkg" "%PUBLISH_WIN%"
+if not exist "%STAGE_SCRIPT%" echo [WARNING] stage-portable.ps1 not found at "%STAGE_SCRIPT%". Skipping staging step.
+
+REM ----------------------------------------------------------------------------
+REM [3/4] Compile and publish Linux x64 (Debug, Single-File, ReadyToRun)
+REM ----------------------------------------------------------------------------
+echo.
+echo [3/4] Compiling and publishing Linux x64 (Debug, Single-File, ReadyToRun)...
+dotnet publish "%PROJECT_PATH%" ^
+    -c Debug ^
+    -r linux-x64 ^
+    --self-contained true ^
+    /p:PublishSingleFile=true ^
+    /p:PublishReadyToRun=true ^
+    /p:DebugType=portable ^
+    /p:DebugSymbols=true ^
+    /p:IncludeNativeLibrariesForSelfExtract=true ^
+    -o "%PUBLISH_LINUX%"
+
+if errorlevel 1 (
+    echo [ERROR] dotnet publish for Linux failed.
+    exit /b 1
+)
+
+REM Fallback verification: ensure GeoIP mmdb files exist in Linux publish directory
+if not exist "%PUBLISH_LINUX%\GeoIP" mkdir "%PUBLISH_LINUX%\GeoIP"
+if exist "%PROJECT_DIR%\GeoIP\*.mmdb" copy /y "%PROJECT_DIR%\GeoIP\*.mmdb" "%PUBLISH_LINUX%\GeoIP\" >nul 2>&1
+if exist "%~dp0GeoIP\*.mmdb" copy /y "%~dp0GeoIP\*.mmdb" "%PUBLISH_LINUX%\GeoIP\" >nul 2>&1
+if exist "%PROJECT_DIR%\appdata\geoip\*.mmdb" copy /y "%PROJECT_DIR%\appdata\geoip\*.mmdb" "%PUBLISH_LINUX%\GeoIP\" >nul 2>&1
+
+REM ----------------------------------------------------------------------------
+REM [4/4] Create Linux x64 Portable ZIP
+REM ----------------------------------------------------------------------------
+echo.
+echo [4/4] Creating Linux x64 Portable ZIP (!ZIP_LINUX!)...
+if exist "%RELEASES_DIR%\!ZIP_LINUX!" del /f /q "%RELEASES_DIR%\!ZIP_LINUX!" >nul 2>&1
+powershell -NoProfile -Command "Compress-Archive -Path '%PUBLISH_LINUX%\*' -DestinationPath '%RELEASES_DIR%\!ZIP_LINUX!' -Force"
+
+if errorlevel 1 (
+    echo [ERROR] Creating Linux zip failed.
+    exit /b 1
+)
+
 echo.
 echo ============================================================================
 echo  PACKAGING SUCCEEDED!
-echo  Opening the releases folder for manual upload to the GitHub website...
+echo  Releases ready in releases\ folder:
+echo    - !ZIP_WIN! (Includes root .pdbs, root GeoIP, valid timestamps, delta-ready)
+echo    - !ZIP_LINUX! (Includes .pdbs, GeoIP)
+echo    - releases.win.json
+echo    - %PACK_ID%-%VERSION%-full.nupkg
+if exist "%RELEASES_DIR%\%PACK_ID%-%VERSION%-delta.nupkg" echo    - %PACK_ID%-%VERSION%-delta.nupkg
 echo ============================================================================
 
 explorer "%RELEASES_DIR%"

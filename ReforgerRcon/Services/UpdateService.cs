@@ -81,8 +81,8 @@ public sealed class UpdateService : IDisposable
 
         try
         {
-            AppLogger.Trace("[UpdateService:Init] Instantiating GithubSource and platform-specific locator...", context);
-            var source = new GithubSource(GitHubRepoUrl, accessToken: null, prerelease: true);
+            AppLogger.Trace("[UpdateService:Init] Instantiating FilteredGithubSource and platform-specific locator...", context);
+            var source = new FilteredGithubSource(GitHubRepoUrl, accessToken: null, prerelease: true);
             var locator = VelopackLocator.CreateDefaultForPlatform(logger: VelopackLoggerBridge.Instance);
 
             AppLogger.Trace($"[UpdateService:Init] WindowsVelopackLocator resolved: AppContentDir='{locator.AppContentDir}', RootAppDir='{locator.RootAppDir}', PackagesDir='{locator.PackagesDir}', IsPortable={locator.IsPortable}", context);

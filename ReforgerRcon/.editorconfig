@@ -1,7 +1,7 @@
 ﻿root = true
 
 [*.cs]
-# Disable all code spell-checker info/warning messages project-wide
+# Spell-checking rules
 dotnet_diagnostic.CRRSP01.severity = none
 dotnet_diagnostic.CRRSP02.severity = none
 dotnet_diagnostic.CRRSP03.severity = none
@@ -10,3 +10,36 @@ dotnet_diagnostic.CRRSP05.severity = none
 dotnet_diagnostic.CRRSP06.severity = none
 dotnet_diagnostic.CRRSP07.severity = none
 dotnet_diagnostic.CRRSP08.severity = none
+
+# Cognitive Complexity rule (S3776)
+dotnet_diagnostic.S3776.severity = none
+
+# Overload ordering rule (S4136)
+dotnet_diagnostic.S4136.severity = none
+
+# Naming convention / Acronym casing rule (S101)
+dotnet_diagnostic.S101.severity = none
+
+# Delegate / Type name suffix convention rule (CA1711)
+dotnet_diagnostic.CA1711.severity = none
+
+# XAML namespace declaration message (MC8000)
+dotnet_diagnostic.MC8000.severity = none
+
+# IDE Code-Style Rules (Suppresses CLI build warning spam)
+dotnet_diagnostic.IDE0008.severity = none
+dotnet_diagnostic.IDE0022.severity = none
+dotnet_diagnostic.IDE0046.severity = none
+dotnet_diagnostic.IDE0032.severity = none
+dotnet_diagnostic.IDE0058.severity = none
+dotnet_diagnostic.IDE0059.severity = none
+dotnet_diagnostic.IDE0290.severity = none
+dotnet_diagnostic.IDE0300.severity = none
+dotnet_diagnostic.IDE0305.severity = none
+
+# Turn off warning level for all Roslyn IDE style suggestions during CLI compilation
+dotnet_analyzer_diagnostic.category-Style.severity = none
+
+[*.axaml]
+# Unnecessary XAML namespace messages
+dotnet_diagnostic.MC8000.severity = none

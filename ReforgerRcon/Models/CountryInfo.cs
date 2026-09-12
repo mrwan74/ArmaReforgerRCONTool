@@ -1,20 +1,31 @@
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
 using ReforgerRcon.Services;
 using System;
 
 namespace ReforgerRcon.Models;
 
-public class CountryInfo
+public partial class CountryInfo : ObservableObject
 {
     private string _code = "xx";
 
     public string Code
     {
         get => _code;
-        set => _code = string.IsNullOrWhiteSpace(value) ? "xx" : value.Trim().ToLowerInvariant();
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value) ? "xx" : value.Trim().ToLowerInvariant();
+            if (SetProperty(ref _code, normalized))
+            {
+                OnPropertyChanged(nameof(FlagImage));
+                OnPropertyChanged(nameof(FlagUrl));
+            }
+        }
     }
 
-    public string Name { get; set; } = "Unknown Region";
+    [ObservableProperty]
+    public partial string Name { get; set; } = "Unknown Region";
 
     public Bitmap? FlagImage
     {
@@ -30,6 +41,19 @@ public class CountryInfo
     }
 
     public string FlagUrl => $"avares://ReforgerRcon/Assets/flags/{ResolveFlagFileName(Code, Name)}.svg";
+
+    public CountryInfo()
+    {
+        FlagAssetService.FlagLoaded += OnFlagLoaded;
+    }
+
+    private void OnFlagLoaded(string loadedCode)
+    {
+        if (string.Equals(_code, loadedCode, StringComparison.OrdinalIgnoreCase))
+        {
+            Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(FlagImage)));
+        }
+    }
 
     private static string ResolveFlagFileName(string? code, string? name)
     {

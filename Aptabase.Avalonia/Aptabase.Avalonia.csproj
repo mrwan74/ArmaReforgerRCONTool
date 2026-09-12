@@ -18,14 +18,15 @@
 		<Nullable>enable</Nullable>
 		<LangVersion>latest</LangVersion>
 
-		<!-- Suppressed Analyzer Warnings -->
-		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08;S3776;S4136;S101;CA1711;MC8000</NoWarn>
+		<!-- Suppressed Analyzer & IDE Code-Style Warnings -->
+		<NoWarn>$(NoWarn);CRRSP01;CRRSP02;CRRSP03;CRRSP04;CRRSP05;CRRSP06;CRRSP07;CRRSP08;S3776;S4136;S101;CA1711;MC8000;IDE0160;IDE0011;IDE0045;IDE0008;IDE0022;IDE0046;IDE0032;IDE0058;IDE0059;IDE0290;EnableGenerateDocumentationFile</NoWarn>
 
-		<!-- Recommended Roslyn Analyzers & Code Analysis Settings -->
+		<!-- Recommended Roslyn Analyzers without CLI Warning Spam -->
 		<EnableNETAnalyzers>true</EnableNETAnalyzers>
 		<AnalysisLevel>latest-recommended</AnalysisLevel>
 		<AnalysisMode>Recommended</AnalysisMode>
-		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+		<EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
 	</PropertyGroup>
 
 	<PropertyGroup Label="Avalonia">

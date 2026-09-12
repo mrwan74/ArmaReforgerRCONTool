@@ -256,12 +256,15 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
             }
             catch (AptabaseException ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:Flush] Transmission failed. Retrying in {RetrySeconds}s: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Flush] Analytics delivery failed (Will retry in {RetrySeconds}s): {ex.Message}", ex);
+
                 await SafeDelayAsync(RetrySeconds * 1000, _cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:Flush] Error in batch loop: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Flush] Critical error in event batch loop: {ex.Message}", ex);
             }
         }
     }
@@ -312,12 +315,15 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
             }
             catch (AptabaseException ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:Error] Transmission failed. Retrying in {RetrySeconds}s: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Error] Crash report delivery failed (Will retry in {RetrySeconds}s): {ex.Message}", ex);
+
                 await SafeDelayAsync(RetrySeconds * 1000, _cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:Error] Channel error: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Error] Critical channel error in error loop: {ex.Message}", ex);
             }
         }
     }

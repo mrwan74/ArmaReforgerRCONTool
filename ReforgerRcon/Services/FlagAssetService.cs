@@ -24,18 +24,14 @@ public static class FlagAssetService
     private static readonly ConcurrentDictionary<string, byte> InFlightRasterizations = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lock RasterizeLock = new();
 
-    private static readonly string[] StartupEssentialCodes =
-    [
-        "un", "us", "de", "gb", "fr", "ca", "au", "ru",
-        "jp", "nl", "pl", "se", "no", "es", "it", "br",
-        "cz", "fi", "at", "ch", "ua"
-    ];
+    public static event Action<string>? FlagLoaded;
+
+    private static readonly string[] StartupEssentialCodes = ["un"];
 
     public static void PrewarmCommonFlags()
     {
         _ = Task.Run(async () =>
         {
-            // Give UI thread full priority on startup before rasterizing flags
             await Task.Delay(250).ConfigureAwait(false);
 
             var sw = Stopwatch.StartNew();
@@ -49,8 +45,8 @@ public static class FlagAssetService
                         FlagCache.TryAdd(code, bmp))
                     {
                         count++;
+                        FlagLoaded?.Invoke(code);
                     }
-                    await Task.Yield();
                 }
             }
             catch (Exception ex)
@@ -58,7 +54,7 @@ public static class FlagAssetService
                 AppLogger.Trace($"[FlagAssetService:Prewarm] Notice: {ex.Message}");
             }
             sw.Stop();
-            AppLogger.Debug($"[FlagAssetService:Prewarm] Pre-warmed {count} vector flags and initialized Skia rendering pipeline in {sw.ElapsedMilliseconds}ms.");
+            AppLogger.Debug($"[FlagAssetService:Prewarm] Pre-warmed fallback vector flag and primed Skia pipeline in {sw.ElapsedMilliseconds}ms.");
         });
     }
 
@@ -74,9 +70,9 @@ public static class FlagAssetService
             {
                 try
                 {
-                    if (LoadSvgToBitmap(normalized) is { } bmp)
+                    if (LoadSvgToBitmap(normalized) is { } bmp && FlagCache.TryAdd(normalized, bmp))
                     {
-                        FlagCache.TryAdd(normalized, bmp);
+                        FlagLoaded?.Invoke(normalized);
                     }
                 }
                 finally
@@ -115,6 +111,10 @@ public static class FlagAssetService
 
             var bitmap = LoadSvgToBitmap(code);
             FlagCache.TryAdd(code, bitmap);
+            if (bitmap != null)
+            {
+                FlagLoaded?.Invoke(code);
+            }
             return bitmap;
         }
     }

@@ -15,6 +15,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
@@ -43,14 +44,12 @@ internal static partial class Program
     {
         var bootTimestamp = Stopwatch.GetTimestamp();
 
-        // =========================================================================
-        // 1. VELOPACK HOOK INTERCEPTOR (MUST BE LINE 1 OF MAIN)
-        // =========================================================================
+        // 1. VELOPACK HOOK INTERCEPTOR
         try
         {
             VelopackApp.Build()
                 .SetLogger(VelopackLoggerBridge.Instance)
-                .SetAutoApplyOnStartup(false) // Gives operator explicit UI control over restart
+                .SetAutoApplyOnStartup(false)
                 .OnFirstRun(v => System.Diagnostics.Trace.TraceInformation($"[Velopack] First launch detected for installed version: {v}"))
                 .OnRestarted(v => System.Diagnostics.Trace.TraceInformation($"[Velopack] Application restarted successfully following update to version: {v}"))
                 .Run();
@@ -60,9 +59,7 @@ internal static partial class Program
             System.Diagnostics.Trace.TraceError($"[CRITICAL] Velopack hook interceptor threw an exception: {veloEx}");
         }
 
-        // =========================================================================
         // 2. UNHANDLED EXCEPTION SAFETY NETS
-        // =========================================================================
         AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
 
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
@@ -90,9 +87,7 @@ internal static partial class Program
             e.SetObserved();
         };
 
-        // =========================================================================
         // 3. SINGLE INSTANCE DIRECTORY MUTEX LOCK
-        // =========================================================================
         var lockStart = Stopwatch.GetTimestamp();
         if (!TryAcquireDirectoryLock(out var instanceLockHandle))
         {
@@ -145,6 +140,26 @@ internal static partial class Program
             {
                 AppLogger.InitializeFullLogging();
                 CrashReportService.Initialize();
+
+                // Pipe Aptabase internal errors directly into AppLogger so they write to reforger_rcon_errors_*.log
+                AptabaseLogging.OnLogMessage += entry =>
+                {
+                    var context = new Dictionary<string, object?>
+                    {
+                        ["category"] = entry.Category,
+                        ["thread_id"] = entry.ThreadId
+                    };
+
+                    if (entry.Level >= Microsoft.Extensions.Logging.LogLevel.Error)
+                    {
+                        AppLogger.Error($"[{entry.Category}] {entry.Message}", entry.Exception, context);
+                    }
+                    else if (entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning)
+                    {
+                        AppLogger.Warn($"[{entry.Category}] {entry.Message}", entry.Exception, context);
+                    }
+                };
+
                 var bootElapsedMs = Stopwatch.GetElapsedTime(bootTimestamp).TotalMilliseconds;
                 AppLogger.Info($"[Program:Main] Launching Avalonia application with ClassicDesktopStyle lifetime (PreBootTime={bootElapsedMs:F2}ms)...");
 
@@ -227,7 +242,6 @@ internal static partial class Program
                     GeoIpService.Initialize();
                     PushNotificationService.Initialize();
 
-                    // Prewarm UpdateService engine
                     _ = ReforgerRcon.Services.UpdateService.Instance;
 
                     var bgElapsedMs = Stopwatch.GetElapsedTime(bgStart).TotalMilliseconds;
@@ -266,7 +280,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@0.9.0-alpha.2";
+                options.Release = "ReforgerRcon@0.9.0-alpha.3";
 
                 options.SetBeforeSend((sentryEvent, _) => AppSettings.IsCrashReportingEnabled() ? sentryEvent : null);
                 options.SetBeforeSendTransaction((tx, _) => AppSettings.IsCrashReportingEnabled() ? tx : null);
@@ -296,6 +310,19 @@ internal static partial class Program
             or IOException
             or ObjectDisposedException)
         {
+            return;
+        }
+
+        if (e.Exception is ArgumentException argEx && argEx.Message.Contains("releases.", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // Keep telemetry exceptions visible in reforger_rcon_errors_*.log by logging them as Warning
+        if (e.Exception is AptabaseException or AptabaseTransmissionException ||
+            (e.Exception is HttpRequestException httpEx && httpEx.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase)))
+        {
+            AppLogger.Warn($"[FirstChanceException:Telemetry] {e.Exception.GetType().FullName}: {e.Exception.Message}", e.Exception);
             return;
         }
 
