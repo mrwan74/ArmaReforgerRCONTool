@@ -40,7 +40,7 @@ public partial class CountryInfo : ObservableObject
         }
     }
 
-    public string FlagUrl => $"avares://ReforgerRcon/Assets/flags/{ResolveFlagFileName(Code, Name)}.svg";
+    public string FlagUrl => $"avares://ARRT/Assets/flags/{ResolveFlagFileName(Code, Name)}.svg";
 
     public CountryInfo()
     {

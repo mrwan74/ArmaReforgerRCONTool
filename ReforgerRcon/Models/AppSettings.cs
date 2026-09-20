@@ -18,6 +18,7 @@ public class AppSettings
     private static readonly Lock SyncLock = new();
 
     private static volatile AppSettings? _cachedSettings;
+    private static Timer? _saveDebounceTimer;
 
     public string InstallationId { get; set; } = string.Empty;
 
@@ -81,15 +82,7 @@ public class AppSettings
     public static bool IsCrashReportingEnabled()
     {
         var cached = _cachedSettings;
-        if (cached != null)
-        {
-            return cached.SendAnonymousCrashReports;
-        }
-
-        lock (SyncLock)
-        {
-            return LoadFromDiskInternal().SendAnonymousCrashReports;
-        }
+        return cached?.SendAnonymousCrashReports ?? LoadFromDisk().SendAnonymousCrashReports;
     }
 
     public static AppSettings LoadFromDisk()
@@ -102,45 +95,40 @@ public class AppSettings
 
         lock (SyncLock)
         {
-            return LoadFromDiskInternal();
-        }
-    }
-
-    private static AppSettings LoadFromDiskInternal()
-    {
-        if (_cachedSettings != null)
-        {
-            return _cachedSettings;
-        }
-
-        if (File.Exists(SettingsPath))
-        {
-            try
+            if (_cachedSettings != null)
             {
-                var json = File.ReadAllText(SettingsPath);
-                var settings = JsonSerializer.Deserialize<AppSettings>(json, CachedJsonOptions);
-                if (settings != null)
+                return _cachedSettings;
+            }
+
+            if (File.Exists(SettingsPath))
+            {
+                try
                 {
-                    if (string.IsNullOrWhiteSpace(settings.InstallationId))
+                    var json = File.ReadAllText(SettingsPath);
+                    var settings = JsonSerializer.Deserialize<AppSettings>(json, CachedJsonOptions);
+                    if (settings != null)
                     {
-                        settings.InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
+                        if (string.IsNullOrWhiteSpace(settings.InstallationId))
+                        {
+                            settings.InstallationId = HardwareIdentityService.GetOrCreateHardwareId();
+                        }
+                        _cachedSettings = settings;
+                        return _cachedSettings;
                     }
-                    _cachedSettings = settings;
-                    return _cachedSettings;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[AppSettings] Notice reading settings: {ex.Message}");
                 }
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[AppSettings] Notice: {ex.Message}");
-            }
-        }
 
-        var freshSettings = new AppSettings
-        {
-            InstallationId = HardwareIdentityService.GetOrCreateHardwareId()
-        };
-        _cachedSettings = freshSettings;
-        return freshSettings;
+            var freshSettings = new AppSettings
+            {
+                InstallationId = HardwareIdentityService.GetOrCreateHardwareId()
+            };
+            _cachedSettings = freshSettings;
+            return freshSettings;
+        }
     }
 
     public static void SaveToDisk(AppSettings settings)
@@ -149,29 +137,36 @@ public class AppSettings
 
         _cachedSettings = settings;
 
-        ThreadPool.QueueUserWorkItem(_ =>
+        lock (SyncLock)
         {
-            lock (SyncLock)
+            _saveDebounceTimer?.Dispose();
+            _saveDebounceTimer = new Timer(static state =>
             {
-                try
+                var targetSettings = (AppSettings?)state;
+                if (targetSettings == null) return;
+
+                lock (SyncLock)
                 {
-                    if (!Directory.Exists(SettingsDirectory))
+                    try
                     {
-                        Directory.CreateDirectory(SettingsDirectory);
+                        if (!Directory.Exists(SettingsDirectory))
+                        {
+                            Directory.CreateDirectory(SettingsDirectory);
+                        }
+                        var json = JsonSerializer.Serialize(targetSettings, CachedJsonOptions);
+                        File.WriteAllText(TempSettingsPath, json);
+                        if (File.Exists(SettingsPath))
+                        {
+                            File.Delete(SettingsPath);
+                        }
+                        File.Move(TempSettingsPath, SettingsPath, overwrite: true);
                     }
-                    var json = JsonSerializer.Serialize(settings, CachedJsonOptions);
-                    File.WriteAllText(TempSettingsPath, json);
-                    if (File.Exists(SettingsPath))
+                    catch (Exception ex)
                     {
-                        File.Delete(SettingsPath);
+                        Debug.WriteLine($"[AppSettings] Error saving settings: {ex.Message}");
                     }
-                    File.Move(TempSettingsPath, SettingsPath, overwrite: true);
                 }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[AppSettings] Error saving: {ex.Message}");
-                }
-            }
-        });
+            }, settings, 250, Timeout.Infinite);
+        }
     }
 }

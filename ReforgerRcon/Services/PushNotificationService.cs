@@ -18,7 +18,7 @@ namespace ReforgerRcon.Services;
 public static class PushNotificationService
 {
     private const string AppIconFileName = "app.ico";
-    private const string AppIconResourceUri = "avares://ReforgerRcon/Assets/app.ico";
+    private const string AppIconResourceUri = "avares://ARRT/Assets/app.ico";
 
     private static bool _isHooked;
     private static readonly Lock InitLock = new();

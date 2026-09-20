@@ -73,6 +73,7 @@ public sealed partial class RconService : IRconService
     private volatile bool _hasInitialPlayerSnapshot;
     private volatile bool _isInitialConnectPhase;
     private volatile bool _isManualDisconnecting;
+    private volatile string? _activeReforgerCommand;
     private int _protocolMismatchFired;
     private Task<List<PlayerModel>>? _inFlightPlayersTask;
 
@@ -327,6 +328,7 @@ public sealed partial class RconService : IRconService
             _hasInitialPlayerSnapshot = false;
             _isInitialConnectPhase = true;
             _isManualDisconnecting = false;
+            _activeReforgerCommand = null;
             DetectedProtocolMismatch = null;
             _protocolMismatchFired = 0;
             _totalCommandsDispatched = 0;
@@ -603,6 +605,7 @@ public sealed partial class RconService : IRconService
             StopBackgroundPingMonitor();
             _hasInitialPlayerSnapshot = false;
             _isInitialConnectPhase = false;
+            _activeReforgerCommand = null;
 
             Volatile.Write(ref _inFlightPlayersTask, null);
 
@@ -803,7 +806,24 @@ public sealed partial class RconService : IRconService
             LastPacketTime = DateTime.UtcNow;
             var message = args.Message;
 
-            AppendToBuffer(message);
+            // In BattlEye protocol: command responses arrive in PacketTypeCommand (args.Id != 256).
+            // In Reforger protocol: command responses arrive as a series of ServerMessages (args.Id == 256) starting with "Processing Command: <cmd>"!
+            bool isCommandResponse = args.Id != 256;
+            bool isReforgerStreamResponse = _activeReforgerCommand != null &&
+                     (message.StartsWith("Processing Command:", StringComparison.OrdinalIgnoreCase) ||
+                      message.StartsWith("Players on server:", StringComparison.OrdinalIgnoreCase) ||
+                      message.StartsWith("Total bans:", StringComparison.OrdinalIgnoreCase) ||
+                      message.StartsWith("Help for", StringComparison.OrdinalIgnoreCase) ||
+                      message.StartsWith("unknown command", StringComparison.OrdinalIgnoreCase) ||
+                      message.Contains(';') ||
+                      message.Contains('|') ||
+                      _aggregatedBuffer.Length > 0);
+
+            if (isCommandResponse || isReforgerStreamResponse)
+            {
+                AppendToBuffer(message);
+            }
+
             CheckProtocolMismatch(message);
 
             if (args.Id != 256 && _pendingCommands.TryRemove(args.Id, out var tcs))
@@ -1417,86 +1437,93 @@ public sealed partial class RconService : IRconService
         {
             RaiseOutputReceived($"[RCON OUT] {command}");
 
+            // Step 1: For BattlEye, try direct response via PacketType 0x01
             if (CurrentProtocol == RconProtocol.BattlEye)
             {
-                string? directResponse = await ExecuteBattlEyeDirectResponseAsync(client, command, maxTimeout, startTimestamp, cancellationToken).ConfigureAwait(false);
-                if (directResponse != null)
+                string? directResponse = await ExecuteDirectResponseAsync(client, command, maxTimeout, startTimestamp, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(directResponse))
                 {
                     return directResponse;
                 }
             }
 
+            // Step 2: For Reforger (or BattlEye stream fallback), aggregate incoming ServerMessage (0x02) packets
             await ResetAggregateBufferAsync(cancellationToken).ConfigureAwait(false);
+            _activeReforgerCommand = command;
 
-            if (CurrentProtocol == RconProtocol.ReforgerBuiltIn)
+            try
             {
+                // Dispatch command
                 client.SendCommand(command, log: true);
-            }
 
-            var commandKind = ClassifyCommand(command);
-            var timeoutLimit = DateTime.UtcNow.Add(maxTimeout);
-            bool isTimeoutExceeded = false;
+                var commandKind = ClassifyCommand(command);
+                var timeoutLimit = DateTime.UtcNow.Add(maxTimeout);
 
-            while (DateTime.UtcNow < timeoutLimit)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var remainingTimeout = timeoutLimit - DateTime.UtcNow;
-                if (remainingTimeout <= TimeSpan.Zero)
+                while (DateTime.UtcNow < timeoutLimit)
                 {
-                    isTimeoutExceeded = true;
-                    break;
-                }
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                var waitMs = Math.Min(25, (int)remainingTimeout.TotalMilliseconds);
-                await _chunkArrivedSignal.WaitAsync(waitMs, cancellationToken).ConfigureAwait(false);
-
-                await _bufferSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    var timeSinceLastChunk = DateTime.UtcNow - _lastMessageChunkUtc;
-                    var chunksCount = _messageChunksCount;
-                    var lastChunkSize = _lastChunkSizeBytes;
-                    var currentText = _aggregatedBuffer.ToString();
-
-                    if (CheckUniversalErrorTokens(currentText))
+                    var remainingTimeout = timeoutLimit - DateTime.UtcNow;
+                    if (remainingTimeout <= TimeSpan.Zero)
                     {
-                        AppLogger.Trace($"[RconService:Aggregate] Universal terminal token detected ({currentText.Length} chars). Halting aggregation.");
                         break;
                     }
 
-                    bool isTerminal = CurrentProtocol == RconProtocol.ReforgerBuiltIn
-                        ? CheckReforgerCommandTerminalTokens(commandKind, currentText, chunksCount, lastChunkSize)
-                        : CheckBattlEyeCommandTerminalTokens(commandKind, currentText, chunksCount);
+                    var waitMs = Math.Min(25, (int)remainingTimeout.TotalMilliseconds);
+                    await _chunkArrivedSignal.WaitAsync(waitMs, cancellationToken).ConfigureAwait(false);
 
-                    if (isTerminal)
+                    await _bufferSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
                     {
-                        AppLogger.Trace($"[RconService:Aggregate] Command terminal token matched ({currentText.Length} chars, ChunksCount={chunksCount}, LastSize={lastChunkSize} bytes). Terminating aggregation loop.");
-                        break;
-                    }
+                        var timeSinceLastChunk = DateTime.UtcNow - _lastMessageChunkUtc;
+                        var chunksCount = _messageChunksCount;
+                        var lastChunkSize = _lastChunkSizeBytes;
+                        var currentText = _aggregatedBuffer.ToString();
 
-                    bool hasActualPayload = CurrentProtocol == RconProtocol.ReforgerBuiltIn
-                        ? DetermineReforgerPayloadPresence(commandKind, currentText, chunksCount)
-                        : DetermineBattlEyePayloadPresence(commandKind, currentText, chunksCount);
-
-                    if (hasActualPayload)
-                    {
-                        bool isLikelyMultiChunkFollowup = lastChunkSize >= 800;
-                        int adaptiveQuietMs = isLikelyMultiChunkFollowup
-                            ? Math.Max(400, (int)(PingMs * 2.0))
-                            : Math.Max(80, (int)(PingMs * 0.6));
-
-                        if (timeSinceLastChunk.TotalMilliseconds >= adaptiveQuietMs)
+                        if (CheckUniversalErrorTokens(currentText))
                         {
-                            AppLogger.Trace($"[RconService:Aggregate] Adaptive quiet threshold reached ({timeSinceLastChunk.TotalMilliseconds:F1}ms >= {adaptiveQuietMs}ms, LastChunkSize={lastChunkSize} bytes, ChunksCount={chunksCount}). Halting aggregation.");
+                            AppLogger.Trace($"[RconService:Aggregate] Terminal error token detected ({currentText.Length} chars). Halting aggregation.");
                             break;
                         }
+
+                        bool isTerminal = CurrentProtocol == RconProtocol.ReforgerBuiltIn
+                            ? CheckReforgerCommandTerminalTokens(commandKind, currentText, chunksCount, lastChunkSize)
+                            : CheckBattlEyeCommandTerminalTokens(commandKind, currentText, chunksCount);
+
+                        if (isTerminal)
+                        {
+                            AppLogger.Trace($"[RconService:Aggregate] Terminal token matched ({currentText.Length} chars, Chunks={chunksCount}, LastSize={lastChunkSize}B). Halting aggregation.");
+                            break;
+                        }
+
+                        bool hasActualPayload = CurrentProtocol == RconProtocol.ReforgerBuiltIn
+                            ? DetermineReforgerPayloadPresence(commandKind, currentText, chunksCount)
+                            : DetermineBattlEyePayloadPresence(commandKind, currentText, chunksCount);
+
+                        // CRITICAL: Quiet timer ONLY kicks in after the actual payload has arrived,
+                        // with an adaptive quiet buffer of at least 350ms to accommodate 180-220ms network ping jitter
+                        if (hasActualPayload)
+                        {
+                            int adaptiveQuietMs = (lastChunkSize >= 900)
+                                ? Math.Max(400, (int)(PingMs * 2.5))
+                                : Math.Max(350, (int)(PingMs * 1.8));
+
+                            if (timeSinceLastChunk.TotalMilliseconds >= adaptiveQuietMs)
+                            {
+                                AppLogger.Trace($"[RconService:Aggregate] Adaptive quiet threshold reached ({timeSinceLastChunk.TotalMilliseconds:F1}ms >= {adaptiveQuietMs}ms, Chunks={chunksCount}, LastSize={lastChunkSize}B). Completing aggregation.");
+                                break;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _bufferSemaphore.Release();
                     }
                 }
-                finally
-                {
-                    _bufferSemaphore.Release();
-                }
+            }
+            finally
+            {
+                _activeReforgerCommand = null;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -1507,56 +1534,14 @@ public sealed partial class RconService : IRconService
                 var aggregated = _aggregatedBuffer.ToString();
                 var totalElapsed = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
-                if (isTimeoutExceeded && _messageChunksCount == 0)
-                {
-                    var timeoutContext = new Dictionary<string, object?>
-                    {
-                        [ContextProtocol] = CurrentProtocol.ToString(),
-                        ["command"] = command,
-                        ["timeout_seconds"] = maxTimeout.TotalSeconds,
-                        [ContextPingMs] = PingMs,
-                        ["elapsed_ms"] = totalElapsed
-                    };
-                    AppLogger.Warn($"[RconService:Aggregate] Command '{command}' timed out waiting for initial server packet after {totalElapsed:F2}ms.", null, timeoutContext);
-
-                    AppLogger.TrackEvent("rcon_packet_timeout_detected", new Dictionary<string, object>
-                    {
-                        [ProtocolMetricKey] = CurrentProtocol.ToString(),
-                        ["command_head"] = command.Split(' ')[0],
-                        ["chunks_received"] = _messageChunksCount,
-                        ["last_chunk_bytes"] = _lastChunkSizeBytes,
-                        [ContextPingMs] = PingMs,
-                        [ElapsedMsMetricKey] = totalElapsed
-                    });
-
-                    ToastNotificationService.Instance.ShowWarning("Command Timed Out", $"No response packet received from server for '{command}'.");
-                }
-
                 CheckProtocolMismatch(aggregated);
-                AppLogger.Debug($"[RconService:Aggregate] Command aggregation complete for '{AppLogger.SanitizeSensitiveData(command)}' in {totalElapsed:F2}ms: {aggregated.Length} chars across {_messageChunksCount} chunks.");
+                AppLogger.Debug($"[RconService:Aggregate] Aggregation complete for '{AppLogger.SanitizeSensitiveData(command)}' in {totalElapsed:F2}ms: {aggregated.Length} chars across {_messageChunksCount} chunks.");
                 return aggregated;
             }
             finally
             {
                 _bufferSemaphore.Release();
             }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            var errContext = new Dictionary<string, object?>
-            {
-                ["command"] = command,
-                [ContextProtocol] = CurrentProtocol.ToString(),
-                ["error"] = ex.Message,
-                ["stack_trace"] = ex.StackTrace
-            };
-            AppLogger.Error($"[RconService:Aggregate] Critical error during command aggregation: {ex.Message}", ex, errContext);
-            ToastNotificationService.Instance.ShowError("Command Execution Failure", $"Failed executing '{command}': {ex.Message}");
-            return string.Empty;
         }
         finally
         {

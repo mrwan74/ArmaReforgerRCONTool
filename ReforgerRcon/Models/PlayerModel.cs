@@ -37,8 +37,8 @@ public partial class PlayerModel : ObservableObject
     [ObservableProperty] public partial string DisplayLocation { get; set; } = string.Empty;
     [ObservableProperty] public partial string TimeZone { get; set; } = string.Empty;
 
-    public bool HasReforgerUid => !string.IsNullOrWhiteSpace(ReforgerUid) && ReforgerUid.Length == 36 && ReforgerUid.Contains('-');
-    public bool HasBattlEyeGuid => !string.IsNullOrWhiteSpace(BattlEyeGuid) && BattlEyeGuid.Length == 32 && !BattlEyeGuid.Contains('-');
+    public bool HasReforgerUid => !string.IsNullOrWhiteSpace(ReforgerUid);
+    public bool HasBattlEyeGuid => !string.IsNullOrWhiteSpace(BattlEyeGuid);
 
     public string FormattedEndpoint => $"{Ip}:{Port}";
     public string FormattedLocalTime => LocationFormatter.FormatLocalTime(TimeZone);

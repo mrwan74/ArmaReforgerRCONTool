@@ -20,7 +20,7 @@ set "VERSION=!RAW_VER!"
 
 set "PACK_ID=ReforgerRcon"
 set "PACK_TITLE=ARMA Reforger RCON Tool"
-set "MAIN_EXE=ReforgerRcon.exe"
+set "MAIN_EXE=ARMA REFORGER RCON TOOL.exe"
 set "PROJECT_PATH=%~dp0ReforgerRcon\ReforgerRcon.csproj"
 set "PROJECT_DIR=%~dp0ReforgerRcon"
 set "ICON_PATH=%PROJECT_DIR%\Assets\app.ico"

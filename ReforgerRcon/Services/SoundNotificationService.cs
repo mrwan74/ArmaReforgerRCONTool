@@ -106,7 +106,7 @@ public static partial class SoundNotificationService
 
         foreach (var fileName in candidateNames)
         {
-            var avaresUri = new Uri($"avares://ReforgerRcon/Assets/audio/{fileName}");
+            var avaresUri = new Uri($"avares://ARRT/Assets/audio/{fileName}");
             if (AssetLoader.Exists(avaresUri))
             {
                 try
@@ -125,7 +125,7 @@ public static partial class SoundNotificationService
                 }
             }
 
-            var rootAvaresUri = new Uri($"avares://ReforgerRcon/Assets/{fileName}");
+            var rootAvaresUri = new Uri($"avares://ARRT/Assets/{fileName}");
             if (AssetLoader.Exists(rootAvaresUri))
             {
                 try

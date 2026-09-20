@@ -36,20 +36,20 @@ public partial class DatabasePlayerModel : ObservableObject
     [ObservableProperty] public partial string Location { get; set; } = string.Empty;
     [ObservableProperty] public partial string TimeZone { get; set; } = string.Empty;
 
-    public bool HasReforgerUid => !string.IsNullOrWhiteSpace(ReforgerUid) && ReforgerUid.Length == 36 && ReforgerUid.Contains('-');
-    public bool HasBattlEyeGuid => !string.IsNullOrWhiteSpace(BattlEyeGuid) && BattlEyeGuid.Length == 32 && !BattlEyeGuid.Contains('-');
+    public bool HasReforgerUid => !string.IsNullOrWhiteSpace(ReforgerUid);
+    public bool HasBattlEyeGuid => !string.IsNullOrWhiteSpace(BattlEyeGuid);
 
     public string DisplayReforgerUid => ResolveDisplayReforgerUid();
     public string DisplayBattlEyeGuid => ResolveDisplayBattlEyeGuid();
 
     private string ResolveDisplayReforgerUid()
     {
-        if (HasReforgerUid)
+        if (!string.IsNullOrWhiteSpace(ReforgerUid))
         {
             return ReforgerUid;
         }
 
-        if (Uid.Length == 36 && Uid.Contains('-'))
+        if (!string.IsNullOrWhiteSpace(Uid))
         {
             return Uid;
         }
@@ -59,17 +59,17 @@ public partial class DatabasePlayerModel : ObservableObject
 
     private string ResolveDisplayBattlEyeGuid()
     {
-        if (HasBattlEyeGuid)
+        if (!string.IsNullOrWhiteSpace(BattlEyeGuid))
         {
             return BattlEyeGuid;
         }
 
-        if (Guid.Length == 32 && !Guid.Contains('-'))
+        if (!string.IsNullOrWhiteSpace(Guid))
         {
             return Guid;
         }
 
-        if (Uid.Length == 32 && !Uid.Contains('-'))
+        if (!string.IsNullOrWhiteSpace(Uid) && !Uid.Contains('-'))
         {
             return Uid;
         }

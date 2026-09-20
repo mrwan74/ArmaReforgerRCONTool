@@ -77,8 +77,24 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
 
         AppLogger.Debug($"[LoginViewModel:Init] Instantiating LoginViewModel (IsStartup={isStartup}, Thread=T{Environment.CurrentManagedThreadId:D2})...");
         InitializeProfilesInstant();
+
+        UpdateService.Instance.UpdateFound += OnUpdateFound;
+
         var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
         AppLogger.Trace($"[LoginViewModel:Init] Initialization finished in {elapsedMs:F2}ms.");
+    }
+
+    private void OnUpdateFound(string currentVer, string targetVer)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!IsConnecting && !IsDialogVisible && ActiveDialog == null)
+            {
+                ActiveDialog = new UpdateDialogViewModel(currentVer, targetVer, CloseDialog);
+                IsDialogVisible = true;
+                AppLogger.Info($"[LoginViewModel:Update] Displayed UpdateDialog for v{targetVer} over LoginView.");
+            }
+        });
     }
 
     private void InitializeProfilesInstant()
@@ -343,9 +359,9 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                         ProfileStorageService.SaveProfilesFast([.. Profiles]);
                     }
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException ex)
                 {
-                    // Clean cancellation on subsequent typing
+                    AppLogger.Trace($"[LoginViewModel:Sync] Form sync debounce cancelled: {ex.Message}");
                 }
                 catch (Exception ex)
                 {
@@ -802,11 +818,11 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             }
             catch (ObjectDisposedException)
             {
-                // Disposed lock safely ignored
+                AppLogger.Trace("[LoginViewModel:Connect] Lock release notice: object disposed.");
             }
             catch (SemaphoreFullException)
             {
-                // Full lock safely ignored
+                AppLogger.Trace("[LoginViewModel:Connect] Lock release notice: semaphore already full.");
             }
         }
     }
@@ -865,6 +881,8 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             try
             {
                 AppLogger.Debug("[LoginViewModel:Dispose] Disposing LoginViewModel timers, CTS, and locks...");
+                UpdateService.Instance.UpdateFound -= OnUpdateFound;
+
                 _connectCts?.Cancel();
                 _connectCts?.Dispose();
                 _connectCts = null;

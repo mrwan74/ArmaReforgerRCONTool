@@ -240,7 +240,7 @@ public sealed partial class RconService
         return true;
     }
 
-    private async Task<string?> ExecuteBattlEyeDirectResponseAsync(
+    private async Task<string?> ExecuteDirectResponseAsync(
         BattlEyeClient client,
         string command,
         TimeSpan maxTimeout,
@@ -259,7 +259,7 @@ public sealed partial class RconService
             return directResponse;
         }
 
-        return null;
+        return directResponse;
     }
 
     private static RconCommandKind ClassifyBattlEyeCommand(string command)

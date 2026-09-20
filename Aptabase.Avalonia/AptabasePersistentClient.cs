@@ -114,11 +114,11 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
         }
         catch (IOException ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackEvent] Disk error for '{eventName}': {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackEvent] Disk notice for '{eventName}': {ex.Message}");
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackEvent] Error persisting '{eventName}': {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackEvent] Notice persisting '{eventName}': {ex.Message}");
         }
     }
 
@@ -158,11 +158,11 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
         }
         catch (IOException ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Critical, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackError] Disk error: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackError] Disk notice: {ex.Message}");
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Critical, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackError] Error persisting error report: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient), $"[AptabasePersistent:TrackError] Notice persisting error report: {ex.Message}");
         }
     }
 
@@ -178,7 +178,7 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
         }
         catch (Exception ex)
         {
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient), $"[AptabasePersistent:Notify] Callback exception: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient), $"[AptabasePersistent:Notify] Callback notice: {ex.Message}");
         }
     }
 
@@ -254,17 +254,24 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
             {
                 break;
             }
+            catch (AptabaseTransmissionException ex)
+            {
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Flush] Analytics delivery deferred (network unavailable): {ex.Message}");
+
+                await SafeDelayAsync(RetrySeconds * 1000, _cts.Token).ConfigureAwait(false);
+            }
             catch (AptabaseException ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
-                    $"[AptabasePersistent:Flush] Analytics delivery failed (Will retry in {RetrySeconds}s): {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Flush] Analytics delivery deferred: {ex.Message}");
 
                 await SafeDelayAsync(RetrySeconds * 1000, _cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
-                    $"[AptabasePersistent:Flush] Critical error in event batch loop: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Flush] Non-fatal batch processor notice: {ex.Message}");
             }
         }
     }
@@ -313,17 +320,24 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
             {
                 break;
             }
+            catch (AptabaseTransmissionException ex)
+            {
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Error] Error report delivery deferred (network unavailable): {ex.Message}");
+
+                await SafeDelayAsync(RetrySeconds * 1000, _cts.Token).ConfigureAwait(false);
+            }
             catch (AptabaseException ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
-                    $"[AptabasePersistent:Error] Crash report delivery failed (Will retry in {RetrySeconds}s): {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Error] Crash report delivery deferred: {ex.Message}");
 
                 await SafeDelayAsync(RetrySeconds * 1000, _cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabasePersistentClient),
-                    $"[AptabasePersistent:Error] Critical channel error in error loop: {ex.Message}", ex);
+                AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabasePersistentClient),
+                    $"[AptabasePersistent:Error] Non-fatal error loop notice: {ex.Message}");
             }
         }
     }
@@ -404,7 +418,7 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
             }
             catch (JsonException ex)
             {
-                AptabaseLogging.Log(logger, LogLevel.Error, nameof(PersistentEventDataChannel), $"[PersistentEventChannel:Deserialize] JSON error: {ex.Message}", ex);
+                AptabaseLogging.Log(logger, LogLevel.Debug, nameof(PersistentEventDataChannel), $"[PersistentEventChannel:Deserialize] JSON notice: {ex.Message}");
                 return new EventData(InvalidPersistedEvent);
             }
         }
@@ -452,7 +466,7 @@ public sealed class AptabasePersistentClient : IAptabaseClient, IErrorTracker
             }
             catch (JsonException ex)
             {
-                AptabaseLogging.Log(logger, LogLevel.Error, nameof(PersistentErrorDataChannel), $"[PersistentErrorChannel:Deserialize] JSON error: {ex.Message}", ex);
+                AptabaseLogging.Log(logger, LogLevel.Debug, nameof(PersistentErrorDataChannel), $"[PersistentErrorChannel:Deserialize] JSON notice: {ex.Message}");
                 return new ErrorData("invalid", InvalidPersistedError);
             }
         }

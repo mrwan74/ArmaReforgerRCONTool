@@ -60,7 +60,19 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
 
         SysInfo.IsDebug = options?.IsDebugMode ?? SystemInfo.IsInDebugMode(Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly());
 
-        _http = region == "DEV" ? new HttpClient(new LocalHttpsClientHandler(logger)) : new HttpClient();
+        var socketsHandler = new SocketsHttpHandler
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+            AutomaticDecompression = DecompressionMethods.All,
+            UseProxy = true,
+            DefaultProxyCredentials = CredentialCache.DefaultCredentials
+        };
+
+        _http = region == "DEV"
+            ? new HttpClient(new LocalHttpsClientHandler(logger))
+            : new HttpClient(socketsHandler);
+
         _http.BaseAddress = new Uri(baseUrl);
         _http.DefaultRequestHeaders.Add("App-Key", trimmedKey);
         _http.Timeout = TimeSpan.FromSeconds(10);
@@ -140,8 +152,8 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
                     return;
                 }
 
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase),
-                    $"[AptabaseClientBase:TrackEvents] HTTP POST /api/v0/events failed (Status: {statusCode}, Latency: {elapsedMs:F2}ms, Response: {responseBody})");
+                AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClientBase),
+                    $"[AptabaseClientBase:TrackEvents] HTTP POST /api/v0/events rejected (Status: {statusCode}, Latency: {elapsedMs:F2}ms)");
 
                 if (response.StatusCode is >= HttpStatusCode.InternalServerError or HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
                 {
@@ -161,13 +173,13 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
         catch (HttpRequestException ex)
         {
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Network error after {elapsedMs:F2}ms: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Network unavailable after {elapsedMs:F2}ms: {ex.Message}");
             throw new AptabaseTransmissionException($"Network failure sending analytics events: {ex.Message}", ex);
         }
         catch (SocketException ex)
         {
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Socket error after {elapsedMs:F2}ms: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), $"[AptabaseClientBase:TrackEvents] Socket error after {elapsedMs:F2}ms: {ex.Message}");
             throw new AptabaseTransmissionException($"Socket failure connecting to Aptabase: {ex.Message}", ex);
         }
         catch (JsonException ex)
@@ -252,8 +264,8 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
                     return;
                 }
 
-                AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase),
-                    $"[AptabaseClientBase:SendError] HTTP POST /api/v0/error failed (Status: {statusCode}, Latency: {elapsedMs:F2}ms, Response: {responseBody})");
+                AptabaseLogging.Log(_logger, LogLevel.Warning, nameof(AptabaseClientBase),
+                    $"[AptabaseClientBase:SendError] HTTP POST /api/v0/error failed (Status: {statusCode}, Latency: {elapsedMs:F2}ms)");
 
                 if (response.StatusCode is >= HttpStatusCode.InternalServerError or HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
                 {
@@ -273,13 +285,13 @@ internal sealed class AptabaseClientBase : IAsyncDisposable
         catch (HttpRequestException ex)
         {
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Network error delivering error report after {elapsedMs:F2}ms: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Network unavailable delivering error report after {elapsedMs:F2}ms: {ex.Message}");
             throw new AptabaseTransmissionException($"Network failure delivering error report: {ex.Message}", ex);
         }
         catch (SocketException ex)
         {
             var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AptabaseLogging.Log(_logger, LogLevel.Error, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Socket error delivering error report after {elapsedMs:F2}ms: {ex.Message}", ex);
+            AptabaseLogging.Log(_logger, LogLevel.Debug, nameof(AptabaseClientBase), $"[AptabaseClientBase:SendError] Socket error delivering error report after {elapsedMs:F2}ms: {ex.Message}");
             throw new AptabaseTransmissionException($"Socket failure delivering error report: {ex.Message}", ex);
         }
         catch (JsonException ex)

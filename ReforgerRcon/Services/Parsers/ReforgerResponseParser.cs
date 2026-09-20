@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using ReforgerRcon.Models;
@@ -261,8 +262,10 @@ public static partial class ReforgerResponseParser
         return line.StartsWith("Processing Command", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("Players on server", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("[Player#]", StringComparison.OrdinalIgnoreCase) ||
+               line.StartsWith("[#]", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("---", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("Total players", StringComparison.OrdinalIgnoreCase) ||
+               line.StartsWith("(", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("unknown command", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("Help for", StringComparison.OrdinalIgnoreCase) ||
                line.StartsWith("Client ID:", StringComparison.OrdinalIgnoreCase) ||
@@ -276,17 +279,58 @@ public static partial class ReforgerResponseParser
 
         try
         {
+            // Semicolon format: "5 ; b6955d91-4749-4cdb-9a51-e69f630ec435 ; Jerry"
             var firstSemi = line.IndexOf(';');
             if (firstSemi > 0)
             {
                 var secondSemi = line.IndexOf(';', firstSemi + 1);
                 if (secondSemi > firstSemi)
                 {
-                    var idSpan = line.AsSpan(0, firstSemi).Trim();
-                    var uidSpan = line.AsSpan(firstSemi + 1, secondSemi - firstSemi - 1).Trim();
-                    var nameSpan = line.AsSpan(secondSemi + 1).Trim();
+                    var idSpan = line.AsSpan(0, firstSemi).Trim().TrimStart('[').TrimEnd(']').Trim();
+                    var uidSpan = line.AsSpan(firstSemi + 1, secondSemi - firstSemi - 1).Trim().TrimStart('[').TrimEnd(']').Trim();
 
-                    if (int.TryParse(idSpan, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id) && uidSpan.Length >= 8)
+                    var remaining = line.AsSpan(secondSemi + 1).Trim();
+                    var thirdSemi = remaining.IndexOf(';');
+                    var nameSpan = thirdSemi >= 0 ? remaining[..thirdSemi].Trim() : remaining;
+                    var comment = thirdSemi >= 0 ? remaining[(thirdSemi + 1)..].Trim().ToString() : string.Empty;
+
+                    if (int.TryParse(idSpan, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id) && uidSpan.Length >= 4)
+                    {
+                        var uid = uidSpan.ToString();
+                        var cleanName = SanitizePlayerName(nameSpan.ToString());
+
+                        player = new PlayerModel
+                        {
+                            Id = id,
+                            Uid = uid,
+                            Guid = string.Empty,
+                            ReforgerUid = uid,
+                            BattlEyeGuid = string.Empty,
+                            Name = cleanName,
+                            Ip = "N/A",
+                            Port = 0,
+                            Ping = 0,
+                            Comment = comment,
+                            Country = new CountryInfo { Code = "xx", Name = DefaultUnknownRegion },
+                            DisplayLocation = string.Empty
+                        };
+                        return true;
+                    }
+                }
+            }
+
+            // Pipe format: "5 | b6955d91-4749-4cdb-9a51-e69f630ec435 | Jerry"
+            var firstPipe = line.IndexOf('|');
+            if (firstPipe > 0)
+            {
+                var secondPipe = line.IndexOf('|', firstPipe + 1);
+                if (secondPipe > firstPipe)
+                {
+                    var idSpan = line.AsSpan(0, firstPipe).Trim().TrimStart('[').TrimEnd(']').Trim();
+                    var uidSpan = line.AsSpan(firstPipe + 1, secondPipe - firstPipe - 1).Trim().TrimStart('[').TrimEnd(']').Trim();
+                    var nameSpan = line.AsSpan(secondPipe + 1).Trim();
+
+                    if (int.TryParse(idSpan, NumberStyles.Integer, CultureInfo.InvariantCulture, out int id) && uidSpan.Length >= 4)
                     {
                         var uid = uidSpan.ToString();
                         var cleanName = SanitizePlayerName(nameSpan.ToString());
@@ -310,10 +354,11 @@ public static partial class ReforgerResponseParser
                 }
             }
 
+            // Regex fallback
             var match = PlayerRowRegex().Match(line);
             if (match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fallbackId))
             {
-                var uid = match.Groups[2].Value.Trim();
+                var uid = match.Groups[2].Value.Trim().TrimStart('[').TrimEnd(']').Trim();
                 var rawName = match.Groups[3].Value;
 
                 string sanitizedName = SanitizePlayerName(rawName);
@@ -331,6 +376,36 @@ public static partial class ReforgerResponseParser
                     Ping = 0,
                     Country = new CountryInfo { Code = "xx", Name = DefaultUnknownRegion },
                     DisplayLocation = string.Empty
+                };
+                return true;
+            }
+
+            // BattlEye wire format fallback if server returns BE format while in Reforger protocol
+            var tokens = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length >= 5 && int.TryParse(tokens[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int beId) && tokens[1].Contains(':'))
+            {
+                var epParts = tokens[1].Split(':', 2);
+                var ip = epParts[0].Trim('[', ']');
+                int port = int.TryParse(epParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int p) ? p : 0;
+                int ping = int.TryParse(tokens[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int png) ? png : 0;
+                var guid = tokens[3].Trim();
+                var name = string.Join(' ', tokens.Skip(4)).Trim();
+
+                var geo = GeoIpService.GetLocation(ip);
+                player = new PlayerModel
+                {
+                    Id = beId,
+                    Uid = guid,
+                    Guid = guid,
+                    ReforgerUid = guid.Contains('-') ? guid : string.Empty,
+                    BattlEyeGuid = !guid.Contains('-') ? guid : string.Empty,
+                    Name = SanitizePlayerName(name),
+                    Ip = ip,
+                    Port = port,
+                    Ping = ping,
+                    Country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName },
+                    DisplayLocation = geo.NaturalLocation,
+                    TimeZone = geo.TimeZone
                 };
                 return true;
             }
@@ -433,7 +508,7 @@ public static partial class ReforgerResponseParser
                 var idPart = line.AsSpan(0, pipeIdx).Trim().TrimStart('-').Trim().ToString();
                 var namePart = line.AsSpan(pipeIdx + 1).Trim().ToString();
 
-                if (idPart.Length >= 10 && !idPart.Equals("Identity Id", StringComparison.OrdinalIgnoreCase))
+                if (idPart.Length >= 8 && !idPart.Equals("Identity Id", StringComparison.OrdinalIgnoreCase))
                 {
                     string sanitizedName = SanitizePlayerName(namePart);
                     ban = new BanModel

@@ -18,21 +18,35 @@ public sealed partial class RconService
         var context = new Dictionary<string, object?>
         {
             [ContextProtocol] = "ReforgerBuiltIn",
-            ["timeout_sec"] = 6.0,
             ["thread_id"] = Environment.CurrentManagedThreadId
         };
 
-        AppLogger.Debug("[RconService:GetPlayers] Dispatching query command '#players' (ReforgerBuiltIn)...", context);
+        AppLogger.Debug("[RconService:GetPlayers] Dispatching query command 'players' (ReforgerBuiltIn)...", context);
 
         try
         {
-            // Up to 6.0s timeout to allow large 70+ player lists (5-6 sequential packets over 170ms RTT) to stream completely
-            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("#players", TimeSpan.FromSeconds(6.0), cancellationToken).ConfigureAwait(false);
+            // Primary standard command for Reforger RCON player listing is 'players'
+            string rawResponse = await ExecuteCommandWithAggregateResponseAsync("players", TimeSpan.FromSeconds(3.5), cancellationToken).ConfigureAwait(false);
             var parseStart = Stopwatch.GetTimestamp();
             var currentPlayers = ReforgerResponseParser.ParsePlayers(rawResponse);
             var parseElapsed = Stopwatch.GetElapsedTime(parseStart).TotalMilliseconds;
-            var totalElapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
+            // Fallback: if 'players' yielded 0 players, try '#players'
+            if (currentPlayers.Count == 0 && (string.IsNullOrWhiteSpace(rawResponse) || rawResponse.Contains("unknown command", StringComparison.OrdinalIgnoreCase)))
+            {
+                AppLogger.Debug("[RconService:GetPlayers] 'players' produced no player rows. Attempting fallback '#players'...", context);
+                var fallbackStart = Stopwatch.GetTimestamp();
+                string fallbackResponse = await ExecuteCommandWithAggregateResponseAsync("#players", TimeSpan.FromSeconds(3.5), cancellationToken).ConfigureAwait(false);
+                var fallbackPlayers = ReforgerResponseParser.ParsePlayers(fallbackResponse);
+                if (fallbackPlayers.Count > 0)
+                {
+                    currentPlayers = fallbackPlayers;
+                    rawResponse = fallbackResponse;
+                    parseElapsed = Stopwatch.GetElapsedTime(fallbackStart).TotalMilliseconds;
+                }
+            }
+
+            var totalElapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             context["players_parsed"] = currentPlayers.Count;
             context["parse_ms"] = parseElapsed;
             context["total_ms"] = totalElapsed;
@@ -51,7 +65,7 @@ public sealed partial class RconService
             context[ContextErrorMessage] = ex.Message;
             context["stack_trace"] = ex.StackTrace;
             AppLogger.Error("[RconService:GetPlayers] Exception during Reforger player query: " + ex.Message, ex, context);
-            ToastNotificationService.Instance.ShowError("Player Query Error", $"Failed executing #players: {ex.Message}");
+            ToastNotificationService.Instance.ShowError("Player Query Error", $"Failed executing player list: {ex.Message}");
             return ([], 0);
         }
     }
@@ -70,6 +84,11 @@ public sealed partial class RconService
         try
         {
             string firstPageResponse = await ExecuteCommandWithAggregateResponseAsync("#ban list", TimeSpan.FromSeconds(3.5), cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(firstPageResponse) || firstPageResponse.Contains("unknown command", StringComparison.OrdinalIgnoreCase))
+            {
+                firstPageResponse = await ExecuteCommandWithAggregateResponseAsync("bans", TimeSpan.FromSeconds(3.5), cancellationToken).ConfigureAwait(false);
+            }
+
             var (totalBans, _, totalPages) = ReforgerResponseParser.ParseBanListPagination(firstPageResponse);
             var allParsedBans = ReforgerResponseParser.ParseBans(firstPageResponse);
 
@@ -94,7 +113,7 @@ public sealed partial class RconService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var pageStart = Stopwatch.GetTimestamp();
-                string pageResponse = await ExecuteCommandWithAggregateResponseAsync($"#ban list {page}", TimeSpan.FromSeconds(3.0), cancellationToken).ConfigureAwait(false);
+                string pageResponse = await ExecuteCommandWithAggregateResponseAsync($"#ban list {page}", TimeSpan.FromSeconds(3.5), cancellationToken).ConfigureAwait(false);
                 var pageBans = ReforgerResponseParser.ParseBans(pageResponse);
                 int addedThisPage = 0;
 
@@ -346,27 +365,33 @@ public sealed partial class RconService
 
     private static RconCommandKind ClassifyReforgerCommand(string command)
     {
-        if (command.StartsWith("#players", StringComparison.OrdinalIgnoreCase))
+        if (command.StartsWith("#players", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("players", StringComparison.OrdinalIgnoreCase))
         {
             return RconCommandKind.PlayerList;
         }
 
-        if (command.StartsWith("#ban list", StringComparison.OrdinalIgnoreCase))
+        if (command.StartsWith("#ban list", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("bans", StringComparison.OrdinalIgnoreCase))
         {
             return RconCommandKind.BanList;
         }
 
-        if (command.StartsWith("#kick", StringComparison.OrdinalIgnoreCase))
+        if (command.StartsWith("#kick", StringComparison.OrdinalIgnoreCase) ||
+            command.StartsWith("kick", StringComparison.OrdinalIgnoreCase))
         {
             return RconCommandKind.Kick;
         }
 
-        if (command.StartsWith("#ban create", StringComparison.OrdinalIgnoreCase))
+        if (command.StartsWith("#ban create", StringComparison.OrdinalIgnoreCase) ||
+            command.StartsWith("ban", StringComparison.OrdinalIgnoreCase) ||
+            command.StartsWith("addBan", StringComparison.OrdinalIgnoreCase))
         {
             return RconCommandKind.BanCreate;
         }
 
-        if (command.StartsWith("#ban remove", StringComparison.OrdinalIgnoreCase))
+        if (command.StartsWith("#ban remove", StringComparison.OrdinalIgnoreCase) ||
+            command.StartsWith("removeBan", StringComparison.OrdinalIgnoreCase))
         {
             return RconCommandKind.BanRemove;
         }
@@ -375,58 +400,70 @@ public sealed partial class RconService
     }
 
     private static bool CheckReforgerCommandTerminalTokens(
-        RconCommandKind commandKind,
-        string currentText,
-        int chunksCount,
-        int lastChunkSize) =>
-        commandKind switch
-        {
-            // The Wireshark capture proves chunks 2, 3, 4, 5 are ~1000 bytes each. 
-            // Terminal token matches only when the player header has arrived AND the last chunk is a partial packet (< 900 bytes).
-            RconCommandKind.PlayerList =>
-                currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) &&
-                chunksCount >= 2 &&
-                lastChunkSize < 900,
+            RconCommandKind commandKind,
+            string currentText,
+            int chunksCount,
+            int lastChunkSize) =>
+            commandKind switch
+            {
+                // Terminal ONLY when the actual payload with "Players on server:" has arrived and last chunk was under MTU
+                RconCommandKind.PlayerList =>
+                    (currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) ||
+                     currentText.Contains(';') ||
+                     currentText.Contains('|')) &&
+                    lastChunkSize < 900,
 
-            RconCommandKind.BanList =>
-                currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) ||
-                (currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) && chunksCount >= 2 && lastChunkSize < 900),
+                // Terminal ONLY when "Server has no bans to list." or actual "Total bans:" row has arrived
+                RconCommandKind.BanList =>
+                    (currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) ||
+                     currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) ||
+                     currentText.Contains('|')) &&
+                    lastChunkSize < 900,
 
-            RconCommandKind.Kick =>
-                currentText.Contains(TokenKicked, StringComparison.OrdinalIgnoreCase) ||
-                currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase) ||
-                currentText.Contains("failed", StringComparison.OrdinalIgnoreCase),
+                RconCommandKind.Kick =>
+                    currentText.Contains(TokenKicked, StringComparison.OrdinalIgnoreCase) ||
+                    currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase) ||
+                    currentText.Contains("failed", StringComparison.OrdinalIgnoreCase),
 
-            RconCommandKind.BanCreate =>
-                currentText.Contains(TokenBanCreated, StringComparison.OrdinalIgnoreCase) ||
-                currentText.Contains(TokenBanned, StringComparison.OrdinalIgnoreCase) ||
-                currentText.Contains("invalid", StringComparison.OrdinalIgnoreCase) ||
-                currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase),
+                RconCommandKind.BanCreate =>
+                    currentText.Contains(TokenBanCreated, StringComparison.OrdinalIgnoreCase) ||
+                    currentText.Contains(TokenBanned, StringComparison.OrdinalIgnoreCase) ||
+                    currentText.Contains("invalid", StringComparison.OrdinalIgnoreCase) ||
+                    currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase),
 
-            RconCommandKind.BanRemove =>
-                currentText.Contains(TokenBanRemoved, StringComparison.OrdinalIgnoreCase) ||
-                currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase),
+                RconCommandKind.BanRemove =>
+                    currentText.Contains(TokenBanRemoved, StringComparison.OrdinalIgnoreCase) ||
+                    currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase),
 
-            _ => false
-        };
+                _ => chunksCount >= 1 && lastChunkSize < 900 && !IsOnlyProcessingCommandHeader(currentText)
+            };
 
     private static bool DetermineReforgerPayloadPresence(RconCommandKind commandKind, string currentText, int chunksCount) =>
         commandKind switch
         {
-            RconCommandKind.PlayerList => currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase),
-            RconCommandKind.BanList => currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) ||
-                                       currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase),
-            RconCommandKind.Kick => currentText.Contains(TokenKicked, StringComparison.OrdinalIgnoreCase) ||
-                                    currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase) ||
-                                    chunksCount >= 2,
-            RconCommandKind.BanCreate => currentText.Contains(TokenBanCreated, StringComparison.OrdinalIgnoreCase) ||
-                                         currentText.Contains(TokenBanned, StringComparison.OrdinalIgnoreCase) ||
-                                         chunksCount >= 2,
-            RconCommandKind.BanRemove => currentText.Contains(TokenBanRemoved, StringComparison.OrdinalIgnoreCase) ||
-                                         currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase) ||
-                                         chunksCount >= 2,
-            _ => chunksCount >= 2 || (!currentText.Contains("Processing Command:", StringComparison.OrdinalIgnoreCase) && chunksCount > 0)
+            // CRITICAL FIX: "Processing Command: players" is an echo header, NOT the payload.
+            // Actual payload requires the table header "Players on server:" or a row with ';'
+            RconCommandKind.PlayerList =>
+                currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) ||
+                currentText.Contains(';') ||
+                currentText.Contains('|'),
+
+            // Same for bans: must wait for the actual ban statement or "Server has no bans to list."
+            RconCommandKind.BanList =>
+                currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) ||
+                currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) ||
+                currentText.Contains('|'),
+
+            _ => chunksCount > 0 && !IsOnlyProcessingCommandHeader(currentText)
         };
+
+    private static bool IsOnlyProcessingCommandHeader(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed.StartsWith("Processing Command:", StringComparison.OrdinalIgnoreCase) &&
+               !trimmed.Contains('\n') &&
+               !trimmed.Contains('\r');
+    }
 
     public Task RestartServerAsync(CancellationToken cancellationToken = default)
     {

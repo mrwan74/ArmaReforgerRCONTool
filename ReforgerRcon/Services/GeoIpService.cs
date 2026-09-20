@@ -284,7 +284,17 @@ public static class GeoIpService
 
     public static void Initialize()
     {
-        EnsureInitialized();
+        if (!Directory.Exists(GeoIpDirectory))
+        {
+            try
+            {
+                Directory.CreateDirectory(GeoIpDirectory);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[GeoIpService:Init] Notice creating directory: {ex.Message}");
+            }
+        }
 
         if (HasCustomCredentials)
         {
@@ -295,6 +305,17 @@ public static class GeoIpService
             var token = _periodicUpdateCts.Token;
             _ = Task.Run(() => UpdateDatabasesAsync(force: false, progress: null, token), token);
             _ = StartPeriodicUpdateLoopAsync(token);
+        }
+    }
+
+    public static void EnsureReadersLoaded()
+    {
+        if (_isInitialized) return;
+
+        lock (ReaderLock)
+        {
+            if (_isInitialized) return;
+            EnsureInitialized();
         }
     }
 
@@ -592,7 +613,7 @@ public static class GeoIpService
             return localResult;
         }
 
-        EnsureInitialized();
+        EnsureReadersLoaded();
 
         DatabaseReader? cityReader;
         DatabaseReader? countryReader;

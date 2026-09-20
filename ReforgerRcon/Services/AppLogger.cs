@@ -15,6 +15,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -136,20 +138,21 @@ public static partial class AppLogger
 
                 const string fileOutputTemplate = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{AppLogLevel,-5}] [T{ThreadId:D2}|Task{TaskId}] [{CallerContext}] {Message:lj}{NewLine}{Exception}";
 
+                // NON-BLOCKING ASYNC SINK: Logging never waits on disk I/O
                 var config = new LoggerConfiguration()
                     .MinimumLevel.Verbose()
                     .Enrich.FromLogContext()
                     .Enrich.WithThreadId()
                     .Enrich.WithProcessId()
-                    .WriteTo.File(
+                    .WriteTo.Async(a => a.File(
                         CurrentLogFilePath,
                         outputTemplate: fileOutputTemplate,
                         formatProvider: CultureInfo.InvariantCulture,
                         fileSizeLimitBytes: 104857600,
                         flushToDiskInterval: TimeSpan.FromMilliseconds(500),
                         rollOnFileSizeLimit: true
-                    )
-                    .WriteTo.File(
+                    ))
+                    .WriteTo.Async(a => a.File(
                         CurrentErrorLogFilePath,
                         restrictedToMinimumLevel: LogEventLevel.Warning,
                         outputTemplate: fileOutputTemplate,
@@ -157,7 +160,7 @@ public static partial class AppLogger
                         fileSizeLimitBytes: 52428800,
                         flushToDiskInterval: TimeSpan.FromMilliseconds(500),
                         rollOnFileSizeLimit: true
-                    );
+                    ));
 
                 var dsn = ResolveSentryDsn();
                 if (!string.IsNullOrWhiteSpace(dsn))
@@ -270,6 +273,13 @@ public static partial class AppLogger
     {
         var startTimestamp = Stopwatch.GetTimestamp();
         if (!AppSettings.IsCrashReportingEnabled())
+        {
+            return;
+        }
+
+        if (exception is AptabaseException or AptabaseTransmissionException ||
+            exception.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("forbidden by its access permissions", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
@@ -529,7 +539,12 @@ public static partial class AppLogger
 
                         if (level is LogLevel.Error or LogLevel.Fatal)
                         {
-                            if (AppSettings.IsCrashReportingEnabled() && AptabaseExtensions.IsInitialized)
+                            bool isTelemetryException = demystifiedEx is AptabaseException or AptabaseTransmissionException ||
+                                demystifiedEx.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase) ||
+                                demystifiedEx.Message.Contains("forbidden by its access permissions", StringComparison.OrdinalIgnoreCase) ||
+                                (demystifiedEx.InnerException is SocketException sockEx && sockEx.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase));
+
+                            if (!isTelemetryException && AppSettings.IsCrashReportingEnabled() && AptabaseExtensions.IsInitialized)
                             {
                                 try
                                 {
@@ -541,27 +556,30 @@ public static partial class AppLogger
                                 }
                             }
 
-                            try
+                            if (!isTelemetryException)
                             {
-                                SentrySdk.CaptureException(demystifiedEx, scope =>
+                                try
                                 {
-                                    scope.SetTag("caller_member", member);
-                                    scope.SetTag("caller_file", file);
-                                    scope.SetTag("caller_line", line.ToString(CultureInfo.InvariantCulture));
-                                    scope.SetTag("installation_id", InstallationId);
-                                    scope.SetTag("task_id", taskId);
-                                    if (context != null)
+                                    SentrySdk.CaptureException(demystifiedEx, scope =>
                                     {
-                                        foreach (var (k, v) in context)
+                                        scope.SetTag("caller_member", member);
+                                        scope.SetTag("caller_file", file);
+                                        scope.SetTag("caller_line", line.ToString(CultureInfo.InvariantCulture));
+                                        scope.SetTag("installation_id", InstallationId);
+                                        scope.SetTag("task_id", taskId);
+                                        if (context != null)
                                         {
-                                            scope.SetExtra(k, SanitizeSensitiveData(v?.ToString() ?? "null"));
+                                            foreach (var (k, v) in context)
+                                            {
+                                                scope.SetExtra(k, SanitizeSensitiveData(v?.ToString() ?? "null"));
+                                            }
                                         }
-                                    }
-                                });
-                            }
-                            catch (Exception sentryEx)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[AppLogger] Sentry capture notice: {sentryEx.Message}");
+                                    });
+                                }
+                                catch (Exception sentryEx)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[AppLogger] Sentry capture notice: {sentryEx.Message}");
+                                }
                             }
                         }
                     }

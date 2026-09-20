@@ -19,7 +19,7 @@ namespace ReforgerRcon.Services;
 [SuppressMessage("Minor Code Smell", "S1075:URIs should not be hardcoded", Justification = "Avalonia internal avares resource schema paths")]
 public static class FlagAssetService
 {
-    private const string FlagUriPrefix = "avares://ReforgerRcon/Assets/flags/";
+    private const string FlagUriPrefix = "avares://ARRT/Assets/flags/";
     private static readonly ConcurrentDictionary<string, WriteableBitmap?> FlagCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, byte> InFlightRasterizations = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lock RasterizeLock = new();

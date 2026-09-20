@@ -32,6 +32,8 @@ internal static partial class Program
 {
     private const uint MbIconWarning = 0x00000030;
     private const uint MbIconError = 0x00000010;
+    private const string ForbiddenSocketAccessLiteral = "forbidden by its access permissions";
+
     private static Mutex? _directoryMutex;
     private static FileStream? _directoryLockStream;
     private static IDisposable? _sentrySdk;
@@ -141,9 +143,18 @@ internal static partial class Program
                 AppLogger.InitializeFullLogging();
                 CrashReportService.Initialize();
 
-                // Pipe Aptabase internal errors directly into AppLogger so they write to reforger_rcon_errors_*.log
                 AptabaseLogging.OnLogMessage += entry =>
                 {
+                    if (entry.Exception is AptabaseException or AptabaseTransmissionException ||
+                        (entry.Exception is HttpRequestException httpEx && (httpEx.Message.Contains("aptabase", StringComparison.OrdinalIgnoreCase) || httpEx.Message.Contains(ForbiddenSocketAccessLiteral, StringComparison.OrdinalIgnoreCase))) ||
+                        (entry.Exception is SocketException sockEx && (sockEx.Message.Contains("aptabase", StringComparison.OrdinalIgnoreCase) || sockEx.Message.Contains(ForbiddenSocketAccessLiteral, StringComparison.OrdinalIgnoreCase))) ||
+                        entry.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase) ||
+                        entry.Message.Contains(ForbiddenSocketAccessLiteral, StringComparison.OrdinalIgnoreCase) ||
+                        entry.Category.Contains("Aptabase", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+
                     var context = new Dictionary<string, object?>
                     {
                         ["category"] = entry.Category,
@@ -230,22 +241,21 @@ internal static partial class Program
 
                 try
                 {
-                    await Task.Delay(100).ConfigureAwait(false);
+                    await Task.Delay(400).ConfigureAwait(false);
 
                     ColumnLayoutStorageService.Prewarm();
                     SQLitePCL.Batteries_V2.Init();
                     _ = PlayerDatabaseStorageService.InitializeAsync();
 
-                    await Task.Yield();
-                    FlagAssetService.PrewarmCommonFlags();
                     _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
                     GeoIpService.Initialize();
                     PushNotificationService.Initialize();
 
-                    _ = ReforgerRcon.Services.UpdateService.Instance;
+                    // Starts persistent background updater loop (continuous checking on Login and Dashboard)
+                    UpdateService.Instance.StartBackgroundLoop();
 
                     var bgElapsedMs = Stopwatch.GetElapsedTime(bgStart).TotalMilliseconds;
-                    AppLogger.Info($"[Program:Background] All background worker services initialized in {bgElapsedMs:F2}ms.");
+                    AppLogger.Info($"[Program:Background] Core background worker services initialized in {bgElapsedMs:F2}ms.");
                 }
                 catch (Exception ex)
                 {
@@ -280,7 +290,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@0.9.0-alpha.3";
+                options.Release = "ReforgerRcon@0.9.0-alpha.4";
 
                 options.SetBeforeSend((sentryEvent, _) => AppSettings.IsCrashReportingEnabled() ? sentryEvent : null);
                 options.SetBeforeSendTransaction((tx, _) => AppSettings.IsCrashReportingEnabled() ? tx : null);
@@ -318,11 +328,11 @@ internal static partial class Program
             return;
         }
 
-        // Keep telemetry exceptions visible in reforger_rcon_errors_*.log by logging them as Warning
         if (e.Exception is AptabaseException or AptabaseTransmissionException ||
-            (e.Exception is HttpRequestException httpEx && httpEx.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase)))
+            (e.Exception is HttpRequestException httpEx && (httpEx.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase) || httpEx.Message.Contains("sentry.io", StringComparison.OrdinalIgnoreCase))) ||
+            (e.Exception is SocketException sockEx && (sockEx.Message.Contains("aptabase.com", StringComparison.OrdinalIgnoreCase) || sockEx.Message.Contains("sentry.io", StringComparison.OrdinalIgnoreCase))) ||
+            e.Exception.Message.Contains(ForbiddenSocketAccessLiteral, StringComparison.OrdinalIgnoreCase))
         {
-            AppLogger.Warn($"[FirstChanceException:Telemetry] {e.Exception.GetType().FullName}: {e.Exception.Message}", e.Exception);
             return;
         }
 

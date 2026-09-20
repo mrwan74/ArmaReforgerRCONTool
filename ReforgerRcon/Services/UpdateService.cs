@@ -46,7 +46,9 @@ public sealed class UpdateService : IDisposable
     private readonly SemaphoreSlim _syncLock = new(1, 1);
     private UpdateManager? _updateManager;
     private UpdateInfo? _pendingUpdate;
+    private CancellationTokenSource? _periodicCts;
     private bool _isDisposed;
+    private bool _hasNotifiedUpdate;
 
     public UpdateStatus CurrentStatus { get; private set; } = UpdateStatus.Idle;
     public int DownloadPercentage { get; private set; }
@@ -58,6 +60,8 @@ public sealed class UpdateService : IDisposable
     public static bool IsPortableMode => VelopackLocator.Current.IsPortable;
 
     public event Action? StateChanged;
+    public event Action<string, string>? UpdateFound;
+    public static event Func<Task>? BeforeRestartAsync;
 
     private UpdateService()
     {
@@ -140,6 +144,60 @@ public sealed class UpdateService : IDisposable
         }
     }
 
+    public void StartBackgroundLoop(TimeSpan? interval = null)
+    {
+        if (_periodicCts != null) return;
+
+        _periodicCts = new CancellationTokenSource();
+        var token = _periodicCts.Token;
+        var checkInterval = interval ?? TimeSpan.FromHours(2);
+
+        Task.Run(async () =>
+        {
+            AppLogger.Info($"[UpdateService:Loop] Starting persistent background updater loop (Interval={checkInterval.TotalHours}h)...");
+
+            try
+            {
+                await Task.Delay(3000, token).ConfigureAwait(false);
+                if (!token.IsCancellationRequested && CanUpdate)
+                {
+                    await CheckForUpdatesAsync(isManual: false, token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException ex)
+            {
+                // Task delay cancellation is expected when application shuts down
+                AppLogger.Trace($"[UpdateService:Loop] Initial check delay cancelled: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[UpdateService:Loop] Initial check notice: {ex.Message}");
+            }
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(checkInterval, token).ConfigureAwait(false);
+                    if (token.IsCancellationRequested) break;
+
+                    if (CanUpdate && CurrentStatus != UpdateStatus.Downloading && CurrentStatus != UpdateStatus.ReadyToRestart)
+                    {
+                        AppLogger.Info("[UpdateService:Loop] Periodic timer tick: checking GitHub for updates...");
+                        await CheckForUpdatesAsync(isManual: false, token).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Trace($"[UpdateService:Loop] Periodic check notice: {ex.Message}");
+                }
+            }
+        }, CancellationToken.None);
+    }
+
     public async Task<bool> CheckForUpdatesAsync(bool isManual = true, CancellationToken cancellationToken = default)
     {
         var startTimestamp = Stopwatch.GetTimestamp();
@@ -208,6 +266,12 @@ public sealed class UpdateService : IDisposable
                     ["is_downgrade"] = _pendingUpdate.IsDowngrade,
                     ["duration_ms"] = elapsedMs
                 });
+
+                if (!_hasNotifiedUpdate || isManual)
+                {
+                    _hasNotifiedUpdate = true;
+                    UpdateFound?.Invoke(CurrentVersionString, targetVer);
+                }
 
                 return true;
             }
@@ -420,7 +484,7 @@ public sealed class UpdateService : IDisposable
         }
     }
 
-    public void RestartAndApply()
+    public async Task RestartAndApply()
     {
         var startTimestamp = Stopwatch.GetTimestamp();
         var context = new Dictionary<string, object?>
@@ -442,6 +506,29 @@ public sealed class UpdateService : IDisposable
         try
         {
             AppLogger.Info($"[UpdateService:Apply] Applying update to v{TargetVersionString} and executing application restart sequence...", context);
+
+            var beforeRestart = BeforeRestartAsync;
+            if (beforeRestart != null)
+            {
+                foreach (var handler in beforeRestart.GetInvocationList())
+                {
+                    if (handler is Func<Task> callback)
+                    {
+                        try
+                        {
+                            var task = callback();
+                            if (task != null)
+                            {
+                                await task.ConfigureAwait(false);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Trace($"[UpdateService:Apply] BeforeRestart notice: {ex.Message}");
+                        }
+                    }
+                }
+            }
 
             AppLogger.TrackEvent("update_applied_restarting", new Dictionary<string, object>
             {
@@ -493,6 +580,10 @@ public sealed class UpdateService : IDisposable
         try
         {
             AppLogger.Trace("[UpdateService:Dispose] Disposing synchronization lock and unregistering updater resources...");
+            _periodicCts?.Cancel();
+            _periodicCts?.Dispose();
+            _periodicCts = null;
+
             _syncLock.Dispose();
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             AppLogger.Debug($"[UpdateService:Dispose] UpdateService disposal finalized in {elapsedMs:F2}ms.");

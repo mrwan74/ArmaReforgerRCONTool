@@ -32,6 +32,7 @@ public abstract class ViewModelBase : ObservableObject
     protected async Task<bool> ExecuteSafeAsync(
         Func<Task> action,
         string? userFriendlyErrorMessage = null,
+        bool trackCloudTelemetry = true,
         [CallerMemberName] string actionName = "",
         [CallerFilePath] string callerPath = "",
         [CallerLineNumber] int callerLine = 0)
@@ -55,16 +56,20 @@ public abstract class ViewModelBase : ObservableObject
 
         AppLogger.Trace($"[Action:Begin] Executing asynchronous action '{actionName}' on '{callerType}'...", diagnosticContext, actionName, callerPath, callerLine);
 
-        var transaction = SentrySdk.StartTransaction(actionName, $"ui.action.{callerType}");
+        ISpan? transaction = null;
+        if (trackCloudTelemetry)
+        {
+            transaction = SentrySdk.StartTransaction(actionName, $"ui.action.{callerType}");
+            SentrySdk.Metrics.EmitCounter("ui_action_invoked", 1,
+            [
+                new KeyValuePair<string, object>(ActionTag, actionName),
+                new KeyValuePair<string, object>("caller", callerType)
+            ]);
+        }
+
         using var logContext = LogContext.PushProperty("CallerContext", callerContext);
         using var op = Operation.Begin("Execute {ActionName} on {CallerType}", actionName, callerType);
         var sw = Stopwatch.StartNew();
-
-        SentrySdk.Metrics.EmitCounter("ui_action_invoked", 1,
-        [
-            new KeyValuePair<string, object>(ActionTag, actionName),
-            new KeyValuePair<string, object>("caller", callerType)
-        ]);
 
         try
         {
@@ -73,23 +78,25 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext[ElapsedMsKey] = sw.ElapsedMilliseconds;
 
             op.Complete();
-            transaction.Finish(SpanStatus.Ok);
 
-            SentrySdk.Metrics.EmitDistribution("ui_action_duration_ms", sw.ElapsedMilliseconds, MeasurementUnit.Duration.Millisecond,
-            [
-                new KeyValuePair<string, object>(ActionTag, actionName),
-                new KeyValuePair<string, object>("outcome", "success")
-            ]);
+            if (trackCloudTelemetry)
+            {
+                transaction?.Finish(SpanStatus.Ok);
+                SentrySdk.Metrics.EmitDistribution("ui_action_duration_ms", sw.ElapsedMilliseconds, MeasurementUnit.Duration.Millisecond,
+                [
+                    new KeyValuePair<string, object>(ActionTag, actionName),
+                    new KeyValuePair<string, object>("outcome", "success")
+                ]);
+
+                AppLogger.TrackEvent("ui_action_completed", new Dictionary<string, object>
+                {
+                    ["action"] = actionName,
+                    ["view_model"] = callerType,
+                    ["duration_ms"] = sw.ElapsedMilliseconds
+                });
+            }
 
             AppLogger.Debug($"[Action:Success] '{callerType}.{actionName}()' completed in {sw.ElapsedMilliseconds}ms.", diagnosticContext, actionName, callerPath, callerLine);
-
-            AppLogger.TrackEvent("ui_action_completed", new Dictionary<string, object>
-            {
-                ["action"] = actionName,
-                ["view_model"] = callerType,
-                ["duration_ms"] = sw.ElapsedMilliseconds
-            });
-
             return true;
         }
         catch (OperationCanceledException opEx)
@@ -97,7 +104,7 @@ public abstract class ViewModelBase : ObservableObject
             sw.Stop();
             diagnosticContext[ElapsedMsKey] = sw.ElapsedMilliseconds;
             op.Cancel();
-            transaction.Finish(SpanStatus.Cancelled);
+            transaction?.Finish(SpanStatus.Cancelled);
 
             AppLogger.Debug($"[Action:Canceled] '{callerType}.{actionName}()' cancelled after {sw.ElapsedMilliseconds}ms: {opEx.Message}", diagnosticContext, actionName, callerPath, callerLine);
             return false;
@@ -110,7 +117,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["native_error_code"] = sockEx.NativeErrorCode;
 
             var demystified = sockEx.Demystify();
-            transaction.Finish(SpanStatus.Unavailable);
+            transaction?.Finish(SpanStatus.Unavailable);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -133,7 +140,7 @@ public abstract class ViewModelBase : ObservableObject
             sw.Stop();
             diagnosticContext[ElapsedMsKey] = sw.ElapsedMilliseconds;
             var demystified = timeEx.Demystify();
-            transaction.Finish(SpanStatus.DeadlineExceeded);
+            transaction?.Finish(SpanStatus.DeadlineExceeded);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -158,7 +165,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["sqlite_extended_code"] = sqlEx.SqliteExtendedErrorCode;
 
             var demystified = sqlEx.Demystify();
-            transaction.Finish(SpanStatus.InternalError);
+            transaction?.Finish(SpanStatus.InternalError);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -184,7 +191,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["http_request_error"] = httpEx.HttpRequestError.ToString();
 
             var demystified = httpEx.Demystify();
-            transaction.Finish(SpanStatus.Unavailable);
+            transaction?.Finish(SpanStatus.Unavailable);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -210,7 +217,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["json_path"] = jsonEx.Path;
 
             var demystified = jsonEx.Demystify();
-            transaction.Finish(SpanStatus.InvalidArgument);
+            transaction?.Finish(SpanStatus.InvalidArgument);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -228,7 +235,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["missing_file"] = fnfEx.FileName;
 
             var demystified = fnfEx.Demystify();
-            transaction.Finish(SpanStatus.NotFound);
+            transaction?.Finish(SpanStatus.NotFound);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -244,7 +251,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext[ElapsedMsKey] = sw.ElapsedMilliseconds;
 
             var demystified = dnfEx.Demystify();
-            transaction.Finish(SpanStatus.NotFound);
+            transaction?.Finish(SpanStatus.NotFound);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -260,7 +267,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext[ElapsedMsKey] = sw.ElapsedMilliseconds;
 
             var demystified = authEx.Demystify();
-            transaction.Finish(SpanStatus.PermissionDenied);
+            transaction?.Finish(SpanStatus.PermissionDenied);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -278,7 +285,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["hresult"] = $"0x{ioEx.HResult:X8}";
 
             var demystified = ioEx.Demystify();
-            transaction.Finish(SpanStatus.InternalError);
+            transaction?.Finish(SpanStatus.InternalError);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -296,7 +303,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["param_name"] = argEx.ParamName;
 
             var demystified = argEx.Demystify();
-            transaction.Finish(SpanStatus.InvalidArgument);
+            transaction?.Finish(SpanStatus.InvalidArgument);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -312,7 +319,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext[ElapsedMsKey] = sw.ElapsedMilliseconds;
 
             var demystified = invOpEx.Demystify();
-            transaction.Finish(SpanStatus.FailedPrecondition);
+            transaction?.Finish(SpanStatus.FailedPrecondition);
 
             TrackAptabaseError(demystified, actionName, callerType);
 
@@ -329,7 +336,7 @@ public abstract class ViewModelBase : ObservableObject
             diagnosticContext["exception_type"] = ex.GetType().FullName;
 
             var demystified = ex.Demystify();
-            transaction.Finish(SpanStatus.UnknownError);
+            transaction?.Finish(SpanStatus.UnknownError);
 
             TrackAptabaseError(demystified, actionName, callerType);
 

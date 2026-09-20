@@ -28,7 +28,7 @@ if not "%~2"=="" set "BUILD_CONFIG=%~2"
 
 set "PACK_ID=ReforgerRcon"
 set "PACK_TITLE=ARMA Reforger RCON Tool"
-set "MAIN_EXE=ReforgerRcon.exe"
+set "MAIN_EXE=ARMA REFORGER RCON TOOL.exe"
 set "PROJECT_PATH=%~dp0ReforgerRcon\ReforgerRcon.csproj"
 set "PROJECT_DIR=%~dp0ReforgerRcon"
 set "ICON_PATH=%PROJECT_DIR%\Assets\app.ico"
@@ -45,7 +45,7 @@ echo  PACKAGING MULTI-PLATFORM PORTABLE: %PACK_TITLE% v!VERSION!
 echo  Configuration : !BUILD_CONFIG!
 echo  Features      : Single-File, ReadyToRun (R2R AOT), Self-Contained, PDBs, GeoIP
 echo  Platforms     : win-x64, linux-x64
-echo  Output Files  : 
+echo  Output Files  :
 echo    - !ZIP_WIN! (Includes .pdbs, GeoIP, and staged base .nupkg for deltas)
 echo    - !ZIP_LINUX! (Includes .pdbs and GeoIP)
 echo    - releases.win.json

@@ -195,7 +195,7 @@ public partial class UpdateDialogViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private void RestartAndApply()
+    private async Task RestartAndApply()
     {
         var context = new Dictionary<string, object?>
         {
@@ -208,7 +208,7 @@ public partial class UpdateDialogViewModel : ViewModelBase, IDisposable
 
         try
         {
-            UpdateService.Instance.RestartAndApply();
+            await UpdateService.Instance.RestartAndApply().ConfigureAwait(false);
         }
         catch (Exception ex)
         {

@@ -118,6 +118,9 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
         _rconService.AdminConnectedStream += OnAdminConnectedStream;
         _rconService.ProtocolMismatchDetected += OnProtocolMismatchDetected;
 
+        UpdateService.Instance.UpdateFound += OnUpdateFound;
+        UpdateService.BeforeRestartAsync += OnBeforeRestartAsync;
+
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += OnTimerTick;
         _timer.Start();
@@ -135,7 +138,35 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
             HandleProtocolMismatch(_rconService.DetectedProtocolMismatch.Value);
         }
 
+        if (UpdateService.Instance.CurrentStatus == UpdateStatus.UpdateAvailable &&
+            UpdateService.Instance.TargetVersionString != null)
+        {
+            OnUpdateFound(UpdateService.Instance.CurrentVersionString, UpdateService.Instance.TargetVersionString);
+        }
+
         _ = Task.Run(RefreshInitialConnectAsync);
+    }
+
+    private void OnUpdateFound(string currentVer, string targetVer)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            ToastNotificationService.Instance.ShowToast(
+                "Update Available",
+                $"ARRT v{targetVer} is available."
+            );
+
+            if (!IsDialogVisible && ActiveDialog == null)
+            {
+                ShowDialog(new UpdateDialogViewModel(currentVer, targetVer, CloseDialog));
+            }
+        });
+    }
+
+    private Task<bool> OnBeforeRestartAsync()
+    {
+        AppLogger.Info("[DashboardViewModel:Update] Disconnecting active RCON session before applying update...");
+        return DisconnectAsync();
     }
 
     partial void OnIsAutoRefreshEnabledChanged(bool value)
@@ -637,7 +668,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
             LastPacketTimerText = $"{(int)diff}s ago";
             Ping = _rconService.PingMs;
             IsHeartbeatVisible = !IsHeartbeatVisible;
-        }).ConfigureAwait(false);
+        }, userFriendlyErrorMessage: null, trackCloudTelemetry: false).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -874,6 +905,9 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
                 AppLogger.Debug("[DashboardViewModel:Dispose] Disposing timer, subscriptions, and sub-tabs...");
                 _timer.Stop();
                 _timer.Tick -= OnTimerTick;
+
+                UpdateService.Instance.UpdateFound -= OnUpdateFound;
+                UpdateService.BeforeRestartAsync -= OnBeforeRestartAsync;
 
                 _rconService.ConnectionLost -= OnConnectionLost;
                 _rconService.PlayerJoined -= OnPlayerJoined;
