@@ -221,8 +221,12 @@ public partial class App : Application
                 AppLogger.Warn($"[App:FrameworkInit] Telemetry dispatch notice: {telemetryEx.Message}", telemetryEx);
             }
 
-            AppLogger.Debug("[App:FrameworkInit] Launching deferred background worker services...");
-            Program.StartDeferredBackgroundServices();
+            // Trigger asset and push services safely now that Avalonia is fully initialized
+            _ = Task.Run(() =>
+            {
+                FlagAssetService.PrewarmCommonFlags();
+                PushNotificationService.Initialize();
+            });
         }
         catch (Exception ex)
         {

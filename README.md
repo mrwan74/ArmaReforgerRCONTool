@@ -23,8 +23,12 @@
 
 ---
 
-> ### Latest Release: [`v0.9.0-alpha.4`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha.4)
-> **Released on:** Sept 20, 2026, 20:40 (UTC) 
+> ### Latest Release: [`v0.9.0-alpha.5`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/tag/v0.9.0-alpha.5)
+#### Quick Download
+* **Windows:** [`ARRT_v0.9.0-alpha.5_win-x64.zip`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/download/v0.9.0-alpha.5/ARRT_v0.9.0-alpha.5_win-x64.zip) (extract and run `ARMA REFORGER RCON TOOL.exe`).
+* **Linux (AppImage):** [`ReforgerRcon.AppImage`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/download/v0.9.0-alpha.5/ReforgerRcon.AppImage) (single-file executable, make executable and run).
+* **Linux (Portable ZIP):** [`ARRT_v0.9.0-alpha.5_linux-x64.zip`](https://github.com/mrwan74/ArmaReforgerRCONTool/releases/download/v0.9.0-alpha.5/ARRT_v0.9.0-alpha.5_linux-x64.zip).
+> **Released on:** Sept 22, 2026, 18:50 (UTC) 
 
 ---
 

@@ -1,51 +1,65 @@
-﻿using Avalonia.Media.Imaging;
+﻿using Avalonia;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using Avalonia.Threading;
 using SkiaSharp;
 using Svg.Skia;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace ReforgerRcon.Services;
 
-[SuppressMessage("Minor Code Smell", "S1075:URIs should not be hardcoded", Justification = "Avalonia internal avares resource schema paths")]
 public static class FlagAssetService
 {
-    private const string FlagUriPrefix = "avares://ARRT/Assets/flags/";
-    private static readonly ConcurrentDictionary<string, WriteableBitmap?> FlagCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly ConcurrentDictionary<string, byte> InFlightRasterizations = new(StringComparer.OrdinalIgnoreCase);
+    public const string UnknownCountryCode = "xx";
+    private const string FlagsFolderName = "flags";
+    private const string AssetsFolderName = "Assets";
+    private const string SvgExtension = ".svg";
+    private const string PngExtension = ".png";
+
+    private static readonly Assembly CurrentAssembly = typeof(FlagAssetService).Assembly;
+    private static readonly string RawAssemblyName = CurrentAssembly.GetName().Name ?? "ARMA REFORGER RCON TOOL";
+    private static readonly string EscapedAssemblyName = Uri.EscapeDataString(RawAssemblyName);
+    private static readonly ConcurrentDictionary<string, Bitmap?> FlagCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lock RasterizeLock = new();
 
-    public static event Action<string>? FlagLoaded;
+    private static readonly string[] StartupEssentialCodes =
+    [
+        UnknownCountryCode, "us", "de", "gb", "fr", "ru", "pl", "ca", "au", "cz", "nl", "se", "no", "fi", "es", "it", "jp", "cn", "br", "il", "ua", "tr", "at", "ch", "be"
+    ];
 
-    private static readonly string[] StartupEssentialCodes = ["un"];
+    static FlagAssetService()
+    {
+        try
+        {
+            AssetLoader.SetDefaultAssembly(CurrentAssembly);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Trace($"[FlagAssetService:Init] SetDefaultAssembly notice: {ex.Message}");
+        }
+    }
 
     public static void PrewarmCommonFlags()
     {
-        _ = Task.Run(async () =>
+        _ = Task.Run(() =>
         {
-            await Task.Delay(250).ConfigureAwait(false);
-
             var sw = Stopwatch.StartNew();
             int count = 0;
             try
             {
                 foreach (var code in StartupEssentialCodes)
                 {
-                    if ((!FlagCache.TryGetValue(code, out var existing) || existing == null) &&
-                        LoadSvgToBitmap(code) is { } bmp &&
-                        FlagCache.TryAdd(code, bmp))
+                    var bmp = FlagCache.GetOrAdd(code, static c => LoadFlagBitmap(c));
+                    if (bmp != null)
                     {
                         count++;
-                        FlagLoaded?.Invoke(code);
                     }
                 }
             }
@@ -54,52 +68,35 @@ public static class FlagAssetService
                 AppLogger.Trace($"[FlagAssetService:Prewarm] Notice: {ex.Message}");
             }
             sw.Stop();
-            AppLogger.Debug($"[FlagAssetService:Prewarm] Pre-warmed fallback vector flag and primed Skia pipeline in {sw.ElapsedMilliseconds}ms.");
+            AppLogger.Debug($"[FlagAssetService:Prewarm] Primed {count} country flags in {sw.ElapsedMilliseconds}ms.");
         });
     }
 
     public static void PrewarmFlag(string? countryCode)
     {
         if (string.IsNullOrWhiteSpace(countryCode)) return;
-        var normalized = NormalizeCountryCode(countryCode);
-        if (normalized is "xx" or "unknown" || FlagCache.ContainsKey(normalized)) return;
+        var code = NormalizeCountryCode(countryCode);
 
-        if (InFlightRasterizations.TryAdd(normalized, 0))
+        _ = Task.Run(() =>
         {
-            _ = Task.Run(() =>
+            try
             {
-                try
-                {
-                    if (LoadSvgToBitmap(normalized) is { } bmp && FlagCache.TryAdd(normalized, bmp))
-                    {
-                        FlagLoaded?.Invoke(normalized);
-                    }
-                }
-                finally
-                {
-                    InFlightRasterizations.TryRemove(normalized, out _);
-                }
-            });
-        }
+                FlagCache.GetOrAdd(code, static c => LoadFlagBitmap(c));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Trace($"[FlagAssetService:PrewarmFlag] Notice: {ex.Message}");
+            }
+        });
     }
 
     public static Bitmap? GetFlag(string? countryCode)
     {
         var code = NormalizeCountryCode(countryCode);
-        if (code is "xx" or "unknown" or "?" or "-")
-        {
-            return null;
-        }
 
         if (FlagCache.TryGetValue(code, out var cached))
         {
             return cached;
-        }
-
-        if (Dispatcher.UIThread.CheckAccess())
-        {
-            PrewarmFlag(code);
-            return FlagCache.GetValueOrDefault("un");
         }
 
         lock (RasterizeLock)
@@ -109,67 +106,111 @@ public static class FlagAssetService
                 return cached;
             }
 
-            var bitmap = LoadSvgToBitmap(code);
+            var bitmap = LoadFlagBitmap(code);
             FlagCache.TryAdd(code, bitmap);
-            if (bitmap != null)
-            {
-                FlagLoaded?.Invoke(code);
-            }
-            return bitmap;
+            return bitmap ?? FlagCache.GetValueOrDefault(UnknownCountryCode);
         }
     }
 
-    private static string NormalizeCountryCode(string? code)
+    public static string NormalizeCountryCode(string? code)
     {
-        if (string.IsNullOrWhiteSpace(code)) return "xx";
+        if (string.IsNullOrWhiteSpace(code)) return UnknownCountryCode;
         var normalized = code.Trim().ToLowerInvariant();
         return normalized switch
         {
-            "unknown" or "?" or "-" => "xx",
+            "unknown" or "?" or "-" or "xx" => UnknownCountryCode,
             _ => normalized
         };
     }
 
-    private static Uri GetFlagUri(string code) => new($"{FlagUriPrefix}{code}.svg");
-
-    private static WriteableBitmap? LoadSvgToBitmap(string code)
+    private static Bitmap? LoadFlagBitmap(string code)
     {
         try
         {
-            var primaryUri = GetFlagUri(code);
-            if (AssetLoader.Exists(primaryUri))
+            using var stream = OpenFlagStream(code, out bool isSvg);
+            if (stream != null)
             {
-                return RasterizeSvgUri(primaryUri, code);
+                return isSvg ? RasterizeSvg(stream) : new Bitmap(stream);
             }
 
-            var fallbackUnUri = GetFlagUri("un");
-            if (AssetLoader.Exists(fallbackUnUri))
+            if (code != UnknownCountryCode)
             {
-                return RasterizeSvgUri(fallbackUnUri, "un");
+                using var fallbackStream = OpenFlagStream(UnknownCountryCode, out bool isFallbackSvg);
+                if (fallbackStream != null)
+                {
+                    return isFallbackSvg ? RasterizeSvg(fallbackStream) : new Bitmap(fallbackStream);
+                }
             }
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[FlagAssetService:Load] Failed loading SVG for '{code}': {ex.Message}");
+            AppLogger.Debug($"[FlagAssetService:Load] Failed loading flag asset for '{code}': {ex.Message}");
         }
 
         return null;
     }
 
-    private static WriteableBitmap? RasterizeSvgUri(Uri uri, string code)
+    private static Stream? OpenFlagStream(string code, out bool isSvg)
     {
-        if (FlagCache.TryGetValue(code, out var existing) && existing != null)
+        // 1. Check Avalonia embedded resources if Avalonia has initialized
+        if (Application.Current != null)
         {
-            return existing;
+            string[] candidateUris = [
+                $"avares:///{AssetsFolderName}/{FlagsFolderName}/{code}{SvgExtension}",
+                $"avares:///{AssetsFolderName}/{FlagsFolderName}/{code}{PngExtension}",
+                $"avares://{EscapedAssemblyName}/{AssetsFolderName}/{FlagsFolderName}/{code}{SvgExtension}",
+                $"avares://{EscapedAssemblyName}/{AssetsFolderName}/{FlagsFolderName}/{code}{PngExtension}",
+                $"avares://ReforgerRcon/{AssetsFolderName}/{FlagsFolderName}/{code}{SvgExtension}",
+                $"avares://ReforgerRcon/{AssetsFolderName}/{FlagsFolderName}/{code}{PngExtension}"
+            ];
+
+            foreach (var uriStr in candidateUris)
+            {
+                if (Uri.TryCreate(uriStr, UriKind.Absolute, out var uri))
+                {
+                    try
+                    {
+                        if (AssetLoader.Exists(uri))
+                        {
+                            isSvg = uriStr.EndsWith(SvgExtension, StringComparison.OrdinalIgnoreCase);
+                            return AssetLoader.Open(uri);
+                        }
+                    }
+                    catch
+                    {
+                        // Safely try next candidate without throwing unhandled exceptions
+                    }
+                }
+            }
         }
 
+        // 2. Check file system disk paths fallback
+        string[] candidateDiskPaths = [
+            Path.Combine(AppContext.BaseDirectory, AssetsFolderName, FlagsFolderName, $"{code}{SvgExtension}"),
+            Path.Combine(AppContext.BaseDirectory, "assets", FlagsFolderName, $"{code}{SvgExtension}"),
+            Path.Combine(AppContext.BaseDirectory, FlagsFolderName, $"{code}{SvgExtension}"),
+            Path.Combine(AppContext.BaseDirectory, AssetsFolderName, FlagsFolderName, $"{code}{PngExtension}"),
+            Path.Combine(AppContext.BaseDirectory, "assets", FlagsFolderName, $"{code}{PngExtension}"),
+            Path.Combine(AppContext.BaseDirectory, FlagsFolderName, $"{code}{PngExtension}"),
+            Path.Combine(AppPaths.AppDataDirectory, FlagsFolderName, $"{code}{SvgExtension}"),
+            Path.Combine(AppPaths.AppDataDirectory, FlagsFolderName, $"{code}{PngExtension}")
+        ];
+
+        var matchingPath = candidateDiskPaths.FirstOrDefault(File.Exists);
+        if (matchingPath != null)
+        {
+            isSvg = matchingPath.EndsWith(SvgExtension, StringComparison.OrdinalIgnoreCase);
+            return File.OpenRead(matchingPath);
+        }
+
+        isSvg = false;
+        return null;
+    }
+
+    private static Bitmap? RasterizeSvg(Stream stream)
+    {
         try
         {
-            using var stream = AssetLoader.Open(uri);
             using var svg = new SKSvg();
             var picture = svg.Load(stream);
 
@@ -191,27 +232,14 @@ public static class FlagAssetService
                 canvas.DrawPicture(picture);
             }
 
-            var writeableBitmap = new WriteableBitmap(
-                new Avalonia.PixelSize(targetWidth, targetHeight),
-                new Avalonia.Vector(96, 96),
-                Avalonia.Platform.PixelFormat.Bgra8888,
-                Avalonia.Platform.AlphaFormat.Premul);
-
-            var pixelBytes = skBitmap.Bytes;
-            using (var frameBuffer = writeableBitmap.Lock())
-            {
-                Marshal.Copy(pixelBytes, 0, frameBuffer.Address, pixelBytes.Length);
-            }
-
-            return writeableBitmap;
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
+            using var skImage = SKImage.FromBitmap(skBitmap);
+            using var data = skImage.Encode(SKEncodedImageFormat.Png, 100);
+            using var pngStream = data.AsStream();
+            return new Bitmap(pngStream);
         }
         catch (Exception ex)
         {
-            AppLogger.Trace($"[FlagAssetService:Rasterize] Notice for '{uri}': {ex.Message}");
+            AppLogger.Debug($"[FlagAssetService:Rasterize] SVG rasterization notice: {ex.Message}");
             return null;
         }
     }

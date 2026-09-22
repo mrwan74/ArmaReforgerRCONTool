@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:models="using:ReforgerRcon.Models"
@@ -184,6 +185,16 @@
                            Stretch="Uniform" 
                            ToolTip.Tip="{Binding Location}" />
                   </Border>
+
+                  <Border Background="{DynamicResource LuminaHoverBackgroundBrush}" 
+                          BorderBrush="{DynamicResource LuminaBorderSubtleBrush}"
+                          BorderThickness="1"
+                          CornerRadius="3" 
+                          Padding="6,2"
+                          IsVisible="{Binding Country.FlagImage, Converter={x:Static ObjectConverters.IsNull}}"
+                          ToolTip.Tip="{Binding Location}">
+                    <TextBlock Text="{Binding Country.Code}" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource LuminaTextSecondaryBrush}" />
+                  </Border>
                 </StackPanel>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
@@ -233,8 +244,65 @@
         </DataGrid.Columns>
       </DataGrid>
 
-      <Border Background="#40000000" IsVisible="{Binding IsLoading}">
-        <ProgressBar IsIndeterminate="True" Width="140" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <!-- Full-Width LuminaSkeleton Database Table Overlay -->
+      <Border Background="{DynamicResource LuminaSurfaceBrush}" 
+              IsVisible="{Binding IsLoading}"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="0">
+            <!-- Faux Header -->
+            <Border Background="{DynamicResource LuminaNavigationPaneBrush}" Padding="16,10" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
+              <Grid ColumnDefinitions="80,180,260,180,70,*,160" ColumnSpacing="14">
+                <TextBlock Grid.Column="0" Text="Status" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="1" Text="Name" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="2" Text="UID / GUID" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="3" Text="Endpoint" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="4" Text="Ping" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="5" Text="Comment" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="6" Text="Actions" Classes="Caption" FontWeight="Bold" HorizontalAlignment="Right" Margin="0,0,24,0" />
+              </Grid>
+            </Border>
+
+            <!-- Skeleton Rows -->
+            <StackPanel Spacing="0" Margin="16,8">
+              <!-- Row 1 -->
+              <Grid ColumnDefinitions="80,180,260,180,70,*,160" ColumnSpacing="14" Height="36" VerticalAlignment="Center">
+                <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="1" Width="130" Height="16" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="2" Width="220" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="3" Width="140" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="4" Width="40" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="5" Width="150" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="6" Width="150" Height="26" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+              <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
+
+              <!-- Row 2 -->
+              <Grid ColumnDefinitions="80,180,260,180,70,*,160" ColumnSpacing="14" Height="36" VerticalAlignment="Center">
+                <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="1" Width="150" Height="16" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="2" Width="220" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="3" Width="140" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="4" Width="40" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="5" Width="180" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="6" Width="150" Height="26" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+              <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
+
+              <!-- Row 3 -->
+              <Grid ColumnDefinitions="80,180,260,180,70,*,160" ColumnSpacing="14" Height="36" VerticalAlignment="Center">
+                <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="1" Width="120" Height="16" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="2" Width="220" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="3" Width="140" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="4" Width="40" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="5" Width="100" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="6" Width="150" Height="26" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
       </Border>
     </Grid>
 

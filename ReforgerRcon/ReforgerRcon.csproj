@@ -34,10 +34,10 @@
 		<DebugSymbols>true</DebugSymbols>
 
 		<!-- Application Versioning (Read by Velopack, Aptabase, Sentry, and Windows File Properties) -->
-		<Version>0.9.0-alpha.4</Version>
+		<Version>0.9.0-alpha.5</Version>
 		<AssemblyVersion>0.9.0.0</AssemblyVersion>
 		<FileVersion>0.9.0.0</FileVersion>
-		<InformationalVersion>0.9.0-alpha.4</InformationalVersion>
+		<InformationalVersion>0.9.0-alpha.5</InformationalVersion>
 		<NeutralLanguage>en</NeutralLanguage>
 
 		<!-- Suppressed Analyzer & IDE Code-Style Warnings -->
@@ -90,9 +90,9 @@
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.745401" />
-		<PackageReference Include="Sentry" Version="6.11.0" />
-		<PackageReference Include="Sentry.Profiling" Version="6.11.0" />
-		<PackageReference Include="Sentry.Serilog" Version="6.11.0" />
+		<PackageReference Include="Sentry" Version="6.11.1" />
+		<PackageReference Include="Sentry.Profiling" Version="6.11.1" />
+		<PackageReference Include="Sentry.Serilog" Version="6.11.1" />
 		<PackageReference Include="Serilog" Version="4.4.0" />
 		<PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
 		<PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />

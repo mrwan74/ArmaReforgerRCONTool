@@ -467,10 +467,6 @@ public static partial class AppLogger
 
 #if DEBUG
             System.Diagnostics.Debug.WriteLine(crumb);
-            if (Debugger.IsAttached)
-            {
-                Debugger.Log(0, "ARRT", crumb + Environment.NewLine);
-            }
 #else
             if (level >= LogLevel.Info)
             {

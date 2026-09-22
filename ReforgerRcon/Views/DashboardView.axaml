@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:tabs="using:ReforgerRcon.Views.Tabs"
@@ -41,20 +42,33 @@
       </Grid>
     </Border>
 
-    <!-- Stats & Auto-Refresh Bar -->
+    <!-- Stats & Auto-Refresh Bar with Skeletons -->
     <Border Grid.Row="1" Background="{DynamicResource LuminaNavigationPaneBrush}" Padding="18,10" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
       <Grid ColumnDefinitions="Auto,Auto,Auto,*" VerticalAlignment="Center">
+        
+        <!-- Online Players Stat Counter with Skeleton -->
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,28,0">
           <TextBlock Text="Online Players:" FontSize="13" Foreground="{DynamicResource LuminaTextSecondaryBrush}" VerticalAlignment="Center" />
-          <TextBlock Text="{Binding OnlinePlayersCount}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+          <lumina:LuminaSkeletonContainer IsLoading="{Binding IsOnlinePlayersLoading}" VerticalAlignment="Center">
+            <lumina:LuminaSkeletonContainer.SkeletonContent>
+              <lumina:LuminaSkeleton Width="32" Height="18" CornerRadius="4" />
+            </lumina:LuminaSkeletonContainer.SkeletonContent>
+            <TextBlock Text="{Binding OnlinePlayersCount}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+          </lumina:LuminaSkeletonContainer>
         </StackPanel>
 
+        <!-- Active Bans Stat Counter with Skeleton -->
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,28,0">
           <TextBlock Text="Active Bans:" FontSize="13" Foreground="{DynamicResource LuminaTextSecondaryBrush}" VerticalAlignment="Center" />
-          <TextBlock Text="{Binding ActiveBansCount}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource LuminaDangerBrush}" VerticalAlignment="Center" />
+          <lumina:LuminaSkeletonContainer IsLoading="{Binding IsActiveBansLoading}" VerticalAlignment="Center">
+            <lumina:LuminaSkeletonContainer.SkeletonContent>
+              <lumina:LuminaSkeleton Width="32" Height="18" CornerRadius="4" />
+            </lumina:LuminaSkeletonContainer.SkeletonContent>
+            <TextBlock Text="{Binding ActiveBansCount}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource LuminaDangerBrush}" VerticalAlignment="Center" />
+          </lumina:LuminaSkeletonContainer>
         </StackPanel>
 
-        <!-- BattlEye Connected Admins Button -->
+        <!-- BattlEye Connected Admins Button with Skeleton -->
         <Button Grid.Column="2" Classes="Small Ghost" 
                 Command="{Binding OpenAdminsDialogCommand}"
                 IsVisible="{Binding IsBattlEyeProtocol}"
@@ -62,7 +76,12 @@
           <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
             <icons:MaterialIcon Kind="AccountSupervisor" Width="16" Height="16" Foreground="{DynamicResource LuminaPrimaryBrush}" />
             <TextBlock Text="RCON Admins:" FontSize="13" Foreground="{DynamicResource LuminaTextSecondaryBrush}" VerticalAlignment="Center" />
-            <TextBlock Text="{Binding ConnectedAdminsCount}" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+            <lumina:LuminaSkeletonContainer IsLoading="{Binding IsAdminsLoading}" VerticalAlignment="Center">
+              <lumina:LuminaSkeletonContainer.SkeletonContent>
+                <lumina:LuminaSkeleton Width="24" Height="16" CornerRadius="4" />
+              </lumina:LuminaSkeletonContainer.SkeletonContent>
+              <TextBlock Text="{Binding ConnectedAdminsCount}" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource LuminaPrimaryBrush}" VerticalAlignment="Center" />
+            </lumina:LuminaSkeletonContainer>
           </StackPanel>
         </Button>
 
@@ -97,7 +116,6 @@
         <RowDefinition Height="{Binding ConsoleRowHeight}" />
       </Grid.RowDefinitions>
 
-      <!-- Lazy-loaded Tabs via ContentTemplate -->
       <TabControl Grid.Row="0" Classes="Line" SelectedIndex="0" Padding="0" IsVisible="{Binding !IsConsoleFullscreen}">
         <TabControl.DataTemplates>
           <DataTemplate DataType="{x:Type vm:PlayersViewModel}">

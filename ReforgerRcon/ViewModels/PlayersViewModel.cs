@@ -12,7 +12,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services;
-using Sentry;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -33,6 +32,7 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [ObservableProperty] public partial PlayerModel? SelectedPlayer { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
     [ObservableProperty] public partial int SelectedCount { get; set; }
+    [ObservableProperty] public partial bool IsLoading { get; set; } = true;
 
     private bool? _isAllSelected = false;
     public bool? IsAllSelected
@@ -79,48 +79,56 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
     [RelayCommand]
     public Task<bool> RefreshPlayersAsync() => ExecuteSafeAsync(async () =>
     {
+        await Dispatcher.UIThread.InvokeAsync(() => IsLoading = true);
         var start = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("PlayersViewModel.RefreshPlayersAsync");
 
-        var selectedUids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var selectedIds = new HashSet<int>();
-        bool wasAllSelected = IsAllSelected is true;
-
-        foreach (var p in _allPlayers)
+        try
         {
-            if (p.IsSelected)
+            var selectedUids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var selectedIds = new HashSet<int>();
+            bool wasAllSelected = IsAllSelected is true;
+
+            foreach (var p in _allPlayers)
             {
-                selectedIds.Add(p.Id);
+                if (p.IsSelected)
+                {
+                    selectedIds.Add(p.Id);
+                    var uid = !string.IsNullOrWhiteSpace(p.Guid) && !p.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
+                        ? p.Guid
+                        : p.Uid;
+                    if (!string.IsNullOrWhiteSpace(uid)) selectedUids.Add(uid);
+                }
+            }
+
+            _allPlayers = await _rconService.GetPlayersAsync().ConfigureAwait(false);
+
+            foreach (var p in _allPlayers)
+            {
                 var uid = !string.IsNullOrWhiteSpace(p.Guid) && !p.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
                     ? p.Guid
                     : p.Uid;
-                if (!string.IsNullOrWhiteSpace(uid)) selectedUids.Add(uid);
+
+                if (wasAllSelected || selectedIds.Contains(p.Id) || (!string.IsNullOrEmpty(uid) && selectedUids.Contains(uid)))
+                {
+                    p.IsSelected = true;
+                }
             }
-        }
 
-        _allPlayers = await _rconService.GetPlayersAsync().ConfigureAwait(false);
-
-        foreach (var p in _allPlayers)
-        {
-            var uid = !string.IsNullOrWhiteSpace(p.Guid) && !p.Guid.StartsWith("init", StringComparison.OrdinalIgnoreCase)
-                ? p.Guid
-                : p.Uid;
-
-            if (wasAllSelected || selectedIds.Contains(p.Id) || (!string.IsNullOrEmpty(uid) && selectedUids.Contains(uid)))
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                p.IsSelected = true;
-            }
+                ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+                _dashboard.OnlinePlayersCount = Players.Count;
+                UpdateSelectedCount();
+            });
+
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[PlayersViewModel:Refresh] Refreshed {_allPlayers.Count} players ({Players.Count} visible, {SelectedCount} selected) in {elapsedMs:F2}ms.");
         }
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        finally
         {
-            ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
-            _dashboard.OnlinePlayersCount = Players.Count;
-            UpdateSelectedCount();
-        });
-
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[PlayersViewModel:Refresh] Refreshed {_allPlayers.Count} players ({Players.Count} visible, {SelectedCount} selected) in {elapsedMs:F2}ms.");
+            await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+        }
     });
 
     public static string MapColumnTagToSortField(string? tag)

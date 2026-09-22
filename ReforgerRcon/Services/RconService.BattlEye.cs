@@ -323,14 +323,21 @@ public sealed partial class RconService
 
     private void ProcessLiveStreamEvent(string message)
     {
+        if (CurrentProtocol != RconProtocol.BattlEye || string.IsNullOrEmpty(message))
+        {
+            return;
+        }
+
+        // FAST-PATH GUARD: Skip regex matches unless message begins with relevant stream prefixes
+        if (!message.StartsWith("Player #", StringComparison.OrdinalIgnoreCase) &&
+            !message.StartsWith("RCon admin #", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            if (CurrentProtocol != RconProtocol.BattlEye)
-            {
-                return;
-            }
-
             var disconnMatch = BattlEyeResponseParser.PlayerDisconnectedStreamRegex().Match(message);
             if (disconnMatch.Success && int.TryParse(disconnMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int discId))
             {

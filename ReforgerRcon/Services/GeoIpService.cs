@@ -282,19 +282,36 @@ public static class GeoIpService
 
     public static event Action? DatabasesUpdated;
 
-    public static void Initialize()
+    public static void PrewarmReaders()
     {
-        if (!Directory.Exists(GeoIpDirectory))
+        if (_isInitialized) return;
+
+        lock (ReaderLock)
         {
+            if (_isInitialized) return;
+
+            var start = Stopwatch.GetTimestamp();
             try
             {
-                Directory.CreateDirectory(GeoIpDirectory);
+                if (!Directory.Exists(GeoIpDirectory))
+                {
+                    Directory.CreateDirectory(GeoIpDirectory);
+                }
+
+                ReloadReaders();
+                var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                AppLogger.Info($"[GeoIpService:Prewarm] GeoIP MMDB readers memory-mapped in {elapsedMs:F2}ms.");
             }
             catch (Exception ex)
             {
-                AppLogger.Trace($"[GeoIpService:Init] Notice creating directory: {ex.Message}");
+                AppLogger.Trace($"[GeoIpService:Prewarm] Notice during pre-warm: {ex.Message}");
             }
         }
+    }
+
+    public static void Initialize()
+    {
+        PrewarmReaders();
 
         if (HasCustomCredentials)
         {

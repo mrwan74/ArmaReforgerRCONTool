@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -6,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using ReforgerRcon.Models;
+using Sentry;
 
 namespace ReforgerRcon.Services.Parsers;
 
@@ -13,6 +15,7 @@ public static partial class ReforgerResponseParser
 {
     private const string DefaultServerBanReason = "Server Ban";
     private const string DefaultUnknownRegion = "Unknown Region";
+    private static readonly ConcurrentDictionary<string, long> AnomalyTelemetryThrottle = new(StringComparer.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"^\s*(\d+)\s*;\s*([a-fA-F0-9\-]{36}|[a-zA-Z0-9_\-]+)\s*;\s*(.*)$", RegexOptions.Compiled, matchTimeoutMilliseconds: 250)]
     private static partial Regex PlayerRowRegex();
@@ -354,7 +357,7 @@ public static partial class ReforgerResponseParser
                 }
             }
 
-            // Regex fallback
+            // Regex fallback for native Reforger player syntax
             var match = PlayerRowRegex().Match(line);
             if (match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fallbackId))
             {
@@ -376,36 +379,6 @@ public static partial class ReforgerResponseParser
                     Ping = 0,
                     Country = new CountryInfo { Code = "xx", Name = DefaultUnknownRegion },
                     DisplayLocation = string.Empty
-                };
-                return true;
-            }
-
-            // BattlEye wire format fallback if server returns BE format while in Reforger protocol
-            var tokens = line.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-            if (tokens.Length >= 5 && int.TryParse(tokens[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int beId) && tokens[1].Contains(':'))
-            {
-                var epParts = tokens[1].Split(':', 2);
-                var ip = epParts[0].Trim('[', ']');
-                int port = int.TryParse(epParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int p) ? p : 0;
-                int ping = int.TryParse(tokens[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int png) ? png : 0;
-                var guid = tokens[3].Trim();
-                var name = string.Join(' ', tokens.Skip(4)).Trim();
-
-                var geo = GeoIpService.GetLocation(ip);
-                player = new PlayerModel
-                {
-                    Id = beId,
-                    Uid = guid,
-                    Guid = guid,
-                    ReforgerUid = guid.Contains('-') ? guid : string.Empty,
-                    BattlEyeGuid = !guid.Contains('-') ? guid : string.Empty,
-                    Name = SanitizePlayerName(name),
-                    Ip = ip,
-                    Port = port,
-                    Ping = ping,
-                    Country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName },
-                    DisplayLocation = geo.NaturalLocation,
-                    TimeZone = geo.TimeZone
                 };
                 return true;
             }
@@ -581,6 +554,56 @@ public static partial class ReforgerResponseParser
     public static void LogParserAnomaly(string parserContext, int lineIndex, string rawLine, string reason)
     {
         AppLogger.Warn($"[PARSER_ANOMALY] Context: [{parserContext}] | Line #{lineIndex}: {reason} | Raw: \"{rawLine}\"");
+
+        try
+        {
+            var now = Stopwatch.GetTimestamp();
+            if (AnomalyTelemetryThrottle.TryGetValue(parserContext, out var lastLogged) &&
+                Stopwatch.GetElapsedTime(lastLogged).TotalSeconds < 60.0)
+            {
+                // Throttle telemetry to at most 1 event per 60 seconds per parser context
+                return;
+            }
+            AnomalyTelemetryThrottle[parserContext] = now;
+
+            // 1. Aptabase Telemetry (Anonymized Structural Metrics)
+            var tokens = rawLine.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+            AppLogger.TrackEvent("parser_anomaly_detected", new Dictionary<string, object>
+            {
+                ["parser_context"] = parserContext,
+                ["reason"] = reason,
+                ["line_number"] = lineIndex,
+                ["line_length"] = rawLine.Length,
+                ["token_count"] = tokens.Length,
+                ["has_semicolon"] = rawLine.Contains(';'),
+                ["has_pipe"] = rawLine.Contains('|'),
+                ["has_colon"] = rawLine.Contains(':'),
+                ["starts_with_dash"] = rawLine.TrimStart().StartsWith('-'),
+                ["starts_with_bracket"] = rawLine.TrimStart().StartsWith('[')
+            });
+
+            // 2. Sentry Diagnostic Event (Full Unredacted Raw Payload & Forensic Hex)
+            if (AppSettings.IsCrashReportingEnabled())
+            {
+                SentrySdk.CaptureMessage($"[Parser Anomaly] {parserContext} - Line #{lineIndex}", scope =>
+                {
+                    scope.Level = SentryLevel.Warning;
+                    scope.SetTag("parser_context", parserContext);
+                    scope.SetTag("line_number", lineIndex.ToString(CultureInfo.InvariantCulture));
+                    scope.SetTag("reason", reason);
+
+                    // Unredacted raw payload and forensics
+                    scope.SetExtra("raw_line_unredacted", rawLine);
+                    scope.SetExtra("raw_line_hex", Convert.ToHexString(Encoding.UTF8.GetBytes(rawLine)));
+                    scope.SetExtra("raw_line_length", rawLine.Length);
+                    scope.SetExtra("forensic_dump", ToForensicDump(rawLine));
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[ReforgerResponseParser:AnomalyTelemetry] Notice: {ex.Message}");
+        }
     }
 
     public static string ToForensicDump(string? input)

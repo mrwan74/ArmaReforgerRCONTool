@@ -143,6 +143,9 @@ internal static partial class Program
                 AppLogger.InitializeFullLogging();
                 CrashReportService.Initialize();
 
+                // Pre-warm non-Avalonia engines (SQLite, GeoIP MMDB readers, Hardware identity) immediately
+                StartDeferredBackgroundServices();
+
                 AptabaseLogging.OnLogMessage += entry =>
                 {
                     if (entry.Exception is AptabaseException or AptabaseTransmissionException ||
@@ -232,42 +235,49 @@ internal static partial class Program
 
     public static void StartDeferredBackgroundServices()
     {
-        Dispatcher.UIThread.Post(() =>
+        _ = Task.Run(async () =>
         {
-            _ = Task.Run(async () =>
+            var bgStart = Stopwatch.GetTimestamp();
+            AppLogger.Debug("[Program:Background] Commencing background services parallel pre-warming...");
+
+            try
             {
-                var bgStart = Stopwatch.GetTimestamp();
-                AppLogger.Debug("[Program:Background] Commencing background services pre-warming...");
-
-                try
+                var sqliteTask = Task.Run(async () =>
                 {
-                    await Task.Delay(400).ConfigureAwait(false);
-
-                    ColumnLayoutStorageService.Prewarm();
                     SQLitePCL.Batteries_V2.Init();
-                    _ = PlayerDatabaseStorageService.InitializeAsync();
+                    await PlayerDatabaseStorageService.InitializeAsync().ConfigureAwait(false);
+                });
 
+                var geoIpTask = Task.Run(() =>
+                {
                     _ = TZConvert.TryGetTimeZoneInfo("UTC", out _);
-                    GeoIpService.Initialize();
-                    PushNotificationService.Initialize();
+                    GeoIpService.PrewarmReaders();
+                });
 
-                    // Starts persistent background updater loop (continuous checking on Login and Dashboard)
-                    UpdateService.Instance.StartBackgroundLoop();
-
-                    var bgElapsedMs = Stopwatch.GetElapsedTime(bgStart).TotalMilliseconds;
-                    AppLogger.Info($"[Program:Background] Core background worker services initialized in {bgElapsedMs:F2}ms.");
-                }
-                catch (Exception ex)
+                var identityTask = Task.Run(() =>
                 {
-                    AppLogger.Error($"[Program:Background] Pre-warm service initialization notice: {ex.Message}", ex);
-                }
+                    ColumnLayoutStorageService.Prewarm();
+                    _ = HardwareIdentityService.GetOrCreateHardwareId();
+                });
 
-                if (AppSettings.IsCrashReportingEnabled())
-                {
-                    InitSentrySdkDeferred();
-                }
-            }, CancellationToken.None);
-        }, DispatcherPriority.Background);
+                await Task.WhenAll(sqliteTask, geoIpTask, identityTask).ConfigureAwait(false);
+
+                // Start persistent background updater loop
+                UpdateService.Instance.StartBackgroundLoop();
+
+                var bgElapsedMs = Stopwatch.GetElapsedTime(bgStart).TotalMilliseconds;
+                AppLogger.Info($"[Program:Background] Core background worker services initialized in {bgElapsedMs:F2}ms.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error($"[Program:Background] Pre-warm service initialization notice: {ex.Message}", ex);
+            }
+
+            if (AppSettings.IsCrashReportingEnabled())
+            {
+                InitSentrySdkDeferred();
+            }
+        }, CancellationToken.None);
     }
 
     private static void InitSentrySdkDeferred()
@@ -290,7 +300,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@0.9.0-alpha.4";
+                options.Release = "ReforgerRcon@0.9.0-alpha.5";
 
                 options.SetBeforeSend((sentryEvent, _) => AppSettings.IsCrashReportingEnabled() ? sentryEvent : null);
                 options.SetBeforeSendTransaction((tx, _) => AppSettings.IsCrashReportingEnabled() ? tx : null);
@@ -318,7 +328,8 @@ internal static partial class Program
             or TaskCanceledException
             or SocketException
             or IOException
-            or ObjectDisposedException)
+            or ObjectDisposedException
+            or UriFormatException)
         {
             return;
         }

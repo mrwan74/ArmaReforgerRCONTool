@@ -77,6 +77,9 @@ public sealed partial class RconService : IRconService
     private int _protocolMismatchFired;
     private Task<List<PlayerModel>>? _inFlightPlayersTask;
 
+    private long _lastPopulationSampleTimestamp;
+    private string _lastSampledPopulationTier = string.Empty;
+
     private readonly SemaphoreSlim _rconStateSemaphore = new(1, 1);
     private readonly SemaphoreSlim _playersSemaphore = new(1, 1);
     private readonly List<PlayerModel> _lastKnownPlayers = [];
@@ -335,6 +338,8 @@ public sealed partial class RconService : IRconService
             _sessionStartTimeUtc = DateTime.UtcNow;
             _recentlyAnnouncedJoins.Clear();
             _recentlyAnnouncedLeaves.Clear();
+            _lastPopulationSampleTimestamp = 0;
+            _lastSampledPopulationTier = string.Empty;
 
             Volatile.Write(ref _inFlightPlayersTask, null);
 
@@ -360,7 +365,16 @@ public sealed partial class RconService : IRconService
             });
 
             IPAddress? ip = null;
-            if (IPAddress.TryParse(profile.ServerIp, out var parsedIp))
+            var trimmedHost = profile.ServerIp.Trim();
+
+            // Fast-path: Resolve localhost directly without OS DNS queries
+            if (string.Equals(trimmedHost, "localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                ip = IPAddress.Loopback;
+                context["resolved_ip"] = ip.ToString();
+                AppLogger.Debug("[RconService:Connect] Resolved 'localhost' directly to IPAddress.Loopback (0ms DNS).", context);
+            }
+            else if (IPAddress.TryParse(trimmedHost, out var parsedIp))
             {
                 ip = parsedIp;
                 context["ip_family"] = ip.AddressFamily.ToString();
@@ -369,10 +383,10 @@ public sealed partial class RconService : IRconService
             else
             {
                 var dnsStart = Stopwatch.GetTimestamp();
-                AppLogger.Debug($"[RconService:Connect] Querying DNS resolver for hostname '{profile.ServerIp}'...", context);
+                AppLogger.Debug($"[RconService:Connect] Querying DNS resolver for hostname '{trimmedHost}'...", context);
                 try
                 {
-                    var addresses = await Dns.GetHostAddressesAsync(profile.ServerIp, cancellationToken).ConfigureAwait(false);
+                    var addresses = await Dns.GetHostAddressesAsync(trimmedHost, cancellationToken).ConfigureAwait(false);
                     var dnsElapsedMs = Stopwatch.GetElapsedTime(dnsStart).TotalMilliseconds;
                     if (addresses.Length > 0)
                     {
@@ -380,17 +394,17 @@ public sealed partial class RconService : IRconService
                         context["resolved_ip"] = ip.ToString();
                         context["candidate_ips_count"] = addresses.Length;
                         context["dns_duration_ms"] = dnsElapsedMs;
-                        AppLogger.Info($"[RconService:Connect] DNS resolution successful: '{profile.ServerIp}' -> {ip} in {dnsElapsedMs:F2}ms ({addresses.Length} candidates).", context);
+                        AppLogger.Info($"[RconService:Connect] DNS resolution successful: '{trimmedHost}' -> {ip} in {dnsElapsedMs:F2}ms ({addresses.Length} candidates).", context);
                     }
                     else
                     {
-                        _lastConnectionError = $"DNS resolution returned zero candidate addresses for host '{profile.ServerIp}'.";
+                        _lastConnectionError = $"DNS resolution returned zero candidate addresses for host '{trimmedHost}'.";
                         AppLogger.Warn($"[RconService:Connect] {_lastConnectionError}", null, context);
                     }
                 }
                 catch (Exception dnsEx)
                 {
-                    _lastConnectionError = $"DNS resolution failed for '{profile.ServerIp}': {dnsEx.Message}";
+                    _lastConnectionError = $"DNS resolution failed for '{trimmedHost}': {dnsEx.Message}";
                     AppLogger.Error($"[RconService:Connect] {_lastConnectionError}", dnsEx, context);
                     ToastNotificationService.Instance.ShowError("DNS Lookup Error", _lastConnectionError);
                 }
@@ -806,8 +820,6 @@ public sealed partial class RconService : IRconService
             LastPacketTime = DateTime.UtcNow;
             var message = args.Message;
 
-            // In BattlEye protocol: command responses arrive in PacketTypeCommand (args.Id != 256).
-            // In Reforger protocol: command responses arrive as a series of ServerMessages (args.Id == 256) starting with "Processing Command: <cmd>"!
             bool isCommandResponse = args.Id != 256;
             bool isReforgerStreamResponse = _activeReforgerCommand != null &&
                      (message.StartsWith("Processing Command:", StringComparison.OrdinalIgnoreCase) ||
@@ -951,6 +963,8 @@ public sealed partial class RconService : IRconService
 
             _ = Task.Run(() => PlayerDatabaseStorageService.RecordSeenPlayersAsync(currentPlayers, CurrentProtocol), CancellationToken.None);
 
+            RecordPopulationSample(currentPlayers.Count);
+
             await _playersSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -971,6 +985,34 @@ public sealed partial class RconService : IRconService
                 {
                     var joined = currentPlayers.Where(p => !_lastKnownPlayers.Any(old => IsSamePlayer(p, old))).ToList();
                     var left = _lastKnownPlayers.Where(p => !currentPlayers.Any(curr => IsSamePlayer(p, curr))).ToList();
+
+                    if (joined.Count >= 5 || left.Count >= 5)
+                    {
+                        string burstType;
+                        if (joined.Count >= 5 && left.Count >= 5)
+                        {
+                            burstType = "mixed_turnover";
+                        }
+                        else if (joined.Count >= 5)
+                        {
+                            burstType = "mass_join";
+                        }
+                        else
+                        {
+                            burstType = "mass_disconnect";
+                        }
+
+                        AppLogger.Info($"[RconService:TurnoverBurst] Turnover burst detected: {burstType} (+{joined.Count} joined, -{left.Count} left, {currentPlayers.Count} total online).");
+
+                        AppLogger.TrackEvent("player_turnover_burst", new Dictionary<string, object>
+                        {
+                            ["protocol"] = CurrentProtocol.ToString(),
+                            ["burst_type"] = burstType,
+                            ["joined_count"] = joined.Count,
+                            ["left_count"] = left.Count,
+                            ["total_online"] = currentPlayers.Count
+                        });
+                    }
 
                     if (joined.Count > 0)
                     {
@@ -1015,6 +1057,37 @@ public sealed partial class RconService : IRconService
             AppLogger.Error($"[RconService:GetPlayers] Unexpected error querying player list: {ex.Message}", ex);
             ToastNotificationService.Instance.ShowError("RCON Query Error", $"Failed retrieving active players: {ex.Message}");
             return [];
+        }
+    }
+
+    private void RecordPopulationSample(int count)
+    {
+        string tier = count switch
+        {
+            0 => "0_empty",
+            <= 16 => "1_to_16_coop",
+            <= 32 => "17_to_32_medium",
+            <= 64 => "33_to_64_large",
+            <= 128 => "65_to_128_conflict",
+            _ => "129_plus_massive"
+        };
+
+        bool tierChanged = !string.Equals(_lastSampledPopulationTier, tier, StringComparison.Ordinal);
+        bool timeElapsed = _lastPopulationSampleTimestamp == 0 ||
+                           Stopwatch.GetElapsedTime(_lastPopulationSampleTimestamp).TotalMinutes >= 20.0;
+
+        if (tierChanged || timeElapsed)
+        {
+            _lastPopulationSampleTimestamp = Stopwatch.GetTimestamp();
+            _lastSampledPopulationTier = tier;
+
+            AppLogger.TrackEvent("server_population_sampled", new Dictionary<string, object>
+            {
+                ["population_tier"] = tier,
+                ["player_count"] = count,
+                ["protocol"] = CurrentProtocol.ToString()
+            });
+            AppLogger.Trace($"[RconService:Telemetry] server_population_sampled dispatched: Tier='{tier}', Count={count}, Protocol={CurrentProtocol}");
         }
     }
 
@@ -1437,7 +1510,6 @@ public sealed partial class RconService : IRconService
         {
             RaiseOutputReceived($"[RCON OUT] {command}");
 
-            // Step 1: For BattlEye, try direct response via PacketType 0x01
             if (CurrentProtocol == RconProtocol.BattlEye)
             {
                 string? directResponse = await ExecuteDirectResponseAsync(client, command, maxTimeout, startTimestamp, cancellationToken).ConfigureAwait(false);
@@ -1447,13 +1519,11 @@ public sealed partial class RconService : IRconService
                 }
             }
 
-            // Step 2: For Reforger (or BattlEye stream fallback), aggregate incoming ServerMessage (0x02) packets
             await ResetAggregateBufferAsync(cancellationToken).ConfigureAwait(false);
             _activeReforgerCommand = command;
 
             try
             {
-                // Dispatch command
                 client.SendCommand(command, log: true);
 
                 var commandKind = ClassifyCommand(command);
@@ -1469,7 +1539,7 @@ public sealed partial class RconService : IRconService
                         break;
                     }
 
-                    var waitMs = Math.Min(25, (int)remainingTimeout.TotalMilliseconds);
+                    var waitMs = Math.Min(10, (int)remainingTimeout.TotalMilliseconds);
                     await _chunkArrivedSignal.WaitAsync(waitMs, cancellationToken).ConfigureAwait(false);
 
                     await _bufferSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -1492,7 +1562,7 @@ public sealed partial class RconService : IRconService
 
                         if (isTerminal)
                         {
-                            AppLogger.Trace($"[RconService:Aggregate] Terminal token matched ({currentText.Length} chars, Chunks={chunksCount}, LastSize={lastChunkSize}B). Halting aggregation.");
+                            AppLogger.Trace($"[RconService:Aggregate] Terminal token matched ({currentText.Length} chars, Chunks={chunksCount}, LastSize={lastChunkSize}B). Exiting aggregation instantly.");
                             break;
                         }
 
@@ -1500,17 +1570,16 @@ public sealed partial class RconService : IRconService
                             ? DetermineReforgerPayloadPresence(commandKind, currentText, chunksCount)
                             : DetermineBattlEyePayloadPresence(commandKind, currentText, chunksCount);
 
-                        // CRITICAL: Quiet timer ONLY kicks in after the actual payload has arrived,
-                        // with an adaptive quiet buffer of at least 350ms to accommodate 180-220ms network ping jitter
                         if (hasActualPayload)
                         {
+
                             int adaptiveQuietMs = (lastChunkSize >= 900)
-                                ? Math.Max(400, (int)(PingMs * 2.5))
-                                : Math.Max(350, (int)(PingMs * 1.8));
+                                ? Math.Max(350, (int)(PingMs * 2.2))
+                                : Math.Max(120, (int)(PingMs * 1.2));
 
                             if (timeSinceLastChunk.TotalMilliseconds >= adaptiveQuietMs)
                             {
-                                AppLogger.Trace($"[RconService:Aggregate] Adaptive quiet threshold reached ({timeSinceLastChunk.TotalMilliseconds:F1}ms >= {adaptiveQuietMs}ms, Chunks={chunksCount}, LastSize={lastChunkSize}B). Completing aggregation.");
+                                AppLogger.Trace($"[RconService:Aggregate] Quiet threshold reached ({timeSinceLastChunk.TotalMilliseconds:F1}ms >= {adaptiveQuietMs}ms, Chunks={chunksCount}). Completing aggregation.");
                                 break;
                             }
                         }

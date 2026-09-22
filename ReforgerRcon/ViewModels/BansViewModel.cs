@@ -38,6 +38,7 @@ public partial class BansViewModel : ViewModelBase
     [ObservableProperty] public partial BanModel? SelectedBan { get; set; }
     [ObservableProperty] public partial bool IsMultiSelectMode { get; set; }
     [ObservableProperty] public partial int SelectedCount { get; set; }
+    [ObservableProperty] public partial bool IsLoading { get; set; } = true;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsCustomFetchMode))]
@@ -200,42 +201,50 @@ public partial class BansViewModel : ViewModelBase
     [RelayCommand]
     public Task<bool> RefreshBansAsync() => ExecuteSafeAsync(async () =>
     {
+        await Dispatcher.UIThread.InvokeAsync(() => IsLoading = true);
         var start = Stopwatch.GetTimestamp();
         using var timing = AppLogger.Measure("BansViewModel.RefreshBansAsync");
 
-        int maxPages = SelectedFetchMode switch
+        try
         {
-            "First Page Only" => 1,
-            "Custom Limit" => Math.Max(1, CustomPageLimit),
-            _ => 0
-        };
+            int maxPages = SelectedFetchMode switch
+            {
+                "First Page Only" => 1,
+                "Custom Limit" => Math.Max(1, CustomPageLimit),
+                _ => 0
+            };
 
-        AppLogger.Debug($"[BansViewModel:Refresh] Requesting active ban list from server ({_rconService.CurrentProtocol}, FetchMode='{SelectedFetchMode}', MaxPages={maxPages})...");
+            AppLogger.Debug($"[BansViewModel:Refresh] Requesting active ban list from server ({_rconService.CurrentProtocol}, FetchMode='{SelectedFetchMode}', MaxPages={maxPages})...");
 
-        var selectedIdentities = new HashSet<string>(
-            _allBans.Where(b => b.IsSelected).Select(b => b.IdentityId), StringComparer.OrdinalIgnoreCase);
-        var selectedBanNos = new HashSet<int>(
-            _allBans.Where(b => b.IsSelected).Select(b => b.BanNumber));
-        bool wasAllSelected = IsAllSelected is true;
+            var selectedIdentities = new HashSet<string>(
+                _allBans.Where(b => b.IsSelected).Select(b => b.IdentityId), StringComparer.OrdinalIgnoreCase);
+            var selectedBanNos = new HashSet<int>(
+                _allBans.Where(b => b.IsSelected).Select(b => b.BanNumber));
+            bool wasAllSelected = IsAllSelected is true;
 
-        var fetchedBans = await _rconService.GetBansAsync(maxPages).ConfigureAwait(false);
-        _allBans.Clear();
-        _allBans.AddRange(fetchedBans);
+            var fetchedBans = await _rconService.GetBansAsync(maxPages).ConfigureAwait(false);
+            _allBans.Clear();
+            _allBans.AddRange(fetchedBans);
 
-        foreach (var b in _allBans.Where(b => wasAllSelected || selectedBanNos.Contains(b.BanNumber) || selectedIdentities.Contains(b.IdentityId)))
-        {
-            b.IsSelected = true;
+            foreach (var b in _allBans.Where(b => wasAllSelected || selectedBanNos.Contains(b.BanNumber) || selectedIdentities.Contains(b.IdentityId)))
+            {
+                b.IsSelected = true;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
+                _dashboard.ActiveBansCount = _allBans.Count;
+                UpdateSelectedState();
+            });
+
+            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[BansViewModel:Refresh] Loaded {_allBans.Count} ban records ({Bans.Count} visible, {SelectedCount} selected) in {elapsedMs:F2}ms.");
         }
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        finally
         {
-            ApplyFilter(_dashboard.SearchQuery, _dashboard.SearchType);
-            _dashboard.ActiveBansCount = _allBans.Count;
-            UpdateSelectedState();
-        });
-
-        var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        AppLogger.Info($"[BansViewModel:Refresh] Loaded {_allBans.Count} ban records ({Bans.Count} visible, {SelectedCount} selected) in {elapsedMs:F2}ms.");
+            await Dispatcher.UIThread.InvokeAsync(() => IsLoading = false);
+        }
     }, "Failed to refresh server bans from RCON.");
 
     public static string MapColumnTagToSortField(string? tag)

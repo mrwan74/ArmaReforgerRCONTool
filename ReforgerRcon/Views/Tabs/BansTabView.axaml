@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lumina="clr-namespace:LuminaUI.Controls;assembly=LuminaUI"
              xmlns:icons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              xmlns:vm="using:ReforgerRcon.ViewModels"
              xmlns:models="using:ReforgerRcon.Models"
@@ -71,20 +72,10 @@
                              VerticalAlignment="Center" 
                              ToolTip.Tip="Maximum number of pages to fetch from the server (1 to 50)" />
 
-              <!-- Clickable Help Button -->
               <Button Classes="Small Ghost Icon" 
                       Command="{Binding OpenPaginationHelpCommand}"
                       Width="26" Height="26"
                       VerticalAlignment="Center">
-                <ToolTip.Tip>
-                  <StackPanel Spacing="4" MaxWidth="320">
-                    <TextBlock Text="Reforger Ban List Pagination (Click to read full guide)" FontWeight="Bold" FontSize="12" />
-                    <TextBlock Text="The server returns 25 bans per page via '#ban list [page]'." FontSize="11" TextWrapping="Wrap" />
-                    <TextBlock Text="• All Pages: Programmatically requests each page sequentially until all bans are retrieved." FontSize="11" TextWrapping="Wrap" />
-                    <TextBlock Text="• First Page Only: Fetches only the first 25 bans (fastest, minimal server traffic)." FontSize="11" TextWrapping="Wrap" />
-                    <TextBlock Text="• Custom Limit: Fetches sequentially up to the specified number of pages." FontSize="11" TextWrapping="Wrap" />
-                  </StackPanel>
-                </ToolTip.Tip>
                 <icons:MaterialIcon Kind="HelpCircleOutline" 
                                    Width="16" Height="16" 
                                    Foreground="{DynamicResource LuminaPrimaryBrush}" 
@@ -96,25 +87,21 @@
           <Button Classes="Outline Small" 
                   Content="Load Bans" 
                   Command="{Binding LoadBansCommand}" 
-                  IsVisible="{Binding IsBattlEyeProtocol}"
-                  ToolTip.Tip="(Re)load the BE ban list from bans.txt in your BE working directory. Issue loadBans command after an offline/IP ban for it to take effect." />
+                  IsVisible="{Binding IsBattlEyeProtocol}" />
 
           <Button Classes="Outline Small" 
                   Content="Write Bans" 
                   Command="{Binding WriteBansCommand}" 
-                  IsVisible="{Binding IsBattlEyeProtocol}"
-                  ToolTip.Tip="Re-write the current ban list to bans.txt in your BE working directory. This command can be used to remove expired bans." />
+                  IsVisible="{Binding IsBattlEyeProtocol}" />
 
-          <!-- Import Bans (.txt) Button -->
-          <Button Classes="Outline Small" Command="{Binding ImportBansCommand}" ToolTip.Tip="Import bans from a .txt file">
+          <Button Classes="Outline Small" Command="{Binding ImportBansCommand}">
             <StackPanel Orientation="Horizontal" Spacing="4">
               <icons:MaterialIcon Kind="FileImportOutline" Width="14" Height="14" Foreground="{DynamicResource LuminaPrimaryBrush}" />
               <TextBlock Text="Import Bans (.txt)" />
             </StackPanel>
           </Button>
 
-          <!-- Export Bans (.txt) Button -->
-          <Button Classes="Outline Small" Command="{Binding ExportBansCommand}" ToolTip.Tip="Export current server bans to a .txt file">
+          <Button Classes="Outline Small" Command="{Binding ExportBansCommand}">
             <StackPanel Orientation="Horizontal" Spacing="4">
               <icons:MaterialIcon Kind="FileExportOutline" Width="14" Height="14" />
               <TextBlock Text="Export Bans (.txt)" />
@@ -126,105 +113,160 @@
       </Grid>
     </Border>
 
-    <DataGrid x:Name="BansGrid"
-              Grid.Row="1"
-              ItemsSource="{Binding Bans}"
-              SelectedItem="{Binding SelectedBan}"
-              AutoGenerateColumns="False"
-              IsReadOnly="True"
-              GridLinesVisibility="Horizontal"
-              CanUserResizeColumns="True"
-              CanUserReorderColumns="True"
-              CanUserSortColumns="True"
-              Sorting="OnDataGridSorting"
-              SelectionMode="Single"
-              Margin="0"
-              x:CompileBindings="False">
+    <!-- Main Table Area -->
+    <Grid Grid.Row="1">
+      <DataGrid x:Name="BansGrid"
+                ItemsSource="{Binding Bans}"
+                SelectedItem="{Binding SelectedBan}"
+                AutoGenerateColumns="False"
+                IsReadOnly="True"
+                GridLinesVisibility="Horizontal"
+                CanUserResizeColumns="True"
+                CanUserReorderColumns="True"
+                CanUserSortColumns="True"
+                Sorting="OnDataGridSorting"
+                SelectionMode="Single"
+                Margin="0"
+                x:CompileBindings="False">
 
-      <DataGrid.KeyBindings>
-        <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
-      </DataGrid.KeyBindings>
+        <DataGrid.KeyBindings>
+          <KeyBinding Gesture="Ctrl+A" Command="{Binding ToggleSelectAllCommand}" />
+        </DataGrid.KeyBindings>
 
-      <DataGrid.ContextMenu>
-        <ContextMenu>
-          <MenuItem Header="Remove Ban" Command="{Binding RemoveBanCommand}" CommandParameter="{Binding SelectedBan}" />
-          <Separator />
-          <MenuItem Header="Copy Ban Info" Command="{Binding CopyBanInfoCommand}" CommandParameter="{Binding SelectedBan}" />
-        </ContextMenu>
-      </DataGrid.ContextMenu>
+        <DataGrid.ContextMenu>
+          <ContextMenu>
+            <MenuItem Header="Remove Ban" Command="{Binding RemoveBanCommand}" CommandParameter="{Binding SelectedBan}" />
+            <Separator />
+            <MenuItem Header="Copy Ban Info" Command="{Binding CopyBanInfoCommand}" CommandParameter="{Binding SelectedBan}" />
+          </ContextMenu>
+        </DataGrid.ContextMenu>
 
-      <DataGrid.Columns>
-        <DataGridTemplateColumn Tag="ColSelect" 
-                                Width="50" 
-                                MinWidth="50" 
-                                MaxWidth="50" 
-                                CanUserResize="False" 
-                                CanUserSort="False" 
-                                CanUserReorder="False"
-                                IsVisible="False">
-          <DataGridTemplateColumn.HeaderTemplate>
-            <DataTemplate>
-              <Grid Width="50" Height="36" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">
-                <CheckBox IsChecked="{Binding IsAllSelected, Mode=TwoWay}"
-                          HorizontalAlignment="Center" 
-                          VerticalAlignment="Center"
-                          Margin="0" 
-                          Padding="0" 
-                          MinWidth="0" 
-                          MinHeight="0"
-                          IsThreeState="True"
-                          Focusable="False"
-                          Cursor="Hand"
-                          ToolTip.Tip="{Binding SelectAllTooltipText}" />
+        <DataGrid.Columns>
+          <DataGridTemplateColumn Tag="ColSelect" 
+                                  Width="50" 
+                                  MinWidth="50" 
+                                  MaxWidth="50" 
+                                  CanUserResize="False" 
+                                  CanUserSort="False" 
+                                  CanUserReorder="False"
+                                  IsVisible="False">
+            <DataGridTemplateColumn.HeaderTemplate>
+              <DataTemplate>
+                <Grid Width="50" Height="36" HorizontalAlignment="Left" VerticalAlignment="Center" Background="Transparent">
+                  <CheckBox IsChecked="{Binding IsAllSelected, Mode=TwoWay}"
+                            HorizontalAlignment="Center" 
+                            VerticalAlignment="Center"
+                            Margin="0" 
+                            Padding="0" 
+                            MinWidth="0" 
+                            MinHeight="0"
+                            IsThreeState="True"
+                            Focusable="False"
+                            Cursor="Hand"
+                            ToolTip.Tip="{Binding SelectAllTooltipText}" />
+                </Grid>
+              </DataTemplate>
+            </DataGridTemplateColumn.HeaderTemplate>
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:BanModel">
+                <Border HorizontalAlignment="Center" VerticalAlignment="Center">
+                  <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                            HorizontalAlignment="Center" 
+                            VerticalAlignment="Center" 
+                            Margin="0" 
+                            Padding="0" 
+                            MinWidth="0" 
+                            MinHeight="0" />
+                </Border>
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+
+          <DataGridTemplateColumn Tag="ColReforgerBannedName" Header="Banned Name" Width="260" MinWidth="140">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:BanModel">
+                <TextBlock Text="{Binding BannedName}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+
+          <DataGridTextColumn Tag="ColReforgerIdentity" Header="Identity ID" Binding="{Binding IdentityId}" Width="*" MinWidth="220" />
+
+          <DataGridTextColumn Tag="ColBeBanNo" Header="[#]" Binding="{Binding BanNumber}" Width="70" MinWidth="50" />
+
+          <DataGridTextColumn Tag="ColBeIdentity" Header="GUID / IP Address" Binding="{Binding IdentityId}" Width="320" MinWidth="180" />
+
+          <DataGridTextColumn Tag="ColBeMinutes" Header="Minutes Left" Binding="{Binding MinutesLeftText}" Width="150" MinWidth="110" />
+
+          <DataGridTextColumn Tag="ColBeReason" Header="Reason" Binding="{Binding Reason}" Width="*" MinWidth="160" />
+
+          <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="140" MinWidth="130">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="models:BanModel">
+                <Button Classes="Small Danger Outline" Content="Remove Ban" 
+                        Command="{Binding $parent[DataGrid].DataContext.RemoveBanCommand}"
+                        CommandParameter="{Binding}" 
+                        Margin="0,0,8,0"
+                        HorizontalAlignment="Right" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+        </DataGrid.Columns>
+      </DataGrid>
+
+      <!-- Full-Width LuminaSkeleton Ban Table Overlay -->
+      <Border Background="{DynamicResource LuminaSurfaceBrush}" 
+              IsVisible="{Binding IsLoading}"
+              HorizontalAlignment="Stretch"
+              VerticalAlignment="Stretch">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="0">
+            <!-- Faux Header -->
+            <Border Background="{DynamicResource LuminaNavigationPaneBrush}" Padding="16,10" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
+              <Grid ColumnDefinitions="140,320,120,*,140" ColumnSpacing="16">
+                <TextBlock Grid.Column="0" Text="[#] / Target" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="1" Text="Identity / GUID" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="2" Text="Duration" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="3" Text="Reason" Classes="Caption" FontWeight="Bold" />
+                <TextBlock Grid.Column="4" Text="Actions" Classes="Caption" FontWeight="Bold" HorizontalAlignment="Right" Margin="0,0,24,0" />
               </Grid>
-            </DataTemplate>
-          </DataGridTemplateColumn.HeaderTemplate>
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:BanModel">
-              <Border HorizontalAlignment="Center" VerticalAlignment="Center">
-                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" 
-                          HorizontalAlignment="Center" 
-                          VerticalAlignment="Center" 
-                          Margin="0" 
-                          Padding="0" 
-                          MinWidth="0" 
-                          MinHeight="0" />
-              </Border>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
+            </Border>
 
-        <DataGridTemplateColumn Tag="ColReforgerBannedName" Header="Banned Name" Width="260" MinWidth="140">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:BanModel">
-              <TextBlock Text="{Binding BannedName}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0" />
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
+            <!-- Skeleton Rows -->
+            <StackPanel Spacing="0" Margin="16,8">
+              <!-- Row 1 -->
+              <Grid ColumnDefinitions="140,320,120,*,140" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
+                <lumina:LuminaSkeleton Grid.Column="0" Width="90" Height="16" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="1" Width="260" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="2" Width="80" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="3" Width="220" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="4" Width="90" Height="24" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+              <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
 
-        <DataGridTextColumn Tag="ColReforgerIdentity" Header="Identity ID" Binding="{Binding IdentityId}" Width="*" MinWidth="220" />
+              <!-- Row 2 -->
+              <Grid ColumnDefinitions="140,320,120,*,140" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
+                <lumina:LuminaSkeleton Grid.Column="0" Width="110" Height="16" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="1" Width="260" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="2" Width="80" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="3" Width="310" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="4" Width="90" Height="24" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+              <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
 
-        <DataGridTextColumn Tag="ColBeBanNo" Header="[#]" Binding="{Binding BanNumber}" Width="70" MinWidth="50" />
-
-        <DataGridTextColumn Tag="ColBeIdentity" Header="GUID / IP Address" Binding="{Binding IdentityId}" Width="320" MinWidth="180" />
-
-        <DataGridTextColumn Tag="ColBeMinutes" Header="Minutes Left" Binding="{Binding MinutesLeftText}" Width="150" MinWidth="110" />
-
-        <DataGridTextColumn Tag="ColBeReason" Header="Reason" Binding="{Binding Reason}" Width="*" MinWidth="160" />
-
-        <DataGridTemplateColumn Tag="ColActions" Header="Actions" Width="140" MinWidth="130">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="models:BanModel">
-              <Button Classes="Small Danger Outline" Content="Remove Ban" 
-                      Command="{Binding $parent[DataGrid].DataContext.RemoveBanCommand}"
-                      CommandParameter="{Binding}" 
-                      Margin="0,0,8,0"
-                      HorizontalAlignment="Right" />
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
-      </DataGrid.Columns>
-    </DataGrid>
+              <!-- Row 3 -->
+              <Grid ColumnDefinitions="140,320,120,*,140" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
+                <lumina:LuminaSkeleton Grid.Column="0" Width="85" Height="16" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="1" Width="260" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="2" Width="80" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="3" Width="180" Height="14" CornerRadius="4" VerticalAlignment="Center" />
+                <lumina:LuminaSkeleton Grid.Column="4" Width="90" Height="24" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
+              </Grid>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
 
     <Border Grid.Row="2" Background="{DynamicResource LuminaSurfaceElevatedBrush}" Padding="16,12" 
             BorderBrush="{DynamicResource LuminaBorderDefaultBrush}" BorderThickness="0,1,0,0"

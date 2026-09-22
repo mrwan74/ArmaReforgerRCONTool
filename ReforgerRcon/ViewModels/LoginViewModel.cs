@@ -28,7 +28,7 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
     private bool _isSyncingProfile;
     private bool _isLoadingProfiles = true;
     private CancellationTokenSource? _connectCts;
-    private CancellationTokenSource? _saveProfileDebounceCts;
+    private Timer? _saveProfileDebounceTimer;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private int _disposed;
 
@@ -109,6 +109,9 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             var list = ProfileStorageService.LoadProfilesFast();
             Profiles = new ObservableCollection<ServerProfile>(list);
 
+            // TELEMETRY: saved_profiles_count
+            TrackSavedProfilesMetric();
+
             if (Profiles.Count > 0)
             {
                 var targetProfile = Profiles.FirstOrDefault(p => p.IsLastSelected)
@@ -146,6 +149,29 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         {
             ProcessStartupAutoConnectInstant();
         }
+    }
+
+    private void TrackSavedProfilesMetric()
+    {
+        int count = Profiles.Count;
+        string profileTier = count switch
+        {
+            0 => "0",
+            1 => "1",
+            <= 3 => "2_to_3",
+            <= 5 => "4_to_5",
+            _ => "6_plus"
+        };
+
+        AppLogger.TrackEvent("saved_profiles_count", new Dictionary<string, object>
+        {
+            ["profile_count"] = count,
+            ["profile_tier"] = profileTier,
+            ["has_auto_connect"] = Profiles.Any(p => p.AutoConnect),
+            ["has_reforger_profile"] = Profiles.Any(p => p.Protocol == RconProtocol.ReforgerBuiltIn),
+            ["has_battleye_profile"] = Profiles.Any(p => p.Protocol == RconProtocol.BattlEye)
+        });
+        AppLogger.Trace($"[LoginViewModel:Telemetry] saved_profiles_count recorded: Count={count}, Tier='{profileTier}'");
     }
 
     private void ProcessStartupAutoConnectInstant()
@@ -343,31 +369,28 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            _saveProfileDebounceCts?.Cancel();
-            _saveProfileDebounceCts?.Dispose();
-            _saveProfileDebounceCts = new CancellationTokenSource();
-            var token = _saveProfileDebounceCts.Token;
-
-            _ = Task.Run(async () =>
+            if (_saveProfileDebounceTimer == null)
             {
-                try
+                _saveProfileDebounceTimer = new Timer(_ =>
                 {
-                    await Task.Delay(400, token).ConfigureAwait(false);
-                    if (!token.IsCancellationRequested)
+                    try
                     {
-                        AppLogger.Trace($"[LoginViewModel:Sync] Debounce timer expired: saving updated form values for '{SelectedProfile.Name}'...");
-                        ProfileStorageService.SaveProfilesFast([.. Profiles]);
+                        if (SelectedProfile != null)
+                        {
+                            AppLogger.Trace($"[LoginViewModel:Sync] Debounce timer expired: saving updated form values for '{SelectedProfile.Name}'...");
+                            ProfileStorageService.SaveProfilesFast([.. Profiles]);
+                        }
                     }
-                }
-                catch (OperationCanceledException ex)
-                {
-                    AppLogger.Trace($"[LoginViewModel:Sync] Form sync debounce cancelled: {ex.Message}");
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Error($"[LoginViewModel:Sync] Debounce save notice: {ex.Message}", ex);
-                }
-            }, token);
+                    catch (Exception ex)
+                    {
+                        AppLogger.Error($"[LoginViewModel:Sync] Debounce save notice: {ex.Message}", ex);
+                    }
+                }, null, 400, Timeout.Infinite);
+            }
+            else
+            {
+                _saveProfileDebounceTimer.Change(400, Timeout.Infinite);
+            }
         }
         catch (Exception ex)
         {
@@ -614,6 +637,9 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         AppLogger.Info($"[LoginViewModel:NewProfile] Created and persisted new profile '{name}' in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("New Profile Added", $"Created server profile '{name}'.");
+
+        // Update telemetry
+        TrackSavedProfilesMetric();
     }, "Failed to save new server profile.");
 
     [RelayCommand]
@@ -648,6 +674,9 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         AppLogger.Info($"[LoginViewModel:DeleteProfile] Deleted profile '{name}' in {elapsedMs:F2}ms (Remaining={Profiles.Count}).");
         ToastNotificationService.Instance.ShowToast("Profile Deleted", $"Removed '{name}'.");
+
+        // Update telemetry
+        TrackSavedProfilesMetric();
     }, "Failed to delete profile.");
 
     [RelayCommand]
@@ -887,9 +916,8 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                 _connectCts?.Dispose();
                 _connectCts = null;
 
-                _saveProfileDebounceCts?.Cancel();
-                _saveProfileDebounceCts?.Dispose();
-                _saveProfileDebounceCts = null;
+                _saveProfileDebounceTimer?.Dispose();
+                _saveProfileDebounceTimer = null;
 
                 _connectLock.Dispose();
                 var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
