@@ -1,4 +1,5 @@
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ReforgerRcon.Services;
 using System;
@@ -46,6 +47,14 @@ public partial class CountryInfo : ObservableObject
 
     public CountryInfo()
     {
-        // Zero-leak model: Bitmaps are resolved and cached on-demand in FlagAssetService
+        FlagAssetService.FlagRasterized += OnFlagRasterized;
+    }
+
+    private void OnFlagRasterized(string updatedCode)
+    {
+        if (string.Equals(_code, updatedCode, StringComparison.OrdinalIgnoreCase))
+        {
+            Dispatcher.UIThread.Post(() => OnPropertyChanged(nameof(FlagImage)));
+        }
     }
 }

@@ -85,7 +85,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
         var targetPath = filePath;
         if (string.IsNullOrEmpty(targetPath))
         {
-            targetPath = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
+            targetPath = AppPaths.CrashReportsDirectory;
         }
 
         AppLogger.Info($"[ErrorDetailsDialog:Explorer] Highlighting in file manager: '{targetPath}'");
@@ -149,7 +149,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
                 var dir = Directory.Exists(targetPath) ? targetPath : Path.GetDirectoryName(targetPath);
                 if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
                 {
-                    dir = Path.Combine(AppContext.BaseDirectory, "appdata", "crash_reports");
+                    dir = AppPaths.CrashReportsDirectory;
                 }
 
                 if (Directory.Exists(dir))
@@ -180,6 +180,7 @@ public partial class ErrorDetailsDialogViewModel(ErrorReportModel report, Action
             ToastNotificationService.Instance.ShowToast("File Manager Error", "Unable to launch native file explorer.");
         }
     }
+
 
     [RelayCommand]
     private async Task CopyDetailsAsync()

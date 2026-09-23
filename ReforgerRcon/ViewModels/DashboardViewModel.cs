@@ -250,8 +250,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
     private async Task RefreshInitialConnectAsync()
     {
         var start = Stopwatch.GetTimestamp();
-        var context = new Dictionary<string, object?> { [ProtocolTelemetryKey] = Profile.Protocol.ToString() };
-        AppLogger.Debug("[DashboardViewModel:InitSync] Executing initial background synchronization...", context);
+        AppLogger.Debug("[DashboardViewModel:InitSync] Commencing initial player synchronization...");
 
         try
         {
@@ -262,6 +261,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
                 IsAdminsLoading = IsBattlEyeProtocol;
             });
 
+            // 1. Prioritize and display players immediately (uses pre-fetch task from ConnectAsync)
             await PlayersTab.RefreshPlayersAsync().ConfigureAwait(false);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -269,11 +269,15 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
                 IsOnlinePlayersLoading = false;
             });
 
+            var playersElapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            AppLogger.Info($"[DashboardViewModel:InitSync] Player list displayed in {playersElapsed:F2}ms (OnlineCount={OnlinePlayersCount}).");
+
+            // 2. Fetch secondary data (Bans and Admins) in the background with a 150ms stagger
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(50).ConfigureAwait(false);
+                    await Task.Delay(150).ConfigureAwait(false);
 
                     if (SettingsTab.Settings.AutoRefreshBans)
                     {
@@ -301,7 +305,7 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
                 }
                 catch (Exception bgEx)
                 {
-                    AppLogger.Warn($"[DashboardViewModel:InitSync] Background tab sync notice: {bgEx.Message}", bgEx);
+                    AppLogger.Warn($"[DashboardViewModel:InitSync] Secondary tab sync notice: {bgEx.Message}", bgEx);
                     await Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         IsActiveBansLoading = false;
@@ -309,15 +313,10 @@ public partial class DashboardViewModel : ViewModelBase, IDisposable
                     });
                 }
             });
-
-            var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Info($"[DashboardViewModel:InitSync] Initial player list sync finalized in {elapsedMs:F2}ms (OnlineCount={OnlinePlayersCount}).", context);
         }
         catch (Exception ex)
         {
-            context["error_message"] = ex.Message;
-            AppLogger.Error("[DashboardViewModel:InitSync] Error during initial connection sync: " + ex.Message, ex, context);
-            ToastNotificationService.Instance.ShowError("Sync Error", $"Failed initial server synchronization: {ex.Message}");
+            AppLogger.Error("[DashboardViewModel:InitSync] Initial player sync fault: " + ex.Message, ex);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 IsOnlinePlayersLoading = false;

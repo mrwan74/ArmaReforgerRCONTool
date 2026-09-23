@@ -73,9 +73,9 @@ internal static class TelemetrySecrets
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback gracefully
+            AppLogger.Trace($"[TelemetrySecrets:Dsn] DSN resolution notice: {ex.Message}");
         }
 
         _cachedDsn = FallbackDsn;
@@ -124,9 +124,9 @@ internal static class TelemetrySecrets
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback gracefully
+            AppLogger.Trace($"[TelemetrySecrets:AppKey] AppKey resolution notice: {ex.Message}");
         }
 
         _cachedAppKey = FallbackAppKey;

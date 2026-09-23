@@ -15,6 +15,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
@@ -30,6 +31,7 @@ namespace ReforgerRcon;
 [SuppressMessage("Minor Code Smell", "S1075:URIs should not be hardcoded", Justification = "Avalonia internal avares resource schema paths")]
 internal static partial class Program
 {
+    private const string ContextThreadId = "thread_id";
     private const uint MbIconWarning = 0x00000030;
     private const uint MbIconError = 0x00000010;
     private const string ForbiddenSocketAccessLiteral = "forbidden by its access permissions";
@@ -70,7 +72,7 @@ internal static partial class Program
             var context = new Dictionary<string, object?>
             {
                 ["is_terminating"] = e.IsTerminating,
-                ["thread_id"] = Environment.CurrentManagedThreadId,
+                [ContextThreadId] = Environment.CurrentManagedThreadId,
                 ["ram_mb"] = Math.Round(Environment.WorkingSet / (1024.0 * 1024.0), 1)
             };
             AppLogger.Fatal($"[Program:AppDomain] Unhandled domain exception captured (Terminating: {e.IsTerminating})", ex, context);
@@ -81,7 +83,7 @@ internal static partial class Program
         {
             var context = new Dictionary<string, object?>
             {
-                ["thread_id"] = Environment.CurrentManagedThreadId,
+                [ContextThreadId] = Environment.CurrentManagedThreadId,
                 ["inner_count"] = e.Exception.InnerExceptions.Count
             };
             AppLogger.Error("[Program:TaskScheduler] Unobserved task exception captured on finalizer thread", e.Exception, context);
@@ -93,7 +95,7 @@ internal static partial class Program
         var lockStart = Stopwatch.GetTimestamp();
         if (!TryAcquireDirectoryLock(out var instanceLockHandle))
         {
-            var runningDir = AppContext.BaseDirectory;
+            var runningDir = AppPaths.AppDataDirectory;
             var lockElapsedMs = Stopwatch.GetElapsedTime(lockStart).TotalMilliseconds;
             var alertMessage = $"Another instance of ARMA Reforger RCON is already running from this directory:\n\n{runningDir}\n\nOnly one instance per directory is allowed. To run multiple instances simultaneously, place the application in a separate folder.";
 
@@ -140,11 +142,14 @@ internal static partial class Program
         {
             try
             {
+                // Early pre-cache: load path descriptors and deserialize settings into memory before logging & UI
+                _ = AppPaths.AppDataDirectory;
+                _ = AppSettings.LoadFromDisk();
+
                 AppLogger.InitializeFullLogging();
                 CrashReportService.Initialize();
 
-                // Pre-warm non-Avalonia engines (SQLite, GeoIP MMDB readers, Hardware identity) immediately
-                StartDeferredBackgroundServices();
+                // Background workers (SQLite, GeoIP, Velopack) are deferred to App.axaml.cs AFTER window initialization.
 
                 AptabaseLogging.OnLogMessage += entry =>
                 {
@@ -161,7 +166,7 @@ internal static partial class Program
                     var context = new Dictionary<string, object?>
                     {
                         ["category"] = entry.Category,
-                        ["thread_id"] = entry.ThreadId
+                        [ContextThreadId] = entry.ThreadId
                     };
 
                     if (entry.Level >= Microsoft.Extensions.Logging.LogLevel.Error)
@@ -262,7 +267,6 @@ internal static partial class Program
 
                 await Task.WhenAll(sqliteTask, geoIpTask, identityTask).ConfigureAwait(false);
 
-                // Start persistent background updater loop
                 UpdateService.Instance.StartBackgroundLoop();
 
                 var bgElapsedMs = Stopwatch.GetElapsedTime(bgStart).TotalMilliseconds;
@@ -300,7 +304,7 @@ internal static partial class Program
                 options.AttachStacktrace = true;
                 options.SendDefaultPii = false;
                 options.Environment = "production";
-                options.Release = "ReforgerRcon@0.9.0-alpha.5";
+                options.Release = "ReforgerRcon@0.9.0-alpha.6";
 
                 options.SetBeforeSend((sentryEvent, _) => AppSettings.IsCrashReportingEnabled() ? sentryEvent : null);
                 options.SetBeforeSendTransaction((tx, _) => AppSettings.IsCrashReportingEnabled() ? tx : null);
@@ -329,7 +333,9 @@ internal static partial class Program
             or SocketException
             or IOException
             or ObjectDisposedException
-            or UriFormatException)
+            or UriFormatException
+            or TimeZoneNotFoundException
+            or MissingMethodException)
         {
             return;
         }
@@ -359,12 +365,26 @@ internal static partial class Program
             var baseDir = AppPaths.AppDataDirectory;
             var mutexName = $"Local\\ReforgerRcon_DirLock_{baseDir.GetHashCode():X8}";
             _directoryMutex = new Mutex(true, mutexName, out bool createdNew);
-            if (!createdNew) return false;
 
-            if (!Directory.Exists(baseDir)) Directory.CreateDirectory(baseDir);
+            if (!createdNew)
+            {
+                return false;
+            }
 
-            var lockFilePath = Path.Combine(baseDir, "process.lock");
-            _directoryLockStream = new FileStream(lockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            if (!Directory.Exists(baseDir))
+            {
+                Directory.CreateDirectory(baseDir);
+            }
+
+            try
+            {
+                var lockFilePath = Path.Combine(baseDir, "process.lock");
+                _directoryLockStream = new FileStream(lockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning($"[Program:Lock] File lock acquisition notice: {ex.Message}");
+            }
 
             lockHandle = new DirectoryLockDisposable(_directoryMutex, _directoryLockStream);
             return true;
@@ -372,7 +392,7 @@ internal static partial class Program
         catch (Exception ex)
         {
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            System.Diagnostics.Trace.TraceWarning($"[Program:Lock] Directory lock acquisition notice after {elapsedMs:F2}ms: {ex.Message}");
+            System.Diagnostics.Trace.TraceWarning($"[Program:Lock] Mutex acquisition exception after {elapsedMs:F2}ms: {ex.Message}");
             _directoryLockStream?.Dispose();
             _directoryLockStream = null;
             _directoryMutex?.Dispose();
@@ -381,34 +401,110 @@ internal static partial class Program
         }
     }
 
+    [SuppressMessage("Security", "S5443:Using publicly writable directories", Justification = "The X11 Inter-Client Exchange (ICE) protocol specification strictly mandates session sockets in the system temp .ICE-unix directory")]
+    private static bool ResolveX11SessionManagement()
+    {
+        if (!OperatingSystem.IsLinux()) return false;
+
+        var start = Stopwatch.GetTimestamp();
+        var context = new Dictionary<string, object?>
+        {
+            [ContextThreadId] = Environment.CurrentManagedThreadId
+        };
+
+        try
+        {
+            var existingSession = Environment.GetEnvironmentVariable("SESSION_MANAGER");
+            if (!string.IsNullOrWhiteSpace(existingSession))
+            {
+                context["session_manager"] = existingSession;
+                AppLogger.Info($"[X11Session:Init] X11 Session Management active from environment: '{existingSession}'.", context);
+                return true;
+            }
+
+            var iceDir = Path.Combine(Path.GetTempPath(), ".ICE-unix");
+            if (Directory.Exists(iceDir))
+            {
+                var socketFiles = Directory.GetFiles(iceDir);
+                if (socketFiles.Length > 0)
+                {
+                    var latestSocket = socketFiles
+                        .Select(f => new FileInfo(f))
+                        .OrderByDescending(f => f.LastWriteTimeUtc)
+                        .FirstOrDefault();
+
+                    if (latestSocket != null)
+                    {
+                        var socketName = Path.GetFileName(latestSocket.FullName);
+                        var host = Environment.MachineName;
+                        var socketPath = Path.Combine(iceDir, socketName);
+                        var recoveredSession = $"local/{host}:@{socketPath},unix/{host}:{socketPath}";
+
+                        Environment.SetEnvironmentVariable("SESSION_MANAGER", recoveredSession);
+                        context["recovered_session"] = recoveredSession;
+                        context["socket_file"] = latestSocket.FullName;
+                        var elapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                        context["elapsed_ms"] = elapsed;
+
+                        AppLogger.Info($"[X11Session:Init] Recovered X11 Session Management from '{latestSocket.FullName}' in {elapsed:F2}ms: '{recoveredSession}'.", context);
+                        return true;
+                    }
+                }
+            }
+
+            AppLogger.Debug("[X11Session:Init] No X11 Session Manager (XSMP/ICE) socket found on this host. Bypassing session management safely (0ms timeout).", context);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"[X11Session:Init] Exception probing X11 session management: {ex.Message}", ex, context);
+            return false;
+        }
+    }
+
     public static AppBuilder BuildAvaloniaApp()
     {
+        bool enableX11Session = ResolveX11SessionManagement();
+
         var builder = AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
             .With(new SkiaOptions
             {
                 MaxGpuResourceSizeBytes = 256 * 1024 * 1024
+            })
+            .With(new X11PlatformOptions
+            {
+                EnableSessionManagement = enableX11Session
             });
 
-        try
+        if (OperatingSystem.IsWindows())
         {
-            builder.WithAppNotifications(new AppNotificationOptions
+            var notifStart = Stopwatch.GetTimestamp();
+            try
             {
-                AppName = "ARMA Reforger RCON Tool (ARRT)",
-                ClearOnAppClose = false,
-                Channels =
-                [
-                    new NotificationChannel("default", "General Notifications", NotificationPriority.Default),
-                    new NotificationChannel("players", "Player Join & Leave Alerts", NotificationPriority.High),
-                    new NotificationChannel("watchlist", "Watchlist Alerts", NotificationPriority.Max),
-                    new NotificationChannel("system", "System and Moderation Alerts", NotificationPriority.High)
-                ]
-            });
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Trace($"[Program:Builder] Notifications registration notice: {ex.Message}");
+                AppLogger.Debug("[Program:Builder] Registering Windows Action Center notification channels...");
+                builder.WithAppNotifications(new AppNotificationOptions
+                {
+                    AppName = "ARMA Reforger RCON Tool (ARRT)",
+                    ClearOnAppClose = false,
+                    Channels =
+                    [
+                        new NotificationChannel("default", "General Notifications", NotificationPriority.Default),
+                        new NotificationChannel("players", "Player Join & Leave Alerts", NotificationPriority.High),
+                        new NotificationChannel("watchlist", "Watchlist Alerts", NotificationPriority.Max),
+                        new NotificationChannel("system", "System and Moderation Alerts", NotificationPriority.High)
+                    ]
+                });
+                var elapsedMs = Stopwatch.GetElapsedTime(notifStart).TotalMilliseconds;
+                AppLogger.Info($"[Program:Builder] Windows Action Center notification provider registered in {elapsedMs:F2}ms.");
+            }
+            catch (Exception ex)
+            {
+                var elapsedMs = Stopwatch.GetElapsedTime(notifStart).TotalMilliseconds;
+                AppLogger.Error($"[Program:Builder] Failed registering Windows native notifications after {elapsedMs:F2}ms: {ex.Message}", ex);
+                ToastNotificationService.Instance.ShowWarning("Notification System Warning", "Windows native notification registration failed: " + ex.Message);
+            }
         }
 
         var aptabaseKey = AppLogger.ResolveAptabaseAppKey();
@@ -447,10 +543,10 @@ internal static partial class Program
         return builder;
     }
 
-    private sealed class DirectoryLockDisposable(Mutex mutex, FileStream lockStream) : IDisposable
+    private sealed class DirectoryLockDisposable(Mutex mutex, FileStream? lockStream) : IDisposable
     {
         private readonly Mutex _mutex = mutex;
-        private readonly FileStream _lockStream = lockStream;
+        private readonly FileStream? _lockStream = lockStream;
         private bool _isDisposed;
 
         public void Dispose()
@@ -460,7 +556,7 @@ internal static partial class Program
 
             try
             {
-                _lockStream.Dispose();
+                _lockStream?.Dispose();
             }
             catch (IOException ex)
             {

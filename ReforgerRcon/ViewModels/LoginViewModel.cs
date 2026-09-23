@@ -1,3 +1,10 @@
+using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using LuminaUI.Theming;
+using Material.Icons;
+using ReforgerRcon.Models;
+using ReforgerRcon.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -8,13 +15,6 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Threading;
-using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
-using LuminaUI.Theming;
-using Material.Icons;
-using ReforgerRcon.Models;
-using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -109,7 +109,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
             var list = ProfileStorageService.LoadProfilesFast();
             Profiles = new ObservableCollection<ServerProfile>(list);
 
-            // TELEMETRY: saved_profiles_count
             TrackSavedProfilesMetric();
 
             if (Profiles.Count > 0)
@@ -638,7 +637,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         AppLogger.Info($"[LoginViewModel:NewProfile] Created and persisted new profile '{name}' in {elapsedMs:F2}ms.");
         ToastNotificationService.Instance.ShowToast("New Profile Added", $"Created server profile '{name}'.");
 
-        // Update telemetry
         TrackSavedProfilesMetric();
     }, "Failed to save new server profile.");
 
@@ -675,7 +673,6 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
         AppLogger.Info($"[LoginViewModel:DeleteProfile] Deleted profile '{name}' in {elapsedMs:F2}ms (Remaining={Profiles.Count}).");
         ToastNotificationService.Instance.ShowToast("Profile Deleted", $"Removed '{name}'.");
 
-        // Update telemetry
         TrackSavedProfilesMetric();
     }, "Failed to delete profile.");
 
@@ -786,6 +783,7 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
 
                 if (success)
                 {
+                    // Update in-memory profile state immediately
                     if (SelectedProfile != null)
                     {
                         SelectedProfile.ServerIp = ServerIp.Trim();
@@ -816,9 +814,12 @@ public partial class LoginViewModel : ViewModelBase, IDisposable
                         SelectedProfile = profile;
                     }
 
-                    AppLogger.Info($"[LoginViewModel:Connect] Successfully connected to {profile.ServerIp}:{profile.Port} in {elapsedMs:F2}ms. Transitioning to DashboardView...", context);
+                    AppLogger.Info($"[LoginViewModel:Connect] Successfully connected to {profile.ServerIp}:{profile.Port} in {elapsedMs:F2}ms. Triggering immediate Dashboard transition...", context);
 
+                    // 1. Transition views IMMEDIATELY with zero blocking delay
                     Dispatcher.UIThread.Post(() => _onLoginSuccess(profile, rconService));
+
+                    // 2. Persist profile updates asynchronously in the background
                     _ = Task.Run(() => ProfileStorageService.SaveProfilesFast([.. Profiles]), CancellationToken.None);
                 }
                 else

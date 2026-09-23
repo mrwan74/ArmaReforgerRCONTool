@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using ReforgerRcon.BattleNET;
 using ReforgerRcon.Models;
 using ReforgerRcon.Services.Parsers;
@@ -37,7 +38,57 @@ public sealed partial class RconService
         var parseStart = Stopwatch.GetTimestamp();
         var currentPlayers = BattlEyeResponseParser.ParsePlayers(rawResponse);
         var parseElapsed = Stopwatch.GetElapsedTime(parseStart).TotalMilliseconds;
+
+        // Asynchronously resolve only players with uncached locations
+        _ = EnrichPlayersGeoLocationAsync(currentPlayers);
+
         return (currentPlayers, parseElapsed);
+    }
+
+    /// <summary>
+    /// Asynchronously resolves GeoIP geolocation in the background for any players not yet in the in-memory cache.
+    /// Updates observable model properties without flashing any temporary text or blocking the UI.
+    /// </summary>
+    public static Task EnrichPlayersGeoLocationAsync(IEnumerable<PlayerModel> players)
+    {
+        // Filter players that actually need resolution (unresolved country code "xx" and valid external IP)
+        var pendingPlayers = players
+            .Where(p => p.Country.Code == FlagAssetService.UnknownCountryCode &&
+                        !string.IsNullOrEmpty(p.Ip) &&
+                        p.Ip != "127.0.0.1" &&
+                        p.Ip != "N/A")
+            .ToList();
+
+        if (pendingPlayers.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        return Task.Run(() =>
+        {
+            var distinctIps = pendingPlayers.Select(p => p.Ip).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var resolvedMap = new Dictionary<string, GeoLocationResult>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var ip in distinctIps)
+            {
+                resolvedMap[ip] = GeoIpService.GetLocation(ip);
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                foreach (var p in pendingPlayers)
+                {
+                    if (resolvedMap.TryGetValue(p.Ip, out var loc) && loc.CountryCode != "xx")
+                    {
+                        p.Country = new CountryInfo { Code = loc.CountryCode, Name = loc.CountryName };
+                        p.LocationCity = loc.CityName;
+                        p.LocationState = loc.SubdivisionName;
+                        p.DisplayLocation = loc.NaturalLocation;
+                        p.TimeZone = loc.TimeZone;
+                    }
+                }
+            });
+        });
     }
 
     public async Task<List<AdminModel>> GetAdminsAsync(CancellationToken cancellationToken = default)
@@ -240,28 +291,6 @@ public sealed partial class RconService
         return true;
     }
 
-    private async Task<string?> ExecuteDirectResponseAsync(
-        BattlEyeClient client,
-        string command,
-        TimeSpan maxTimeout,
-        long startTimestamp,
-        CancellationToken cancellationToken)
-    {
-        string? directResponse = await client.SendCommandWithResponseAsync(command, maxTimeout, cancellationToken).ConfigureAwait(false);
-        if (directResponse?.StartsWith('\0') == false)
-        {
-            if (directResponse.Length > 0)
-            {
-                CheckProtocolMismatch(directResponse);
-            }
-            var directElapsed = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            AppLogger.Debug($"[RconService:Aggregate] Direct response received for '{AppLogger.SanitizeSensitiveData(command)}' in {directElapsed:F2}ms ({directResponse.Length} chars).");
-            return directResponse;
-        }
-
-        return directResponse;
-    }
-
     private static RconCommandKind ClassifyBattlEyeCommand(string command)
     {
         if (command.Equals("players", StringComparison.OrdinalIgnoreCase))
@@ -301,7 +330,8 @@ public sealed partial class RconService
         commandKind switch
         {
             RconCommandKind.PlayerList => currentText.Contains("players in total", StringComparison.OrdinalIgnoreCase),
-            RconCommandKind.BanList => currentText.Contains("IP Address] [Minutes left] [Reason]", StringComparison.OrdinalIgnoreCase),
+            RconCommandKind.BanList => currentText.Contains("IP Address] [Minutes left] [Reason]", StringComparison.OrdinalIgnoreCase) ||
+                                       currentText.Contains("IP Bans:", StringComparison.OrdinalIgnoreCase),
             RconCommandKind.Admins => currentText.Contains("Connected RCon admins:", StringComparison.OrdinalIgnoreCase),
             RconCommandKind.Kick => currentText.Contains(TokenAdminKick, StringComparison.OrdinalIgnoreCase) ||
                                    currentText.Contains(TokenKicked, StringComparison.OrdinalIgnoreCase) ||
@@ -328,7 +358,6 @@ public sealed partial class RconService
             return;
         }
 
-        // FAST-PATH GUARD: Skip regex matches unless message begins with relevant stream prefixes
         if (!message.StartsWith("Player #", StringComparison.OrdinalIgnoreCase) &&
             !message.StartsWith("RCon admin #", StringComparison.OrdinalIgnoreCase))
         {
@@ -487,7 +516,26 @@ public sealed partial class RconService
                 var name = connMatch.Groups[2].Value.Trim();
                 var ip = connMatch.Groups[3].Value.Trim();
                 int port = int.TryParse(connMatch.Groups[4].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int p) ? p : 2304;
-                var geo = GeoIpService.GetLocation(ip);
+
+                // Check in-memory cache instantly
+                CountryInfo country;
+                string city = string.Empty;
+                string state = string.Empty;
+                string location = string.Empty;
+                string timezone = string.Empty;
+
+                if (GeoIpService.TryGetCachedLocation(ip, out var cached))
+                {
+                    country = new CountryInfo { Code = cached.CountryCode, Name = cached.CountryName };
+                    city = cached.CityName;
+                    state = cached.SubdivisionName;
+                    location = cached.NaturalLocation;
+                    timezone = cached.TimeZone;
+                }
+                else
+                {
+                    country = new CountryInfo { Code = FlagAssetService.UnknownCountryCode, Name = LocationFormatter.UnknownRegion };
+                }
 
                 var newPlayer = new PlayerModel
                 {
@@ -499,11 +547,11 @@ public sealed partial class RconService
                     Ip = ip,
                     Port = port,
                     Ping = 0,
-                    Country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName },
-                    LocationCity = geo.CityName,
-                    LocationState = geo.SubdivisionName,
-                    DisplayLocation = geo.NaturalLocation,
-                    TimeZone = geo.TimeZone
+                    Country = country,
+                    LocationCity = city,
+                    LocationState = state,
+                    DisplayLocation = location,
+                    TimeZone = timezone
                 };
 
                 _playersSemaphore.Wait(CancellationToken.None);
@@ -517,7 +565,13 @@ public sealed partial class RconService
                     _playersSemaphore.Release();
                 }
 
-                AppLogger.Info($"[RconService:StreamEvent] Player Connected stream matched: '{name}' (ID: #{connId}, Endpoint: {ip}:{port}, Location: '{geo.NaturalLocation}').");
+                // If not in cache, silently resolve in background and update
+                if (country.Code == FlagAssetService.UnknownCountryCode)
+                {
+                    _ = EnrichPlayersGeoLocationAsync([newPlayer]);
+                }
+
+                AppLogger.Info($"[RconService:StreamEvent] Player Connected stream matched: '{name}' (ID: #{connId}, Endpoint: {ip}:{port}).");
                 _ = Task.Run(() => PlayerDatabaseStorageService.RecordSeenPlayersAsync([newPlayer], CurrentProtocol), CancellationToken.None);
                 RaisePlayerJoined(newPlayer);
                 return;

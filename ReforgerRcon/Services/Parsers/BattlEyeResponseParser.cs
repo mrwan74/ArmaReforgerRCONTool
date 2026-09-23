@@ -169,7 +169,7 @@ public static partial class BattlEyeResponseParser
     {
         player = null;
 
-        // Fast path tokenizer
+        // Fast-path zero-allocation tokenizer
         if (TryHeuristicPlayerLine(line, out player))
         {
             return true;
@@ -183,37 +183,36 @@ public static partial class BattlEyeResponseParser
                 int.TryParse(match.Groups[3].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int port))
             {
                 var pingToken = match.Groups[4].Value;
-                int ping = 0;
-                if (int.TryParse(pingToken, NumberStyles.Integer, CultureInfo.InvariantCulture, out int pVal))
-                {
-                    ping = pVal;
-                }
+                int ping = int.TryParse(pingToken, NumberStyles.Integer, CultureInfo.InvariantCulture, out int pVal) ? pVal : 0;
 
                 var ip = match.Groups[2].Value.Trim();
                 var guid = match.Groups[5].Value.Trim();
                 var rawName = match.Groups[6].Value;
 
                 string cleanName = ReforgerResponseParser.SanitizePlayerName(rawName);
-
                 if (cleanName.EndsWith(" (Lobby)", StringComparison.OrdinalIgnoreCase))
                 {
                     cleanName = cleanName[..^8].TrimEnd();
                 }
 
-                CountryInfo country = new() { Code = "xx", Name = "Unknown Region" };
+                // Check in-memory GeoIP cache in 0ms without disk seek
+                CountryInfo country;
                 string city = string.Empty;
                 string state = string.Empty;
                 string location = string.Empty;
                 string timezone = string.Empty;
 
-                var geo = GeoIpService.GetLocation(ip);
-                if (geo.CountryCode != "xx")
+                if (GeoIpService.TryGetCachedLocation(ip, out var cached))
                 {
-                    country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
-                    city = geo.CityName;
-                    state = geo.SubdivisionName;
-                    location = geo.NaturalLocation;
-                    timezone = geo.TimeZone;
+                    country = new CountryInfo { Code = cached.CountryCode, Name = cached.CountryName };
+                    city = cached.CityName;
+                    state = cached.SubdivisionName;
+                    location = cached.NaturalLocation;
+                    timezone = cached.TimeZone;
+                }
+                else
+                {
+                    country = new CountryInfo { Code = FlagAssetService.UnknownCountryCode, Name = LocationFormatter.UnknownRegion };
                 }
 
                 player = new PlayerModel
@@ -263,12 +262,7 @@ public static partial class BattlEyeResponseParser
                 var endpointParts = tokens[1].Split(':', 2);
                 if (endpointParts.Length == 2 && int.TryParse(endpointParts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int port))
                 {
-                    int ping = 0;
-                    if (int.TryParse(tokens[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedPing))
-                    {
-                        ping = parsedPing;
-                    }
-
+                    int ping = int.TryParse(tokens[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedPing) ? parsedPing : 0;
                     var ip = endpointParts[0].Trim('[', ']');
                     var guidToken = tokens[3].Trim();
 
@@ -282,20 +276,24 @@ public static partial class BattlEyeResponseParser
                         cleanName = cleanName[..^8].TrimEnd();
                     }
 
-                    CountryInfo country = new() { Code = "xx", Name = "Unknown Region" };
+                    // Check in-memory GeoIP cache in 0ms without disk seek
+                    CountryInfo country;
                     string city = string.Empty;
                     string state = string.Empty;
                     string location = string.Empty;
                     string timezone = string.Empty;
 
-                    var geo = GeoIpService.GetLocation(ip);
-                    if (geo.CountryCode != "xx")
+                    if (GeoIpService.TryGetCachedLocation(ip, out var cached))
                     {
-                        country = new CountryInfo { Code = geo.CountryCode, Name = geo.CountryName };
-                        city = geo.CityName;
-                        state = geo.SubdivisionName;
-                        location = geo.NaturalLocation;
-                        timezone = geo.TimeZone;
+                        country = new CountryInfo { Code = cached.CountryCode, Name = cached.CountryName };
+                        city = cached.CityName;
+                        state = cached.SubdivisionName;
+                        location = cached.NaturalLocation;
+                        timezone = cached.TimeZone;
+                    }
+                    else
+                    {
+                        country = new CountryInfo { Code = FlagAssetService.UnknownCountryCode, Name = LocationFormatter.UnknownRegion };
                     }
 
                     player = new PlayerModel

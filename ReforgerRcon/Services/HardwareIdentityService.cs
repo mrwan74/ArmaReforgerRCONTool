@@ -71,9 +71,9 @@ public static class HardwareIdentityService
                 AppendWindowsIdentifiers(sb);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback gracefully
+            AppLogger.Trace($"[HardwareIdentity:Fingerprint] Hardware identifier assembly notice: {ex.Message}");
         }
 
         var rawString = sb.ToString();
@@ -100,9 +100,9 @@ public static class HardwareIdentityService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Registry fallback
+            AppLogger.Trace($"[HardwareIdentity:Registry] Non-critical registry query notice: {ex.Message}");
         }
     }
 
@@ -119,9 +119,9 @@ public static class HardwareIdentityService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Suppress fallback read errors
+            AppLogger.Warn($"[HardwareIdentity:LoadSeed] Notice reading seed from '{FallbackSeedPath}': {ex.Message}");
         }
 
         return string.Empty;
@@ -137,10 +137,11 @@ public static class HardwareIdentityService
             }
 
             File.WriteAllText(FallbackSeedPath, seed, Encoding.UTF8);
+            AppLogger.Trace($"[HardwareIdentity:PersistSeed] Seed persisted to '{FallbackSeedPath}'.");
         }
-        catch
+        catch (Exception ex)
         {
-            // Suppress fallback write errors
+            AppLogger.Error($"[HardwareIdentity:PersistSeed] Failed writing hardware identity seed to '{FallbackSeedPath}': {ex.Message}", ex);
         }
     }
 }

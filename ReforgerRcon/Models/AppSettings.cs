@@ -118,7 +118,7 @@ public class AppSettings
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[AppSettings] Notice reading settings: {ex.Message}");
+                    AppLogger.Error($"[AppSettings:Load] Failed reading settings from '{SettingsPath}': {ex.Message}", ex);
                 }
             }
 
@@ -161,9 +161,25 @@ public class AppSettings
                         }
                         File.Move(TempSettingsPath, SettingsPath, overwrite: true);
                     }
+                    catch (IOException ioEx)
+                    {
+                        AppLogger.Error($"[AppSettings:Save] I/O failure saving settings to '{SettingsPath}': {ioEx.Message}", ioEx);
+                        try
+                        {
+                            var fallbackJson = JsonSerializer.Serialize(targetSettings, CachedJsonOptions);
+                            File.WriteAllText(SettingsPath, fallbackJson);
+                            AppLogger.Info($"[AppSettings:Save] Fallback direct write to '{SettingsPath}' succeeded.");
+                        }
+                        catch (Exception fallbackEx)
+                        {
+                            AppLogger.Error($"[AppSettings:Save] Fallback direct write failed: {fallbackEx.Message}", fallbackEx);
+                            ToastNotificationService.Instance.ShowError("Settings Save Failed", "Failed persisting settings to disk: " + fallbackEx.Message);
+                        }
+                    }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"[AppSettings] Error saving settings: {ex.Message}");
+                        AppLogger.Error($"[AppSettings:Save] Unexpected error saving settings to '{SettingsPath}': {ex.Message}", ex);
+                        ToastNotificationService.Instance.ShowError("Settings Save Failed", "Failed persisting settings to disk: " + ex.Message);
                     }
                 }
             }, settings, 250, Timeout.Infinite);

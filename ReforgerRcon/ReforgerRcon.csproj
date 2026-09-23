@@ -18,14 +18,23 @@
 		<Description>ARMA REFORGER RCON TOOL (ARRT)</Description>
 		<Company>mrwan74</Company>
 
-		<!-- High-Performance Startup & Optimization Settings (.NET 10) -->
+		<!-- High-Performance Startup, JIT & Dynamic PGO Settings (.NET 10) -->
 		<TieredCompilation>true</TieredCompilation>
 		<TieredCompilationQuickJit>true</TieredCompilationQuickJit>
 		<TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
 		<TieredPGO>true</TieredPGO>
+		<OptimizationPreference>Speed</OptimizationPreference>
+
+		<!-- Memory Allocation & Modern .NET 10 Dynamic GC (DATAS) Tuning -->
 		<ServerGarbageCollection>false</ServerGarbageCollection>
+		<ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+		<GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+		<RetainVMGarbageCollection>false</RetainVMGarbageCollection>
+
+		<!-- ReadyToRun Ahead-of-Time Pre-compilation & Packaging -->
 		<PublishReadyToRun>true</PublishReadyToRun>
 		<PublishReadyToRunShowWarnings>false</PublishReadyToRunShowWarnings>
+		<PublishReadyToRunComposite>false</PublishReadyToRunComposite>
 		<PublishSingleFile>true</PublishSingleFile>
 		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
 
@@ -34,10 +43,10 @@
 		<DebugSymbols>true</DebugSymbols>
 
 		<!-- Application Versioning (Read by Velopack, Aptabase, Sentry, and Windows File Properties) -->
-		<Version>0.9.0-alpha.5</Version>
+		<Version>0.9.0-alpha.6</Version>
 		<AssemblyVersion>0.9.0.0</AssemblyVersion>
 		<FileVersion>0.9.0.0</FileVersion>
-		<InformationalVersion>0.9.0-alpha.5</InformationalVersion>
+		<InformationalVersion>0.9.0-alpha.6</InformationalVersion>
 		<NeutralLanguage>en</NeutralLanguage>
 
 		<!-- Suppressed Analyzer & IDE Code-Style Warnings -->
@@ -72,10 +81,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Avalonia" Version="12.1.2" />
-		<PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
-		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
-		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
+		<PackageReference Include="Avalonia" Version="12.1.3" />
+		<PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.3" />
 		<PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
 		<PackageReference Include="Avalonia.Labs.Notifications" Version="12.0.2" />
 		<PackageReference Include="NetCoreAudio" Version="2.0.1" />
@@ -103,7 +112,7 @@
 		<PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
 		<PackageReference Include="Serilog.ExceptionalLogContext" Version="1.1.0" />
 		<PackageReference Include="SerilogTimings" Version="3.1.0" />
-		<PackageReference Include="Velopack" Version="1.2.0" />
+		<PackageReference Include="Velopack" Version="1.2.158" />
 	</ItemGroup>
 
 	<ItemGroup>

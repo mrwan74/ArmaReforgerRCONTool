@@ -1,3 +1,8 @@
+using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using ReforgerRcon.Models;
+using ReforgerRcon.Services;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -7,11 +12,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia.Threading;
-using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
-using ReforgerRcon.Models;
-using ReforgerRcon.Services;
 
 namespace ReforgerRcon.ViewModels;
 
@@ -338,21 +338,64 @@ public partial class PlayersViewModel(IRconService rconService, DashboardViewMod
 
             var filteredList = filtered.ToList();
 
-            foreach (var p in Players)
+            // FAST PATH: Initial load or significant count changes are replaced in a single collection reset.
+            // This prevents Avalonia's DataGrid from triggering dozens of individual layout passes on startup.
+            if (Players.Count == 0 || Math.Abs(Players.Count - filteredList.Count) > 4)
             {
-                p.PropertyChanged -= OnPlayerPropertyChanged;
+                foreach (var p in Players)
+                {
+                    p.PropertyChanged -= OnPlayerPropertyChanged;
+                }
+
+                foreach (var p in filteredList)
+                {
+                    p.PropertyChanged += OnPlayerPropertyChanged;
+                }
+
+                Players = new ObservableCollection<PlayerModel>(filteredList);
+                UpdateSelectedCount();
+                var fastElapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                AppLogger.Trace($"[PlayersViewModel:Filter] Fast-assigned {Players.Count}/{_allPlayers.Count} players in {fastElapsedMs:F2}ms.");
+                return;
             }
 
-            foreach (var p in filteredList)
+            // IN-PLACE RECONCILIATION: For minor polling updates, smoothly sync without resetting scroll/selection.
+            if (Players.SequenceEqual(filteredList))
             {
-                p.PropertyChanged += OnPlayerPropertyChanged;
+                UpdateSelectedCount();
+                return;
             }
 
-            Players = new ObservableCollection<PlayerModel>(filteredList);
+            for (int i = Players.Count - 1; i >= 0; i--)
+            {
+                var existing = Players[i];
+                if (!filteredList.Contains(existing))
+                {
+                    existing.PropertyChanged -= OnPlayerPropertyChanged;
+                    Players.RemoveAt(i);
+                }
+            }
+
+            for (int i = 0; i < filteredList.Count; i++)
+            {
+                var target = filteredList[i];
+                if (i < Players.Count && Players[i] == target) continue;
+
+                int existingIndex = Players.IndexOf(target);
+                if (existingIndex >= 0)
+                {
+                    Players.Move(existingIndex, i);
+                }
+                else
+                {
+                    target.PropertyChanged += OnPlayerPropertyChanged;
+                    Players.Insert(i, target);
+                }
+            }
 
             UpdateSelectedCount();
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Trace($"[PlayersViewModel:Filter] Synced {Players.Count}/{_allPlayers.Count} players in {elapsedMs:F2}ms (Query='{query}', Sort='{sortField}', Asc={isAscending}).");
+            AppLogger.Trace($"[PlayersViewModel:Filter] Synced {Players.Count}/{_allPlayers.Count} players in {elapsedMs:F2}ms.");
         });
     }
 

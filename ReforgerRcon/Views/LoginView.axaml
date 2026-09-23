@@ -13,7 +13,7 @@
     <!-- Main Content Container -->
     <Grid ColumnDefinitions="410,*" Margin="32">
       <!-- Left Sidebar: Saved Profiles Management -->
-      <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16" x:CompileBindings="False">
+      <lumina:LuminaCard Grid.Column="0" Margin="0,0,24,0" Padding="16">
         <Grid RowDefinitions="Auto,*,Auto,Auto">
           <!-- Section Header with Save Changes Button -->
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12" VerticalAlignment="Center">
@@ -79,16 +79,16 @@
                              VerticalAlignment="Center">
                       <TextBox.KeyBindings>
                         <KeyBinding Gesture="Enter" 
-                                    Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
+                                    Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).ConfirmEditProfileNameCommand}" 
                                     CommandParameter="{Binding}" />
                         <KeyBinding Gesture="Escape" 
-                                    Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
+                                    Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).CancelEditProfileNameCommand}" 
                                     CommandParameter="{Binding}" />
                       </TextBox.KeyBindings>
                     </TextBox>
 
                     <Button Grid.Column="1" Classes="Small Primary Icon" 
-                            Command="{Binding $parent[ListBox].DataContext.ConfirmEditProfileNameCommand}" 
+                            Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).ConfirmEditProfileNameCommand}" 
                             CommandParameter="{Binding}"
                             Width="26" Height="26"
                             ToolTip.Tip="Confirm rename">
@@ -96,7 +96,7 @@
                     </Button>
 
                     <Button Grid.Column="2" Classes="Small Ghost Icon" 
-                            Command="{Binding $parent[ListBox].DataContext.CancelEditProfileNameCommand}" 
+                            Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).CancelEditProfileNameCommand}" 
                             CommandParameter="{Binding}"
                             Width="26" Height="26"
                             ToolTip.Tip="Cancel rename">
@@ -107,7 +107,7 @@
                   <!-- Column 1: Action Buttons Strip -->
                   <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                     <Button Classes="Small Ghost Icon" 
-                            Command="{Binding $parent[ListBox].DataContext.StartEditProfileNameCommand}" 
+                            Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).StartEditProfileNameCommand}" 
                             CommandParameter="{Binding}"
                             Width="26" Height="26"
                             ToolTip.Tip="Rename profile">
@@ -115,7 +115,7 @@
                     </Button>
 
                     <Button Classes="Small Ghost Icon" 
-                            Command="{Binding $parent[ListBox].DataContext.SaveProfileChangesCommand}" 
+                            Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).SaveProfileChangesCommand}" 
                             CommandParameter="{Binding}"
                             Width="26" Height="26"
                             ToolTip.Tip="Save current connection settings to this profile">
@@ -123,7 +123,7 @@
                     </Button>
 
                     <Button Classes="Small Ghost Icon" 
-                            Command="{Binding $parent[ListBox].DataContext.DeleteProfileCommand}" 
+                            Command="{Binding $parent[ListBox].((vm:LoginViewModel)DataContext).DeleteProfileCommand}" 
                             CommandParameter="{Binding}"
                             Width="26" Height="26"
                             ToolTip.Tip="Delete profile">

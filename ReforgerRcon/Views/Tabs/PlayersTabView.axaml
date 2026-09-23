@@ -63,7 +63,6 @@
 
     <!-- Main Table Area -->
     <Grid Grid.Row="1">
-      <!-- Live DataGrid -->
       <DataGrid x:Name="PlayersGrid"
                 ItemsSource="{Binding Players}"
                 SelectedItem="{Binding SelectedPlayer}"
@@ -85,18 +84,30 @@
 
         <DataGrid.ContextMenu>
           <ContextMenu>
-            <MenuItem Header="Player Details" Command="{Binding OpenPlayerDetailsCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Player Details" 
+                      Command="{Binding OpenPlayerDetailsCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
             <Separator />
-            <MenuItem Header="Kick Player" Command="{Binding OpenKickDialogCommand}" CommandParameter="{Binding SelectedPlayer}" />
-            <MenuItem Header="Ban Player..." Command="{Binding OpenBanDialogCommand}" CommandParameter="{Binding SelectedPlayer}" />
-            <MenuItem Header="Quick Permanent Ban" Command="{Binding QuickPermanentBanCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Kick Player" 
+                      Command="{Binding OpenKickDialogCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Ban Player..." 
+                      Command="{Binding OpenBanDialogCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Quick Permanent Ban" 
+                      Command="{Binding QuickPermanentBanCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
             <Separator />
-            <MenuItem Header="Set Comment..." Command="{Binding OpenSetCommentCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Set Comment..." 
+                      Command="{Binding OpenSetCommentCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
             <MenuItem Header="{Binding SelectedPlayer.IsWatchlisted, Converter={x:Static converters:WatchlistTextConverter.Instance}}" 
                       Command="{Binding ToggleWatchlistCommand}" 
                       CommandParameter="{Binding SelectedPlayer}" />
             <Separator />
-            <MenuItem Header="Copy All Info" Command="{Binding CopyPlayerInfoCommand}" CommandParameter="{Binding SelectedPlayer}" />
+            <MenuItem Header="Copy All Info" 
+                      Command="{Binding CopyPlayerInfoCommand}" 
+                      CommandParameter="{Binding SelectedPlayer}" />
           </ContextMenu>
         </DataGrid.ContextMenu>
 
@@ -161,7 +172,7 @@
                            FontWeight="SemiBold" 
                            VerticalAlignment="Center" 
                            Margin="8,0"
-                           TextTrimming="CharacterEllipsis"
+                           TextTrimming="CharacterEllipsis" 
                            ToolTip.Tip="{Binding Name}" />
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
@@ -204,7 +215,7 @@
                            FontWeight="SemiBold" 
                            VerticalAlignment="Center" 
                            Margin="8,0"
-                           TextTrimming="CharacterEllipsis"
+                           TextTrimming="CharacterEllipsis" 
                            ToolTip.Tip="{Binding Name}" />
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
@@ -253,7 +264,6 @@
           <StackPanel Spacing="0">
             <!-- Reforger Protocol Simulated Table Skeleton -->
             <StackPanel IsVisible="{Binding IsReforgerProtocol}">
-              <!-- Faux Header -->
               <Border Background="{DynamicResource LuminaNavigationPaneBrush}" Padding="16,10" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
                 <Grid ColumnDefinitions="110,110,250,380,*" ColumnSpacing="16">
                   <TextBlock Grid.Column="0" Text="Status" Classes="Caption" FontWeight="Bold" />
@@ -264,9 +274,7 @@
                 </Grid>
               </Border>
 
-              <!-- Skeleton Rows -->
               <StackPanel Spacing="0" Margin="16,8">
-                <!-- Row 1 -->
                 <Grid ColumnDefinitions="110,110,250,380,*" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
                   <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="1" Width="36" Height="14" CornerRadius="4" VerticalAlignment="Center" />
@@ -276,7 +284,6 @@
                 </Grid>
                 <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
 
-                <!-- Row 2 -->
                 <Grid ColumnDefinitions="110,110,250,380,*" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
                   <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="1" Width="42" Height="14" CornerRadius="4" VerticalAlignment="Center" />
@@ -286,31 +293,10 @@
                 </Grid>
                 <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
 
-                <!-- Row 3 -->
                 <Grid ColumnDefinitions="110,110,250,380,*" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
                   <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="1" Width="30" Height="14" CornerRadius="4" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="2" Width="120" Height="16" CornerRadius="4" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="3" Width="300" Height="14" CornerRadius="4" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="4" Width="160" Height="26" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                </Grid>
-                <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
-
-                <!-- Row 4 -->
-                <Grid ColumnDefinitions="110,110,250,380,*" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
-                  <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="1" Width="48" Height="14" CornerRadius="4" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="2" Width="200" Height="16" CornerRadius="4" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="3" Width="300" Height="14" CornerRadius="4" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="4" Width="160" Height="26" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                </Grid>
-                <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
-
-                <!-- Row 5 -->
-                <Grid ColumnDefinitions="110,110,250,380,*" ColumnSpacing="16" Height="36" VerticalAlignment="Center">
-                  <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="1" Width="34" Height="14" CornerRadius="4" VerticalAlignment="Center" />
-                  <lumina:LuminaSkeleton Grid.Column="2" Width="140" Height="16" CornerRadius="4" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="3" Width="300" Height="14" CornerRadius="4" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="4" Width="160" Height="26" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center" />
                 </Grid>
@@ -319,7 +305,6 @@
 
             <!-- BattlEye Protocol Simulated Table Skeleton -->
             <StackPanel IsVisible="{Binding IsBattlEyeProtocol}">
-              <!-- Faux Header -->
               <Border Background="{DynamicResource LuminaNavigationPaneBrush}" Padding="16,10" BorderBrush="{DynamicResource LuminaBorderSubtleBrush}" BorderThickness="0,0,0,1">
                 <Grid ColumnDefinitions="60,60,90,190,280,180,70,*" ColumnSpacing="12">
                   <TextBlock Grid.Column="0" Text="Status" Classes="Caption" FontWeight="Bold" />
@@ -333,9 +318,7 @@
                 </Grid>
               </Border>
 
-              <!-- Skeleton Rows -->
               <StackPanel Spacing="0" Margin="16,8">
-                <!-- Row 1 -->
                 <Grid ColumnDefinitions="60,60,90,190,280,180,70,*" ColumnSpacing="12" Height="36" VerticalAlignment="Center">
                   <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="1" Width="24" Height="14" CornerRadius="4" VerticalAlignment="Center" />
@@ -348,7 +331,6 @@
                 </Grid>
                 <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
 
-                <!-- Row 2 -->
                 <Grid ColumnDefinitions="60,60,90,190,280,180,70,*" ColumnSpacing="12" Height="36" VerticalAlignment="Center">
                   <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="1" Width="20" Height="14" CornerRadius="4" VerticalAlignment="Center" />
@@ -361,7 +343,6 @@
                 </Grid>
                 <Separator Background="{DynamicResource LuminaBorderSubtleBrush}" Margin="0" />
 
-                <!-- Row 3 -->
                 <Grid ColumnDefinitions="60,60,90,190,280,180,70,*" ColumnSpacing="12" Height="36" VerticalAlignment="Center">
                   <lumina:LuminaSkeleton Grid.Column="0" Width="14" Height="14" CornerRadius="7" VerticalAlignment="Center" />
                   <lumina:LuminaSkeleton Grid.Column="1" Width="28" Height="14" CornerRadius="4" VerticalAlignment="Center" />

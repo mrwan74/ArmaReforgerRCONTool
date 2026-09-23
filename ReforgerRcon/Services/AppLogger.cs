@@ -201,7 +201,11 @@ public static partial class AppLogger
 
                 var initElapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 LogEnvironmentDiagnostics(initElapsedMs);
-                _ = Task.Run(CleanupOldSessionLogs, CancellationToken.None);
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(10000).ConfigureAwait(false);
+                    CleanupOldSessionLogs();
+                }, CancellationToken.None);
             }
             catch (Exception ex)
             {

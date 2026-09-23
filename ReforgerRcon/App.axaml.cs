@@ -97,65 +97,57 @@ public partial class App : Application
 
         try
         {
-            AppLogger.Debug("[App:FrameworkInit] Registering Dispatcher.UIThread unhandled exception safety nets...", context);
-
             Dispatcher.UIThread.UnhandledExceptionFilter += (sender, e) =>
             {
                 if (e.Exception is OperationCanceledException or TaskCanceledException)
                 {
-                    AppLogger.Trace($"[App:SafetyNet] Filtered expected task cancellation exception: {e.Exception.GetType().Name}.");
                     e.RequestCatch = false;
-                }
-                else
-                {
-                    AppLogger.Debug($"[App:SafetyNet] UnhandledExceptionFilter evaluated: {e.Exception.GetType().FullName}: {e.Exception.Message}");
                 }
             };
 
             Dispatcher.UIThread.UnhandledException += (sender, e) =>
             {
-                var faultContext = new Dictionary<string, object?>
-                {
-                    ["thread_id"] = Environment.CurrentManagedThreadId,
-                    ["exception_type"] = e.Exception.GetType().FullName,
-                    ["message"] = e.Exception.Message,
-                    [StackTraceKey] = e.Exception.StackTrace,
-                    ["inner_exception"] = e.Exception.InnerException?.Message
-                };
-
-                AppLogger.Fatal("[App:SafetyNet] Unhandled UI thread exception intercepted by safety net.", e.Exception, faultContext);
                 CrashReportService.HandleFatalException("Dispatcher.UIThread.UnhandledException", e.Exception, isTerminating: false);
-
-                try
-                {
-                    ToastNotificationService.Instance.ShowError(
-                        "Application Fault Intercepted",
-                        $"An unhandled UI error was intercepted and logged: {e.Exception.Message}"
-                    );
-                }
-                catch (Exception toastEx)
-                {
-                    AppLogger.Trace($"[App:SafetyNet] Notice displaying error toast: {toastEx.Message}");
-                }
-
                 e.Handled = true;
             };
 
-            AppLogger.Info("[App:FrameworkInit] Initializing LuminaUI theme manager...", context);
-            string themeMode = "System";
-            bool windowGlassEnabled = false;
+            var savedSettings = AppSettings.LoadFromDisk();
+            string themeMode = savedSettings.ThemeMode;
+            bool windowGlassEnabled = savedSettings.EnableWindowGlass;
 
             try
             {
                 LuminaThemeManager.Initialize(this);
-
-                var savedSettings = AppSettings.LoadFromDisk();
-                themeMode = savedSettings.ThemeMode;
-                windowGlassEnabled = savedSettings.EnableWindowGlass;
                 AppSettings.ApplyThemeMode(themeMode);
+            }
+            catch (Exception themeEx)
+            {
+                AppLogger.Error($"[App:FrameworkInit] Theme initialization error: {themeEx.Message}", themeEx);
+            }
 
-                AppLogger.Info($"[App:FrameworkInit] Theme applied: Mode='{themeMode}', WindowGlass={windowGlassEnabled}.");
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                desktop.MainWindow = new MainWindow();
+            }
 
+            base.OnFrameworkInitializationCompleted();
+            sw.Stop();
+
+            var frameworkDurationMs = sw.Elapsed.TotalMilliseconds;
+            AppLogger.Info($"[App:FrameworkInit] Framework initialization completed in {frameworkDurationMs:F2}ms.", context);
+
+            // Offload all heavy telemetry and background services completely off the UI thread
+            _ = Task.Run(async () =>
+            {
+                // Give the UI 350ms to paint the window before kicking off disk-heavy SQLite & GeoIP
+                await Task.Delay(350).ConfigureAwait(false);
+
+                // Start SQLite, GeoIP, and Update loops
+                Program.StartDeferredBackgroundServices();
+                FlagAssetService.PrewarmCommonFlags();
+                PushNotificationService.Initialize();
+
+                // Telemetry events
                 AppLogger.TrackEvent("notification_channel_status", new Dictionary<string, object>
                 {
                     ["audio_enabled"] = savedSettings.AudioAlerts,
@@ -174,37 +166,11 @@ public partial class App : Application
                     ["window_glass_enabled"] = windowGlassEnabled,
                     ["is_startup"] = true
                 });
-            }
-            catch (Exception themeEx)
-            {
-                AppLogger.Error($"[App:FrameworkInit] Theme initialization error: {themeEx.Message}. Falling back to default.", themeEx);
-                ToastNotificationService.Instance.ShowWarning("Theme Warning", "Failed to apply custom theme variant; defaulted to system variant.");
-            }
 
-            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            {
-                AppLogger.Info("[App:FrameworkInit] Instantiating MainWindow for desktop lifetime...", context);
-                desktop.MainWindow = new MainWindow();
-            }
-            else
-            {
-                AppLogger.Warn($"[App:FrameworkInit] ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime: {ApplicationLifetime?.GetType().FullName ?? "null"}");
-            }
-
-            base.OnFrameworkInitializationCompleted();
-            sw.Stop();
-
-            var frameworkDurationMs = sw.Elapsed.TotalMilliseconds;
-            context["framework_init_ms"] = frameworkDurationMs;
-            AppLogger.Info($"[App:FrameworkInit] Framework initialization completed in {frameworkDurationMs:F2}ms.", context);
-
-            bool isDebug = false;
+                bool isDebug = false;
 #if DEBUG
-            isDebug = true;
+                isDebug = true;
 #endif
-
-            try
-            {
                 AppLogger.TrackEvent("app_startup_benchmark", new Dictionary<string, object>
                 {
                     ["framework_init_ms"] = frameworkDurationMs,
@@ -215,26 +181,11 @@ public partial class App : Application
                     ["processor_count"] = Environment.ProcessorCount,
                     ["ram_working_set_mb"] = Math.Round(Environment.WorkingSet / (1024.0 * 1024.0), 1)
                 });
-            }
-            catch (Exception telemetryEx)
-            {
-                AppLogger.Warn($"[App:FrameworkInit] Telemetry dispatch notice: {telemetryEx.Message}", telemetryEx);
-            }
-
-            // Trigger asset and push services safely now that Avalonia is fully initialized
-            _ = Task.Run(() =>
-            {
-                FlagAssetService.PrewarmCommonFlags();
-                PushNotificationService.Initialize();
             });
         }
         catch (Exception ex)
         {
             sw.Stop();
-            context["duration_ms"] = sw.Elapsed.TotalMilliseconds;
-            context["exception_type"] = ex.GetType().FullName;
-            context["exception_message"] = ex.Message;
-            context[StackTraceKey] = ex.StackTrace;
             AppLogger.Fatal("[App:FrameworkInit] Fatal failure during OnFrameworkInitializationCompleted.", ex, context);
             CrashReportService.HandleFatalException("App.OnFrameworkInitializationCompleted", ex, isTerminating: true);
             throw;

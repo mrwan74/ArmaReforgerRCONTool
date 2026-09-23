@@ -25,13 +25,11 @@ public sealed partial class RconService
 
         try
         {
-            // Primary standard command for Reforger RCON player listing is 'players'
             string rawResponse = await ExecuteCommandWithAggregateResponseAsync("players", TimeSpan.FromSeconds(4.0), cancellationToken).ConfigureAwait(false);
             var parseStart = Stopwatch.GetTimestamp();
             var currentPlayers = ReforgerResponseParser.ParsePlayers(rawResponse);
             var parseElapsed = Stopwatch.GetElapsedTime(parseStart).TotalMilliseconds;
 
-            // Fallback: if 'players' yielded 0 players and command was unrecognized, try '#players'
             if (currentPlayers.Count == 0 && (string.IsNullOrWhiteSpace(rawResponse) || rawResponse.Contains("unknown command", StringComparison.OrdinalIgnoreCase)))
             {
                 AppLogger.Debug("[RconService:GetPlayers] 'players' produced no player rows. Attempting fallback '#players'...", context);
@@ -407,16 +405,12 @@ public sealed partial class RconService
             int lastChunkSize) =>
             commandKind switch
             {
-                // Wireshark Verified: Reforger sends "Players on server: [Player#] ; [Player UID] ; [Player Name]".
-                // If a chunk under MTU (< 900 bytes) contains this header, it is the final chunk (0ms wait).
-                // If the chunk is >= 900 bytes (e.g. 1047, 995, 1038 bytes), more chunks are streaming.
                 RconCommandKind.PlayerList =>
-                    currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) &&
-                    lastChunkSize < 900 &&
-                    !IsOnlyProcessingCommandHeader(currentText),
+                    ((currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) ||
+                      currentText.Contains(';')) &&
+                     lastChunkSize < 900 &&
+                     !IsOnlyProcessingCommandHeader(currentText)),
 
-                // Wireshark Verified: Reforger ban list terminates immediately on "Server has no bans to list."
-                // or when populated rows arrive in a final chunk under MTU.
                 RconCommandKind.BanList =>
                     currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) ||
                     (currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) && lastChunkSize < 900) ||
@@ -437,20 +431,17 @@ public sealed partial class RconService
                     currentText.Contains(TokenBanRemoved, StringComparison.OrdinalIgnoreCase) ||
                     currentText.Contains(TokenNotFound, StringComparison.OrdinalIgnoreCase),
 
-                // Fallback: command echo received, response is under MTU, and payload has arrived
                 _ => chunksCount >= 1 && lastChunkSize < 900 && !IsOnlyProcessingCommandHeader(currentText)
             };
 
     private static bool DetermineReforgerPayloadPresence(RconCommandKind commandKind, string currentText, int chunksCount) =>
         commandKind switch
         {
-            // Echo header "Processing Command:" is not the payload; the table header or semicolon row is.
             RconCommandKind.PlayerList =>
                 currentText.Contains(PlayersOnServerToken, StringComparison.OrdinalIgnoreCase) ||
                 currentText.Contains(';') ||
                 currentText.Contains('|'),
 
-            // Echo header "Processing Command:" is not the payload; the status line is.
             RconCommandKind.BanList =>
                 currentText.Contains("Server has no bans to list.", StringComparison.OrdinalIgnoreCase) ||
                 currentText.Contains("Total bans:", StringComparison.OrdinalIgnoreCase) ||

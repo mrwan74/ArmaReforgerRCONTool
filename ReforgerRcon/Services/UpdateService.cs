@@ -89,8 +89,7 @@ public sealed class UpdateService : IDisposable
             var source = new FilteredGithubSource(GitHubRepoUrl, accessToken: null, prerelease: true);
             var locator = VelopackLocator.CreateDefaultForPlatform(logger: VelopackLoggerBridge.Instance);
 
-            AppLogger.Trace($"[UpdateService:Init] WindowsVelopackLocator resolved: AppContentDir='{locator.AppContentDir}', RootAppDir='{locator.RootAppDir}', PackagesDir='{locator.PackagesDir}', IsPortable={locator.IsPortable}", context);
-
+            AppLogger.Trace($"[UpdateService:Init] {locator.GetType().Name} resolved: AppContentDir='{locator.AppContentDir}', RootAppDir='{locator.RootAppDir}', PackagesDir='{locator.PackagesDir}', IsPortable={locator.IsPortable}", context);
             _updateManager = new UpdateManager(source, options: null, locator: locator);
 
             var currentVer = _updateManager.CurrentVersion;
@@ -158,7 +157,7 @@ public sealed class UpdateService : IDisposable
 
             try
             {
-                await Task.Delay(3000, token).ConfigureAwait(false);
+                await SafeDelayAsync(3000, token).ConfigureAwait(false);
                 if (!token.IsCancellationRequested && CanUpdate)
                 {
                     await CheckForUpdatesAsync(isManual: false, token).ConfigureAwait(false);
@@ -166,18 +165,18 @@ public sealed class UpdateService : IDisposable
             }
             catch (OperationCanceledException ex)
             {
-                // Task delay cancellation is expected when application shuts down
                 AppLogger.Trace($"[UpdateService:Loop] Initial check delay cancelled: {ex.Message}");
             }
             catch (Exception ex)
             {
                 AppLogger.Trace($"[UpdateService:Loop] Initial check notice: {ex.Message}");
             }
+
             while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    await Task.Delay(checkInterval, token).ConfigureAwait(false);
+                    await SafeDelayAsync((int)checkInterval.TotalMilliseconds, token).ConfigureAwait(false);
                     if (token.IsCancellationRequested) break;
 
                     if (CanUpdate && CurrentStatus != UpdateStatus.Downloading && CurrentStatus != UpdateStatus.ReadyToRestart)
@@ -196,6 +195,17 @@ public sealed class UpdateService : IDisposable
                 }
             }
         }, CancellationToken.None);
+    }
+
+    private static async Task SafeDelayAsync(int millisecondsDelay, CancellationToken cancellationToken)
+    {
+        if (millisecondsDelay <= 0 || cancellationToken.IsCancellationRequested) return;
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using (cancellationToken.Register(static s => ((TaskCompletionSource?)s)?.TrySetResult(), tcs).ConfigureAwait(false))
+        {
+            await Task.WhenAny(Task.Delay(millisecondsDelay, CancellationToken.None), tcs.Task).ConfigureAwait(false);
+        }
     }
 
     public async Task<bool> CheckForUpdatesAsync(bool isManual = true, CancellationToken cancellationToken = default)

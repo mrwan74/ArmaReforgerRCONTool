@@ -367,7 +367,6 @@ public sealed partial class RconService : IRconService
             IPAddress? ip = null;
             var trimmedHost = profile.ServerIp.Trim();
 
-            // Fast-path: Resolve localhost directly without OS DNS queries
             if (string.Equals(trimmedHost, "localhost", StringComparison.OrdinalIgnoreCase))
             {
                 ip = IPAddress.Loopback;
@@ -702,7 +701,7 @@ public sealed partial class RconService : IRconService
 
         _ = Task.Run(async () =>
         {
-            await Task.Delay(3000, token).ConfigureAwait(false);
+            await SafeDelayAsync(3000, token).ConfigureAwait(false);
 
             while (!token.IsCancellationRequested)
             {
@@ -718,12 +717,7 @@ public sealed partial class RconService : IRconService
                         await SampleNetworkPingAsync(ip, token).ConfigureAwait(false);
                     }
 
-                    var delayTask = Task.Delay(3000, CancellationToken.None);
-                    var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    await using (token.Register(static s => ((TaskCompletionSource?)s)?.TrySetResult(), tcs).ConfigureAwait(false))
-                    {
-                        await Task.WhenAny(delayTask, tcs.Task).ConfigureAwait(false);
-                    }
+                    await SafeDelayAsync(3000, token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -735,6 +729,17 @@ public sealed partial class RconService : IRconService
                 }
             }
         }, CancellationToken.None);
+    }
+
+    private static async Task SafeDelayAsync(int millisecondsDelay, CancellationToken cancellationToken)
+    {
+        if (millisecondsDelay <= 0 || cancellationToken.IsCancellationRequested) return;
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using (cancellationToken.Register(static s => ((TaskCompletionSource?)s)?.TrySetResult(), tcs).ConfigureAwait(false))
+        {
+            await Task.WhenAny(Task.Delay(millisecondsDelay, CancellationToken.None), tcs.Task).ConfigureAwait(false);
+        }
     }
 
     private void StopBackgroundPingMonitor()
@@ -1171,7 +1176,7 @@ public sealed partial class RconService : IRconService
         {
             var result = await PlayerDatabaseStorageService.GetPagedAsync(parameters, cancellationToken).ConfigureAwait(false);
             var elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            AppLogger.Debug($"[RconService:Database] Paginated retrieval completed in {elapsedMs:F2}ms (Returned={result.Items.Count}, Total={result.TotalCount}, Page={result.PageIndex}/{Math.Max(1, (int)Math.Ceiling((double)result.TotalCount / Math.Max(1, result.PageSize)))}).");
+            AppLogger.Debug($"[RconService:Database] Paginated retrieval completed in {elapsedMs:F2}ms (Returned={result.Items.Count}, Total={result.TotalCount}).");
             return result;
         }
         catch (OperationCanceledException)
@@ -1495,49 +1500,48 @@ public sealed partial class RconService : IRconService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var aggregateContext = new Dictionary<string, object?>
-        {
-            ["command"] = AppLogger.SanitizeSensitiveData(command),
-            [ContextProtocol] = CurrentProtocol.ToString(),
-            ["max_timeout_ms"] = maxTimeout.TotalMilliseconds,
-            ["thread_id"] = Environment.CurrentManagedThreadId
-        };
-
-        AppLogger.Debug($"[RconService:Aggregate] Initiating command aggregation for: '{AppLogger.SanitizeSensitiveData(command)}'...", aggregateContext);
-
         await _commandExecutionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             RaiseOutputReceived($"[RCON OUT] {command}");
-
-            if (CurrentProtocol == RconProtocol.BattlEye)
-            {
-                string? directResponse = await ExecuteDirectResponseAsync(client, command, maxTimeout, startTimestamp, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(directResponse))
-                {
-                    return directResponse;
-                }
-            }
 
             await ResetAggregateBufferAsync(cancellationToken).ConfigureAwait(false);
             _activeReforgerCommand = command;
 
             try
             {
-                client.SendCommand(command, log: true);
-
                 var commandKind = ClassifyCommand(command);
+
+                Task<string?>? directTask = null;
+                if (CurrentProtocol == RconProtocol.BattlEye)
+                {
+                    directTask = client.SendCommandWithResponseAsync(command, maxTimeout, cancellationToken);
+                }
+                else
+                {
+                    client.SendCommand(command, log: true);
+                }
+
                 var timeoutLimit = DateTime.UtcNow.Add(maxTimeout);
 
                 while (DateTime.UtcNow < timeoutLimit)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    var remainingTimeout = timeoutLimit - DateTime.UtcNow;
-                    if (remainingTimeout <= TimeSpan.Zero)
+                    if (directTask is { IsCompleted: true })
                     {
-                        break;
+                        var directResult = await directTask.ConfigureAwait(false);
+                        if (!string.IsNullOrEmpty(directResult))
+                        {
+                            CheckProtocolMismatch(directResult);
+                            var directMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                            AppLogger.Debug($"[RconService:Aggregate] Direct response fulfilled in {directMs:F2}ms ({directResult.Length} chars).");
+                            return directResult;
+                        }
                     }
+
+                    var remainingTimeout = timeoutLimit - DateTime.UtcNow;
+                    if (remainingTimeout <= TimeSpan.Zero) break;
 
                     var waitMs = Math.Min(10, (int)remainingTimeout.TotalMilliseconds);
                     await _chunkArrivedSignal.WaitAsync(waitMs, cancellationToken).ConfigureAwait(false);
@@ -1552,7 +1556,6 @@ public sealed partial class RconService : IRconService
 
                         if (CheckUniversalErrorTokens(currentText))
                         {
-                            AppLogger.Trace($"[RconService:Aggregate] Terminal error token detected ({currentText.Length} chars). Halting aggregation.");
                             break;
                         }
 
@@ -1562,7 +1565,6 @@ public sealed partial class RconService : IRconService
 
                         if (isTerminal)
                         {
-                            AppLogger.Trace($"[RconService:Aggregate] Terminal token matched ({currentText.Length} chars, Chunks={chunksCount}, LastSize={lastChunkSize}B). Exiting aggregation instantly.");
                             break;
                         }
 
@@ -1572,14 +1574,9 @@ public sealed partial class RconService : IRconService
 
                         if (hasActualPayload)
                         {
-
-                            int adaptiveQuietMs = (lastChunkSize >= 900)
-                                ? Math.Max(350, (int)(PingMs * 2.2))
-                                : Math.Max(120, (int)(PingMs * 1.2));
-
+                            int adaptiveQuietMs = (lastChunkSize >= 900) ? 60 : 15;
                             if (timeSinceLastChunk.TotalMilliseconds >= adaptiveQuietMs)
                             {
-                                AppLogger.Trace($"[RconService:Aggregate] Quiet threshold reached ({timeSinceLastChunk.TotalMilliseconds:F1}ms >= {adaptiveQuietMs}ms, Chunks={chunksCount}). Completing aggregation.");
                                 break;
                             }
                         }
@@ -1604,7 +1601,7 @@ public sealed partial class RconService : IRconService
                 var totalElapsed = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
                 CheckProtocolMismatch(aggregated);
-                AppLogger.Debug($"[RconService:Aggregate] Aggregation complete for '{AppLogger.SanitizeSensitiveData(command)}' in {totalElapsed:F2}ms: {aggregated.Length} chars across {_messageChunksCount} chunks.");
+                AppLogger.Debug($"[RconService:Aggregate] Finished '{AppLogger.SanitizeSensitiveData(command)}' in {totalElapsed:F2}ms ({aggregated.Length} chars).");
                 return aggregated;
             }
             finally
